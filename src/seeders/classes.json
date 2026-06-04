@@ -1,0 +1,62 @@
+[
+  {
+    "title": "Pilates Beginner",
+    "category": "Pilates",
+    "price": 150,
+    "location": "Cairo"
+  },
+  {
+    "title": "Pilates Intermediate",
+    "category": "Pilates",
+    "price": 175,
+    "location": "Cairo"
+  },
+  {
+    "title": "Pilates Advanced",
+    "category": "Pilates",
+    "price": 200,
+    "location": "Cairo"
+  },
+  {
+    "title": "Yoga Beginner",
+    "category": "Yoga",
+    "price": 120,
+    "location": "Cairo"
+  },
+  {
+    "title": "Yoga Vinyasa",
+    "category": "Yoga",
+    "price": 150,
+    "location": "Cairo"
+  },
+  {
+    "title": "Yoga Yin",
+    "category": "Yoga",
+    "price": 140,
+    "location": "NorthCoast"
+  },
+  {
+    "title": "Personal Training Session",
+    "category": "Personal Training",
+    "price": 300,
+    "location": "Cairo"
+  },
+  {
+    "title": "HIIT Class",
+    "category": "Fitness",
+    "price": 130,
+    "location": "Cairo"
+  },
+  {
+    "title": "Strength Training",
+    "category": "Fitness",
+    "price": 140,
+    "location": "NorthCoast"
+  },
+  {
+    "title": "Swimming",
+    "category": "Swimming",
+    "price": 200,
+    "location": "Cairo"
+  }
+]

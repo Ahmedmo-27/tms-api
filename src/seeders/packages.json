@@ -1,0 +1,72 @@
+[
+  {
+    "name": "Pilates Starter - 10 Classes",
+    "numberOfSessions": 10,
+    "category": "Pilates",
+    "price": 1200,
+    "expiryPeriod": 30
+  },
+  {
+    "name": "Pilates Pro - 20 Classes",
+    "numberOfSessions": 20,
+    "category": "Pilates",
+    "price": 2200,
+    "expiryPeriod": 60
+  },
+  {
+    "name": "Pilates VIP - Unlimited",
+    "numberOfSessions": 9999,
+    "category": "Pilates",
+    "price": 4500,
+    "expiryPeriod": 30
+  },
+  {
+    "name": "Yoga Essentials - 8 Classes",
+    "numberOfSessions": 8,
+    "category": "Yoga",
+    "price": 900,
+    "expiryPeriod": 45
+  },
+  {
+    "name": "Yoga Flow - 16 Classes",
+    "numberOfSessions": 16,
+    "category": "Yoga",
+    "price": 1600,
+    "expiryPeriod": 60
+  },
+  {
+    "name": "Fitness Blast - 12 Classes",
+    "numberOfSessions": 12,
+    "category": "Fitness",
+    "price": 1400,
+    "expiryPeriod": 30
+  },
+  {
+    "name": "Personal Training - 5 Sessions",
+    "numberOfSessions": 5,
+    "category": "Personal Training",
+    "price": 1500,
+    "expiryPeriod": 60
+  },
+  {
+    "name": "Personal Training - 10 Sessions",
+    "numberOfSessions": 10,
+    "category": "Personal Training",
+    "price": 2800,
+    "expiryPeriod": 90
+  },
+  {
+    "name": "All Access Pass - 30 Days",
+    "numberOfSessions": 9999,
+    "category": "All",
+    "price": 5000,
+    "expiryPeriod": 30
+  },
+  {
+    "name": "Studio Classes - 12 Sessions",
+    "numberOfSessions": 12,
+    "category": "Studio",
+    "price": 1500,
+    "expiryPeriod": 45
+  }
+]

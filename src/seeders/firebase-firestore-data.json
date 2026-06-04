@@ -1,0 +1,348 @@
+{
+  "seedName": "firebase-firestore-seed",
+  "testUser": {
+    "email": "mohammed@gmail.com",
+    "password": "12345678",
+    "name": "Mohammed",
+    "phone": "01022138836"
+  },
+  "protectedWriterCandidates": [
+    {
+      "email": "admin@themindspace.com",
+      "password": "12345678"
+    },
+    {
+      "email": "fd@themindspace.com",
+      "password": "12345678"
+    },
+    {
+      "email": "admin@example.com",
+      "password": "Admin1234"
+    }
+  ],
+  "coaches": [
+    {
+      "id": "coach-sara",
+      "name": "Coach Sara",
+      "specialty": "Functional training"
+    },
+    {
+      "id": "coach-ali",
+      "name": "Coach Ali",
+      "specialty": "Studio"
+    },
+    {
+      "id": "coach-maya",
+      "name": "Coach Maya",
+      "specialty": "Personal Training"
+    },
+    {
+      "id": "coach-nour",
+      "name": "Coach Nour",
+      "specialty": "Pre/Post Natal"
+    }
+  ],
+  "packageCatalog": [
+    {
+      "id": "functional-8",
+      "Name": "Functional training",
+      "Number": 8,
+      "Price": 1600,
+      "expiry date": 30,
+      "type": "class based"
+    },
+    {
+      "id": "functional-12",
+      "Name": "Functional training",
+      "Number": 12,
+      "Price": 2200,
+      "expiry date": 45,
+      "type": "class based"
+    },
+    {
+      "id": "studio-10",
+      "Name": "Studio",
+      "Number": 10,
+      "Price": 1500,
+      "expiry date": 30,
+      "type": "class based"
+    },
+    {
+      "id": "studio-16",
+      "Name": "Studio",
+      "Number": 16,
+      "Price": 2300,
+      "expiry date": 45,
+      "type": "class based"
+    },
+    {
+      "id": "personal-training-sara-5",
+      "Name": "Personal Training",
+      "Number": 5,
+      "Price": 3000,
+      "expiry date": 45,
+      "type": "class based",
+      "coachName": "Coach Sara"
+    },
+    {
+      "id": "personal-training-maya-10",
+      "Name": "Personal Training",
+      "Number": 10,
+      "Price": 5500,
+      "expiry date": 75,
+      "type": "class based",
+      "coachName": "Coach Maya"
+    },
+    {
+      "id": "space-membership-30",
+      "Name": "Space membership",
+      "Price": 2500,
+      "expiry date": 30,
+      "type": "membership based"
+    },
+    {
+      "id": "ultimate-mindspacer-30",
+      "Name": "Ultimate Mindspacer",
+      "Price": 4500,
+      "expiry date": 30,
+      "type": "membership based"
+    },
+    {
+      "id": "pre-post-natal-8",
+      "Name": "Pre/Post Natal",
+      "Number": 8,
+      "Price": 1600,
+      "expiry date": 30,
+      "type": "class based"
+    }
+  ],
+  "memberPackages": [
+    {
+      "id": "1",
+      "Name": "Functional training",
+      "Number": 12,
+      "Price": 2200,
+      "expiry date": 45,
+      "type": "class based",
+      "remainingClasses": 8,
+      "status": "Active",
+      "startOffsetDays": -5,
+      "endOffsetDays": 40,
+      "attendance": [
+        {
+          "id": "functional-seed-1",
+          "classType": "Functional training",
+          "offsetDays": -3,
+          "classDeducted": true
+        },
+        {
+          "id": "functional-seed-2",
+          "classType": "Functional training",
+          "offsetDays": -1,
+          "classDeducted": true
+        }
+      ]
+    },
+    {
+      "id": "2",
+      "Name": "Studio",
+      "Number": 10,
+      "Price": 1500,
+      "expiry date": 30,
+      "type": "class based",
+      "remainingClasses": 6,
+      "status": "Active",
+      "startOffsetDays": -2,
+      "endOffsetDays": 28,
+      "attendance": [
+        {
+          "id": "studio-seed-1",
+          "classType": "Studio",
+          "offsetDays": -2,
+          "classDeducted": true
+        }
+      ]
+    },
+    {
+      "id": "3",
+      "Name": "Personal Training",
+      "Number": 5,
+      "Price": 3000,
+      "expiry date": 45,
+      "type": "class based",
+      "remainingClasses": 3,
+      "status": "Active",
+      "coachName": "Coach Maya",
+      "startOffsetDays": -1,
+      "endOffsetDays": 44,
+      "attendance": []
+    },
+    {
+      "id": "4",
+      "Name": "Space membership",
+      "Price": 2500,
+      "expiry date": 30,
+      "type": "membership based",
+      "status": "Active",
+      "startOffsetDays": -3,
+      "endOffsetDays": 27,
+      "attendance": [
+        {
+          "id": "space-seed-1",
+          "classType": "Space membership",
+          "offsetDays": -1,
+          "classDeducted": false
+        }
+      ]
+    },
+    {
+      "id": "5",
+      "Name": "Pre/Post Natal",
+      "Number": 8,
+      "Price": 1600,
+      "expiry date": 30,
+      "type": "class based",
+      "remainingClasses": 0,
+      "status": "Finished",
+      "startOffsetDays": -35,
+      "endOffsetDays": -5,
+      "attendance": []
+    },
+    {
+      "id": "6",
+      "Name": "Ultimate Mindspacer",
+      "Price": 4500,
+      "expiry date": 30,
+      "type": "membership based",
+      "status": "Expired",
+      "startOffsetDays": -45,
+      "endOffsetDays": -15,
+      "attendance": []
+    }
+  ],
+  "scheduleDays": 8,
+  "scheduleTemplates": [
+    {
+      "id": "functional-strength",
+      "title": "Functional Strength",
+      "type": "Functional training",
+      "coach": "Coach Sara",
+      "price": 250,
+      "totalSlots": 12,
+      "availableSlots": 10,
+      "requiresBooking": "yes",
+      "startTime": "10:00",
+      "durationMinutes": 60,
+      "todayOffsetMinutes": 90,
+      "dayOffsets": [0, 1, 3, 5, 7]
+    },
+    {
+      "id": "functional-hiit",
+      "title": "HIIT Class",
+      "type": "Functional training",
+      "coach": "Coach Ali",
+      "price": 230,
+      "totalSlots": 14,
+      "availableSlots": 12,
+      "requiresBooking": "yes",
+      "startTime": "18:30",
+      "durationMinutes": 50,
+      "todayOffsetMinutes": 240,
+      "dayOffsets": [0, 2, 4, 6]
+    },
+    {
+      "id": "studio-flow",
+      "title": "Studio Flow",
+      "type": "Studio",
+      "coach": "Coach Ali",
+      "price": 220,
+      "totalSlots": 10,
+      "availableSlots": 8,
+      "requiresBooking": "yes",
+      "startTime": "12:00",
+      "durationMinutes": 55,
+      "todayOffsetMinutes": 150,
+      "dayOffsets": [0, 1, 2, 4, 6]
+    },
+    {
+      "id": "studio-mobility",
+      "title": "Studio Mobility",
+      "type": "Studio",
+      "coach": "Coach Nour",
+      "price": 200,
+      "totalSlots": 10,
+      "availableSlots": 9,
+      "requiresBooking": "no",
+      "startTime": "17:00",
+      "durationMinutes": 45,
+      "todayOffsetMinutes": 300,
+      "dayOffsets": [1, 3, 5, 7]
+    },
+    {
+      "id": "personal-training",
+      "title": "Personal Training Session",
+      "type": "Personal Training",
+      "coach": "Coach Maya",
+      "price": 600,
+      "totalSlots": 3,
+      "availableSlots": 2,
+      "requiresBooking": "yes",
+      "startTime": "15:00",
+      "durationMinutes": 60,
+      "todayOffsetMinutes": 210,
+      "dayOffsets": [0, 1, 3, 6]
+    },
+    {
+      "id": "pre-post-natal",
+      "title": "Pre/Post Natal",
+      "type": "Pre/Post Natal",
+      "coach": "Coach Nour",
+      "price": 220,
+      "totalSlots": 8,
+      "availableSlots": 7,
+      "requiresBooking": "yes",
+      "startTime": "11:00",
+      "durationMinutes": 50,
+      "todayOffsetMinutes": 180,
+      "dayOffsets": [2, 5]
+    }
+  ],
+  "sampleBookings": [
+    {
+      "id": "seed-member-booking-studio",
+      "templateId": "studio-flow",
+      "dayOffset": 1,
+      "isPaid": false
+    },
+    {
+      "id": "seed-paid-booking-functional",
+      "templateId": "functional-hiit",
+      "dayOffset": 2,
+      "isPaid": true,
+      "price": 230,
+      "qrCodeHash": "seed-paid-functional-qr",
+      "isValid": true
+    }
+  ],
+  "samplePayments": [
+    {
+      "id": "seed-payment-functional",
+      "Price": 230,
+      "Package Name": "HIIT Class"
+    }
+  ],
+  "sampleScans": [
+    {
+      "id": "seed-scan-success",
+      "dayOffset": 0,
+      "success": true,
+      "scanMessage": "Seed scan: Functional training package accepted."
+    },
+    {
+      "id": "seed-scan-failed",
+      "dayOffset": 0,
+      "success": false,
+      "scanMessage": "Seed scan: no valid package found."
+    }
+  ]
+}

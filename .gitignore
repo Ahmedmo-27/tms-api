@@ -1,0 +1,13 @@
+# Node.js dependencies
+node_modules/
+dist/
+.env
+test.env
+.DS_Store
+.nyc_output
+coverage/
+logs/
+launch.json
+x.json
+src/tests
+migration/
