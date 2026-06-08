@@ -186,9 +186,11 @@ export class CoachService {
     
     let hasPtPackage = false;
     const allowedPkgIdSet = new Set<string>();
+    const packageCategoryMap = new Map<string, string>();
     for (const pkg of packagesInfo) {
       if (!pkg.coachId || pkg.coachId.toString() === coachDocId.toString()) {
         allowedPkgIdSet.add(pkg._id.toString());
+        packageCategoryMap.set(pkg._id.toString(), pkg.category);
         if (pkg.coachId && pkg.coachId.toString() === coachDocId.toString()) {
           hasPtPackage = true;
         }
@@ -209,7 +211,11 @@ export class CoachService {
     }
 
     // Map each filtered package to the response DTO (expiry computed server-side)
-    return filtered.map((pkg) => mapMemberPackageResponseDto(pkg));
+    return filtered.map((pkg) => {
+      const dto = mapMemberPackageResponseDto(pkg);
+      const category = packageCategoryMap.get(pkg.pkgId.toString());
+      return { ...dto, isPtPackage: category === "PERSONAL_TRAINING" };
+    });
   }
 
   /**
@@ -270,6 +276,11 @@ export class CoachService {
 
     if (!pkg) {
       throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found for the given start date");
+    }
+
+    const packageDoc = packagesInfo.find(p => p._id.toString() === pkg.pkgId.toString());
+    if (!packageDoc || packageDoc.category !== "PERSONAL_TRAINING") {
+      throw new BadRequestError("INVALID_PACKAGE", "Deduction is only allowed for Personal Training packages");
     }
 
     // --- 5. Check remainingClasses > 0 (Req 7.4) ---

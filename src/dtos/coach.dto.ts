@@ -92,6 +92,7 @@ export interface MemberPackageResponseDto {
   status: string;
   isExpired: boolean;
   daysUntilExpiry: number;
+  isPtPackage?: boolean;
 }
 
 export interface MemberPackageListResponseDto {
