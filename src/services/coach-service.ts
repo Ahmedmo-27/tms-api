@@ -167,32 +167,36 @@ export class CoachService {
     coachDocId: Types.ObjectId,
     memberId: string,
   ): Promise<MemberPackageResponseDto[]> {
-    // Verify Authorization_Link — at least one ScheduledClass must link this
-    // coach to the requested member.
-    const link = await ScheduledClass.findOne({
-      coachId: coachDocId,
-      "bookedMembers.uid": new Types.ObjectId(memberId),
-    });
-
-    if (!link) {
-      throw new ForbiddenError("ACCESS_DENIED", "No scheduled class links this coach to the member");
-    }
-
     // Fetch the member document
     const member = await Member.findOne({ uid: new Types.ObjectId(memberId) });
     if (!member) {
       throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
     }
 
+    // Verify Authorization_Link — a ScheduledClass must link this coach to the requested member
+    // OR the member must have a PT package assigned to this coach.
+    const link = await ScheduledClass.findOne({
+      coachId: coachDocId,
+      "bookedMembers.uid": new Types.ObjectId(memberId),
+    });
+
     // Fetch the package documents referenced by the member
     const memberPkgIds = member.packages.map(p => p.pkgId);
     const packagesInfo = await Package.find({ _id: { $in: memberPkgIds } });
     
+    let hasPtPackage = false;
     const allowedPkgIdSet = new Set<string>();
     for (const pkg of packagesInfo) {
       if (!pkg.coachId || pkg.coachId.toString() === coachDocId.toString()) {
         allowedPkgIdSet.add(pkg._id.toString());
+        if (pkg.coachId && pkg.coachId.toString() === coachDocId.toString()) {
+          hasPtPackage = true;
+        }
       }
+    }
+
+    if (!link && !hasPtPackage) {
+      throw new ForbiddenError("ACCESS_DENIED", "No scheduled class or personal package links this coach to the member");
     }
 
     // Filter member packages to those whose pkgId is in the allowed set
@@ -239,20 +243,23 @@ export class CoachService {
       throw new BadRequestError("INVALID_FIELDS", "sessionDate is not a valid ISO 8601 date");
     }
 
-    // --- 3. Verify Authorization_Link (Req 7.2, 7.7) ---
+    // --- 3. Find member and verify Authorization_Link (Req 7.2, 7.3, 7.7) ---
+    const member = await Member.findOne({ uid: new Types.ObjectId(memberId) });
+    if (!member) {
+      throw new NotFoundError("PACKAGE_NOT_FOUND", "Member not found");
+    }
+
     const link = await ScheduledClass.findOne({
       coachId: coachDocId,
       "bookedMembers.uid": new Types.ObjectId(memberId),
     });
 
-    if (!link) {
-      throw new ForbiddenError("ACCESS_DENIED", "No scheduled class links this coach to the member");
-    }
+    const memberPkgIds = member.packages.map(p => p.pkgId);
+    const packagesInfo = await Package.find({ _id: { $in: memberPkgIds } });
+    const hasPtPackage = packagesInfo.some(pkg => pkg.coachId && pkg.coachId.toString() === coachDocId.toString());
 
-    // --- 4. Find member and locate the package subdocument (Req 7.3) ---
-    const member = await Member.findOne({ uid: new Types.ObjectId(memberId) });
-    if (!member) {
-      throw new NotFoundError("PACKAGE_NOT_FOUND", "Member not found");
+    if (!link && !hasPtPackage) {
+      throw new ForbiddenError("ACCESS_DENIED", "No scheduled class or personal package links this coach to the member");
     }
 
     // Date-normalize: match by same calendar day using toDateString() comparison
