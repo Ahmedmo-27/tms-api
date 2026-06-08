@@ -1,8 +1,9 @@
-import mongoose, { Document, Schema } from "mongoose";
+import mongoose, { Document, Schema, Types } from "mongoose";
 
-export interface ICoach extends Document{
+export interface ICoach extends Document {
     coachName: string;
     phoneNumber: string;
+    userId?: Types.ObjectId;
 }
 
 const CoachSchema: Schema<ICoach> = new Schema({
@@ -13,6 +14,12 @@ const CoachSchema: Schema<ICoach> = new Schema({
     phoneNumber: {
         type: String,
         required: true,
+    },
+    userId: {
+        type: Schema.Types.ObjectId,
+        ref: "User",
+        unique: true,
+        sparse: true,
     },
 });
 

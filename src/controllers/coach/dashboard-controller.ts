@@ -4,6 +4,8 @@ import { SuccessResponse } from "../../core/ApiResponse";
 import { CoachService } from "../../services/coach-service";
 import { CoachAuthRequest } from "../../middlewares/coach.middleware";
 import { DeductSessionRequestDto } from "../../dtos/coach.dto";
+import { startOfWeek } from "date-fns";
+import { BadRequestError } from "../../core/ApiError";
 
 /**
  * GET /api/coach/clients
@@ -14,7 +16,7 @@ import { DeductSessionRequestDto } from "../../dtos/coach.dto";
  */
 export const getClients = asyncHandler(async (req: Request, res: Response) => {
   const coachReq = req as CoachAuthRequest;
-  const clients = await CoachService.getClients(coachReq.coachId);
+  const clients = await CoachService.getClients(coachReq.coachDocId);
   return new SuccessResponse("Clients found", { clients }).send(res);
 });
 
@@ -27,7 +29,7 @@ export const getClients = asyncHandler(async (req: Request, res: Response) => {
  */
 export const getMemberPackages = asyncHandler(async (req: Request, res: Response) => {
   const coachReq = req as CoachAuthRequest;
-  const packages = await CoachService.getMemberPackages(coachReq.coachId, req.params.memberId);
+  const packages = await CoachService.getMemberPackages(coachReq.coachDocId, req.params.memberId);
   return new SuccessResponse("Packages found", { packages }).send(res);
 });
 
@@ -40,6 +42,23 @@ export const getMemberPackages = asyncHandler(async (req: Request, res: Response
  */
 export const deductSession = asyncHandler(async (req: Request, res: Response) => {
   const coachReq = req as CoachAuthRequest;
-  const result = await CoachService.deductSession(coachReq.coachId, req.body as DeductSessionRequestDto);
+  const result = await CoachService.deductSession(coachReq.coachDocId, req.body as DeductSessionRequestDto);
   return new SuccessResponse("Session deducted", { package: result }).send(res);
+});
+
+export const getSchedule = asyncHandler(async (req: Request, res: Response) => {
+  const coachReq = req as CoachAuthRequest;
+  
+  let weekStart: Date;
+  if (req.query.weekStart) {
+    weekStart = new Date(req.query.weekStart as string);
+    if (isNaN(weekStart.getTime())) {
+      throw new BadRequestError("INVALID_DATE", "Invalid weekStart date provided");
+    }
+  } else {
+    weekStart = startOfWeek(new Date(), { weekStartsOn: 1 });
+  }
+
+  const schedule = await CoachService.getSchedule(coachReq.coachDocId, weekStart);
+  return new SuccessResponse("Schedule fetched", schedule).send(res);
 });

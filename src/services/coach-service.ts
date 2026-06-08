@@ -3,66 +3,87 @@ import ScheduledClass from "../models/scheduledClass";
 import Member from "../models/member";
 import Package from "../models/package";
 import DeductionLog from "../models/deductionLog";
+import Class from "../models/class";
+import Coach, { ICoach } from "../models/coach";
 import { BadRequestError, ForbiddenError, NotFoundError } from "../core/ApiError";
 import {
   ClientResponseDto,
   DeductSessionRequestDto,
   DeductSessionResponseDto,
   MemberPackageResponseDto,
+  ScheduleResponseDto,
   mapDeductSessionResponseDto,
   mapMemberPackageResponseDto,
 } from "../dtos/coach.dto";
 import { runInTransaction } from "../utils/transaction";
+import { addDays, format } from "date-fns";
 
 export class CoachService {
+  static async getCoachDocumentByUserId(userId: Types.ObjectId): Promise<ICoach | null> {
+    return Coach.findOne({ userId });
+  }
+
   /**
    * Returns the deduplicated list of members who have been booked into any
-   * ScheduledClass assigned to the given coach.
-   *
-   * Requirements: 5.1, 5.2, 5.3, 5.4
+   * ScheduledClass assigned to the given coach or have PT packages with the coach.
    */
-  static async getClients(coachId: Types.ObjectId): Promise<ClientResponseDto[]> {
-    // Fetch all scheduled classes for this coach
-    const classes = await ScheduledClass.find({ coachId });
+  static async getClients(coachDocId: Types.ObjectId): Promise<ClientResponseDto[]> {
+    const clientsMap = new Map<string, ClientResponseDto>();
 
-    if (!classes || classes.length === 0) {
-      return [];
-    }
+    // Source 1: PT clients
+    const packages = await Package.find({ coachId: coachDocId });
+    const ptPkgIds = packages.map(p => p._id);
+    const ptMembers = await Member.find({ "packages.pkgId": { $in: ptPkgIds } }).populate<{ uid: any }>("uid");
 
-    // Collect distinct member UIDs using a Set to deduplicate
-    const uidSet = new Set<string>();
-    for (const cls of classes) {
-      for (const booking of cls.bookedMembers) {
-        uidSet.add(booking.uid.toString());
-      }
-    }
+    for (const member of ptMembers) {
+      if (!member.uid) continue;
+      const uidStr = member.uid._id.toString();
+      const activePackagesCount = member.packages.filter(p =>
+        ptPkgIds.some(id => id.equals(p.pkgId)) && p.status === "ACTIVE"
+      ).length;
 
-    if (uidSet.size === 0) {
-      return [];
-    }
-
-    // For each distinct UID, look up the Member and populate the User ref
-    const clients: ClientResponseDto[] = [];
-
-    for (const uidStr of uidSet) {
-      const member = await Member.findOne({ uid: new Types.ObjectId(uidStr) }).populate<{
-        uid: { _id: Types.ObjectId; name: string; email: string; phoneNumber: string };
-      }>("uid");
-
-      if (!member || !member.uid) {
-        continue;
-      }
-
-      const user = member.uid as any;
-      clients.push({
+      clientsMap.set(uidStr, {
         memberId: uidStr,
-        name: user.name ?? "",
-        email: user.email ?? "",
-        phoneNumber: user.phoneNumber ?? "",
+        name: member.uid.name ?? "",
+        email: member.uid.email ?? "",
+        phoneNumber: member.uid.phoneNumber ?? "",
+        source: ["PT"],
+        activePackagesCount
       });
     }
 
-    return clients;
+    // Source 2: Group session clients
+    const classes = await ScheduledClass.find({ coachId: coachDocId });
+    const groupUidSet = new Set<string>();
+    for (const cls of classes) {
+      for (const booking of cls.bookedMembers) {
+        groupUidSet.add(booking.uid.toString());
+      }
+    }
+
+    for (const uidStr of groupUidSet) {
+      const member = await Member.findOne({ uid: new Types.ObjectId(uidStr) }).populate<{ uid: any }>("uid");
+      if (!member || !member.uid) continue;
+
+      const activePackagesCount = member.packages.filter(p => p.status === "ACTIVE").length;
+
+      const existing = clientsMap.get(uidStr);
+      if (existing) {
+        existing.source = [...existing.source, "GROUP"];
+        existing.activePackagesCount = Math.max(existing.activePackagesCount, activePackagesCount);
+      } else {
+        clientsMap.set(uidStr, {
+          memberId: uidStr,
+          name: member.uid.name ?? "",
+          email: member.uid.email ?? "",
+          phoneNumber: member.uid.phoneNumber ?? "",
+          source: ["GROUP"],
+          activePackagesCount
+        });
+      }
+    }
+
+    return Array.from(clientsMap.values());
   }
 
   /**
@@ -75,13 +96,13 @@ export class CoachService {
    * Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6
    */
   static async getMemberPackages(
-    coachId: Types.ObjectId,
+    coachDocId: Types.ObjectId,
     memberId: string,
   ): Promise<MemberPackageResponseDto[]> {
     // Verify Authorization_Link — at least one ScheduledClass must link this
     // coach to the requested member.
     const link = await ScheduledClass.findOne({
-      coachId,
+      coachId: coachDocId,
       "bookedMembers.uid": new Types.ObjectId(memberId),
     });
 
@@ -99,7 +120,7 @@ export class CoachService {
     // pkgId set.  Package.coachId is stored as an ObjectId in MongoDB even
     // though the TypeScript interface declares it as string — compare via
     // .toString() to stay safe.
-    const coachPackages = await Package.find({ coachId: coachId });
+    const coachPackages = await Package.find({ coachId: coachDocId });
     const coachPkgIdSet = new Set<string>(
       coachPackages.map((p) => (p._id as Types.ObjectId).toString()),
     );
@@ -127,7 +148,7 @@ export class CoachService {
    * Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 7.7
    */
   static async deductSession(
-    coachId: Types.ObjectId,
+    coachDocId: Types.ObjectId,
     dto: DeductSessionRequestDto,
   ): Promise<DeductSessionResponseDto> {
     const { memberId, memberPackageStartDate, reason, sessionDate, sessionType } = dto;
@@ -150,7 +171,7 @@ export class CoachService {
 
     // --- 3. Verify Authorization_Link (Req 7.2, 7.7) ---
     const link = await ScheduledClass.findOne({
-      coachId,
+      coachId: coachDocId,
       "bookedMembers.uid": new Types.ObjectId(memberId),
     });
 
@@ -204,7 +225,7 @@ export class CoachService {
 
       // (b) Create the DeductionLog record
       await new DeductionLog({
-        coachId,
+        coachId: coachDocId,
         memberId: new Types.ObjectId(memberId),
         pkgId: pkg.pkgId,
         memberPackageStartDate: parsedPackageStartDate,
@@ -223,5 +244,79 @@ export class CoachService {
     };
 
     return mapDeductSessionResponseDto(updatedPkg);
+  }
+
+  static async getSchedule(coachDocId: Types.ObjectId, weekStart: Date): Promise<ScheduleResponseDto> {
+    const weekEnd = addDays(weekStart, 6);
+    const scheduledClasses = await ScheduledClass.find({
+      coachId: coachDocId,
+      startTime: { $gte: weekStart, $lte: weekEnd }
+    }).sort({ startTime: 1 });
+
+    const packages = await Package.find({ coachId: coachDocId });
+    const ptPkgIds = packages.map(p => p._id);
+
+    const sessionsMap = new Map<string, any[]>();
+
+    for (const scheduledClass of scheduledClasses) {
+      const cls = await Class.findById(scheduledClass.cid);
+      if (!cls) continue;
+
+      const clients = [];
+      for (const entry of scheduledClass.bookedMembers) {
+        const member = await Member.findOne({ uid: entry.uid }).populate<{ uid: any }>("uid");
+        if (!member || !member.uid) continue;
+
+        const activePtPackage = member.packages.find(p =>
+          ptPkgIds.some(id => id.equals(p.pkgId)) && p.status === "ACTIVE"
+        );
+
+        clients.push({
+          memberId: entry.uid.toString(),
+          name: member.uid.name ?? "",
+          phoneNumber: member.uid.phoneNumber ?? "",
+          bookingMethod: entry.method,
+          activePackage: activePtPackage ? {
+            pkgId: activePtPackage.pkgId.toString(),
+            pkgStartDate: activePtPackage.pkgStartDate.toISOString(),
+            remainingClasses: activePtPackage.remainingClasses
+          } : null
+        });
+      }
+
+      const dateStr = format(scheduledClass.startTime, "yyyy-MM-dd");
+      const sessionDto = {
+        scheduledClassId: (scheduledClass._id as Types.ObjectId).toString(),
+        classTitle: cls.title,
+        category: cls.category,
+        startTime: format(scheduledClass.startTime, "HH:mm"),
+        endTime: format(scheduledClass.endTime, "HH:mm"),
+        capacity: scheduledClass.availableSlots + scheduledClass.bookedMembers.length,
+        bookedCount: scheduledClass.bookedMembers.length,
+        clients
+      };
+
+      if (!sessionsMap.has(dateStr)) {
+        sessionsMap.set(dateStr, []);
+      }
+      sessionsMap.get(dateStr)!.push(sessionDto);
+    }
+
+    const days = [];
+    for (let i = 0; i <= 6; i++) {
+      const currentDate = addDays(weekStart, i);
+      const dateStr = format(currentDate, "yyyy-MM-dd");
+      days.push({
+        date: dateStr,
+        dayName: format(currentDate, "EEEE"),
+        sessions: sessionsMap.get(dateStr) ?? []
+      });
+    }
+
+    return {
+      weekStart: weekStart.toISOString(),
+      weekEnd: weekEnd.toISOString(),
+      days
+    };
   }
 }

@@ -32,10 +32,47 @@ export interface ClientResponseDto {
   name: string;
   email: string;
   phoneNumber: string;
+  source: string[];
+  activePackagesCount: number;
 }
 
 export interface ClientListResponseDto {
   clients: ClientResponseDto[];
+}
+
+export interface CalendarClientDto {
+  memberId: string;
+  name: string;
+  phoneNumber: string;
+  bookingMethod: string;
+  activePackage: {
+    pkgId: string;
+    pkgStartDate: string;
+    remainingClasses: number;
+  } | null;
+}
+
+export interface ScheduleSessionDto {
+  scheduledClassId: string;
+  classTitle: string;
+  category: string;
+  startTime: string;
+  endTime: string;
+  capacity: number;
+  bookedCount: number;
+  clients: CalendarClientDto[];
+}
+
+export interface ScheduleDayDto {
+  date: string;
+  dayName: string;
+  sessions: ScheduleSessionDto[];
+}
+
+export interface ScheduleResponseDto {
+  weekStart: string;
+  weekEnd: string;
+  days: ScheduleDayDto[];
 }
 
 export interface MemberPackageResponseDto {
