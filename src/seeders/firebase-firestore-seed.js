@@ -22,12 +22,12 @@ const {
 } = require("firebase/firestore");
 
 const firebaseConfig = {
-  apiKey: "AIzaSyCdTNTE8BvSmctSde7uMg839nQ4MWkQa-E",
-  authDomain: "themindspace-3f4ef.firebaseapp.com",
-  projectId: "themindspace-3f4ef",
-  storageBucket: "themindspace-3f4ef.appspot.com",
-  messagingSenderId: "981977623828",
-  appId: "1:981977623828:web:232409ddff6ac1fd85e601",
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_AUTH_DOMAIN",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_STORAGE_BUCKET",
+  messagingSenderId: "YOUR_MESSAGE_SENDER_ID",
+  appId: "YOUR_APP_ID",
 };
 
 const dataPath = path.join(__dirname, "firebase-firestore-data.json");
