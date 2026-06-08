@@ -4,8 +4,7 @@
 
 const { MongoClient, ObjectId } = require("../node_modules/mongoose/node_modules/mongodb");
 
-const MONGO_URI =
-  "mongodb://yasserziad59_db_user:UHSM9oTJOnPT1r2x@ac-ynhcti6-shard-00-00.nenjvkr.mongodb.net:27017,ac-ynhcti6-shard-00-01.nenjvkr.mongodb.net:27017,ac-ynhcti6-shard-00-02.nenjvkr.mongodb.net:27017/TMS_PROD?ssl=true&replicaSet=atlas-vmtjfi-shard-0&authSource=admin&appName=Cluster0";
+const MONGO_URI = "YOUR_MONGODB_URI"
 
 const issues = [];
 
