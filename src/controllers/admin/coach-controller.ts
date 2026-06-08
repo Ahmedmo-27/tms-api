@@ -38,3 +38,13 @@ export const deleteCoach = asyncHandler(
     new SuccessResponse("Coach Deleted!", coach).send(res);
   }
 );
+
+export const getUnlinkedCoaches = asyncHandler(
+  async (req: Request, res: Response): Promise<void> => {
+    const coaches = await Coach.find({
+      $or: [{ userId: { $exists: false } }, { userId: null }],
+      coachName: { $not: /&|\band\b|\//i }
+    });
+    new SuccessResponse("Unlinked Coaches Found!", coaches).send(res);
+  }
+);

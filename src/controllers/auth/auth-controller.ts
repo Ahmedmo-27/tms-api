@@ -2,6 +2,7 @@ import { sendPasswordResetEmail } from "../../services/email-service";
 import { Request, Response, CookieOptions } from "express";
 import User from "../../models/user";
 import Member from "../../models/member";
+import Coach from "../../models/coach";
 import logger from "../../config/logger";
 import { AuthRequest } from "../../middlewares/auth.middleware";
 import {
@@ -203,5 +204,39 @@ export const deactivateAccount = asyncHandler(
     member.isActive = false;
     await member.save();
     new SuccessResponse("User Deleted!", user).send(res);
+  }
+);
+
+export const registerCoachUser = asyncHandler(
+  async (req: Request, res: Response): Promise<void> => {
+    const { name, email, password, phoneNumber, coachId } = req.body;
+    
+    const cleanPhoneNumber = phoneNumber.replace(/\s/g, "");
+    
+    // Check if user exists
+    if (await User.findOne({ phoneNumber: cleanPhoneNumber }))
+      throw new ConflictError("USER_ALREADY_EXISTS", "User already exists", {
+        phoneNumber,
+      });
+
+    // Verify coach exists and isn't linked
+    const coach = await Coach.findById(coachId);
+    if (!coach) throw new NotFoundError("COACH_NOT_FOUND", "Coach not found", { id: coachId });
+    if (coach.userId) throw new ConflictError("COACH_ALREADY_LINKED", "Coach already has an account");
+
+    const user = new User({
+      name,
+      email: email.toLowerCase(),
+      password,
+      phoneNumber: cleanPhoneNumber,
+      role: "coach",
+    });
+    await user.save();
+
+    coach.userId = user._id as any;
+    coach.phoneNumber = cleanPhoneNumber;
+    await coach.save();
+
+    new SuccessResponse("Coach User Registered!", { user }).send(res);
   }
 );
