@@ -13,6 +13,9 @@ import {
 } from "../../core/ApiError";
 import { SuccessResponse } from "../../core/ApiResponse";
 import asyncHandler from "../../utils/asyncHandler";
+import Package from "../../models/package";
+import ScheduledClass from "../../models/scheduledClass";
+import { Types } from "mongoose";
 
 export const verifyToken = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
@@ -99,12 +102,27 @@ export const loginUser = asyncHandler(
     const cleanPhoneNumber = phoneNumber.replace(/\s/g, "");
     const user = await User.findByCredentials(cleanPhoneNumber, password);
     const token = await user.generateAuthToken(deviceType, fcmToken);
-    const responseData = {
+    let responseData: any = {
       token,
       userId: String(user._id),
       role: user.role,
       name: user.name,
     };
+
+    if (user.role === "coach") {
+      let hasPtSessions = false;
+      let hasScheduledClasses = false;
+      const coachDoc = await Coach.findOne({ userId: user._id });
+      if (coachDoc) {
+        const ptPackagesCount = await Package.countDocuments({ coachId: coachDoc._id as Types.ObjectId });
+        hasPtSessions = ptPackagesCount > 0;
+        
+        const scheduledClassesCount = await ScheduledClass.countDocuments({ coachId: coachDoc._id as Types.ObjectId });
+        hasScheduledClasses = scheduledClassesCount > 0;
+      }
+      responseData.hasPtSessions = hasPtSessions;
+      responseData.hasScheduledClasses = hasScheduledClasses;
+    }
     if (deviceType == "web") {
       const isProd = process.env.NODE_ENV === "production";
       const cookieOptions: CookieOptions = {

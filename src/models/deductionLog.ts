@@ -7,7 +7,6 @@ export interface IDeductionLog extends Document {
   memberPackageStartDate: Date;
   reason: string;
   sessionDate: Date;
-  sessionType: "INDIVIDUAL" | "GROUP";
   classesRemainingAfter: number;
   createdAt: Date;
 }
@@ -38,11 +37,6 @@ const DeductionLogSchema = new Schema<IDeductionLog>({
   },
   sessionDate: {
     type: Date,
-    required: true,
-  },
-  sessionType: {
-    type: String,
-    enum: ["INDIVIDUAL", "GROUP"],
     required: true,
   },
   classesRemainingAfter: {

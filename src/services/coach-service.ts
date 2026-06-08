@@ -117,6 +117,9 @@ export class CoachService {
 
     let allClients = Array.from(clientsMap.values());
 
+    // Exclude clients with 0 active packages
+    allClients = allClients.filter(c => c.activePackagesCount > 0);
+
     // Apply search
     if (options?.search) {
       const q = options.search.toLowerCase();
@@ -239,10 +242,10 @@ export class CoachService {
     coachDocId: Types.ObjectId,
     dto: DeductSessionRequestDto,
   ): Promise<DeductSessionResponseDto> {
-    const { memberId, memberPackageStartDate, reason, sessionDate, sessionType } = dto;
+    const { memberId, memberPackageStartDate, reason, sessionDate } = dto;
 
     // --- 1. Validate required fields (Req 7.1) ---
-    if (!memberId || !memberPackageStartDate || !reason || !sessionDate || !sessionType) {
+    if (!memberId || !memberPackageStartDate || !reason || !sessionDate) {
       throw new BadRequestError("MISSING_FIELDS", "One or more required fields are missing");
     }
 
@@ -327,7 +330,6 @@ export class CoachService {
         memberPackageStartDate: parsedPackageStartDate,
         reason,
         sessionDate: parsedSessionDate,
-        sessionType,
         classesRemainingAfter,
       }).save({ session });
     });

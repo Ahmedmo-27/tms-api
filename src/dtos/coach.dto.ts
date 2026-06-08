@@ -10,7 +10,6 @@ export interface DeductSessionRequestDto {
   memberPackageStartDate: string;
   reason: string;
   sessionDate: string;
-  sessionType: "INDIVIDUAL" | "GROUP";
 }
 
 // ---------------------------------------------------------------------------

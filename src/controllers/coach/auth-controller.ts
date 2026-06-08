@@ -6,6 +6,7 @@ import { SuccessResponse } from "../../core/ApiResponse";
 import asyncHandler from "../../utils/asyncHandler";
 import Package from "../../models/package";
 import Coach from "../../models/coach";
+import ScheduledClass from "../../models/scheduledClass";
 
 export const coachLogin = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
@@ -42,16 +43,21 @@ export const coachLogin = asyncHandler(
     }
 
     let hasPtSessions = false;
+    let hasScheduledClasses = false;
     const coachDoc = await Coach.findOne({ userId: user._id });
     if (coachDoc) {
       const ptPackagesCount = await Package.countDocuments({ coachId: coachDoc._id as Types.ObjectId });
       hasPtSessions = ptPackagesCount > 0;
+      
+      const scheduledClassesCount = await ScheduledClass.countDocuments({ coachId: coachDoc._id as Types.ObjectId });
+      hasScheduledClasses = scheduledClassesCount > 0;
     }
 
     new SuccessResponse("Login successful", {
       token,
       coachId: coachDoc ? (coachDoc._id as Types.ObjectId).toString() : (user._id as Types.ObjectId).toString(),
       hasPtSessions,
+      hasScheduledClasses,
     }).send(res);
   }
 );
