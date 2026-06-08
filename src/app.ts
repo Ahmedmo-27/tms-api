@@ -20,7 +20,7 @@ app.use(
     origin: [
       "http://localhost:3000",
       "https://tms-dashboard-ashen.vercel.app",
-      "https://your-vercel-production.vercel.app", // Add mobile client
+      "https://tms-dashboard-test.vercel.app", // Add mobile client
     ],
     credentials: true, // Allow cookies / Authorization headers
   })
