@@ -11,6 +11,8 @@ import NonUserPackage from "../models/nonUserPackage";
 import { sendPaymentToRentalSystem } from "./egygap-erp-service";
 import { IClassRestrictionRecord } from "../models/member";
 import { ChallengeService } from "./challenge-service";
+import User from "../models/user";
+import { Server as SocketIOServer } from "socket.io";
 
 export class SubscriptionsService {
   static async frontDeskSubscribeToPackage(
@@ -21,6 +23,7 @@ export class SubscriptionsService {
     paymentDate?: string,
     amount?: number,
     note?: string,
+    io?: SocketIOServer,
   ) {
     const member = await Member.findOne({ uid });
     if (!member)
@@ -81,6 +84,17 @@ export class SubscriptionsService {
         session,
         restrictions,
       );
+      if (io && pkg.coachId) {
+        const user = await User.findOne({ _id: new Types.ObjectId(uid) }).session(session);
+        io.to(`coach:${pkg.coachId.toString()}`).emit("coach:newPackage", {
+          memberName: user?.name ?? "",
+          packageName: pkg.name,
+          classesTotal: pkg.numberOfSessions,
+          createdAt: new Date().toISOString(),
+        });
+      } else if (!io) {
+        logger.warn("coach:newPackage skipped — io instance unavailable");
+      }
       if (pkg.category !== "PERSONAL_TRAINING") {
         await sendPaymentToRentalSystem(payment);
       }

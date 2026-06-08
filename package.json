@@ -11,6 +11,7 @@
     "exec": "npx ts-node ./src/index.ts"
   },
   "scripts": {
+    "sync-db": "npx ts-node ./src/scripts/sync-prod-to-test.ts",
     "generate-docs": "npx ts-node ./src/scripts/generate-docs.ts",
     "test": "jest --runInBand --changedSince=master",
     "coverage": "jest --runInBand --coverage",
@@ -18,7 +19,8 @@
     "dev": "nodemon",
     "build": "tsc",
     "start": "node dist/index.js",
-    "debug": "node --inspect-brk -r ts-node/register src/app.ts"
+    "debug": "node --inspect-brk -r ts-node/register src/app.ts",
+    "sync-db": "npx ts-node ./src/scripts/sync-prod-to-test.ts"
   },
   "repository": {
     "type": "git",

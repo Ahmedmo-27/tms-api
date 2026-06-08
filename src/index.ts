@@ -32,6 +32,10 @@ const startServer = async () => {
     socket.on("disconnect", () => {
       logger.info("Dashboard Disconnected", socket.id);
     });
+
+    socket.on("coach:joinRoom", (coachId: string) => {
+      socket.join(`coach:${coachId}`);
+    });
   });
 
   // Start the server (NOT app.listen)

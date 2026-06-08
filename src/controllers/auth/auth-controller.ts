@@ -1,5 +1,5 @@
 import { sendPasswordResetEmail } from "../../services/email-service";
-import { Request, Response } from "express";
+import { Request, Response, CookieOptions } from "express";
 import User from "../../models/user";
 import Member from "../../models/member";
 import logger from "../../config/logger";
@@ -72,12 +72,14 @@ export const registerUser = asyncHandler(
     await user.save();
     const token = await user.generateAuthToken(deviceType, fcmToken);
     if (deviceType == "web") {
-      res.cookie("token", token, {
+      const isProd = process.env.NODE_ENV === "production";
+      const cookieOptions: CookieOptions = {
         httpOnly: true,
-        secure: true,
-        sameSite: "none",
+        secure: isProd,
+        sameSite: isProd ? ("none" as "none" | "lax" | "strict") : ("lax" as "none" | "lax" | "strict"),
         maxAge: 30 * 24 * 60 * 60 * 1000,
-      });
+      };
+      res.cookie("token", token, cookieOptions);
       new SuccessResponse("Web User Registered!", { user, token }).send(res);
     } else {
       new SuccessResponse("Mobile User Registered!", { user, token }).send(res);
@@ -97,12 +99,14 @@ export const loginUser = asyncHandler(
     const user = await User.findByCredentials(cleanPhoneNumber, password);
     const token = await user.generateAuthToken(deviceType, fcmToken);
     if (deviceType == "web") {
-      res.cookie("token", token, {
+      const isProd = process.env.NODE_ENV === "production";
+      const cookieOptions: CookieOptions = {
         httpOnly: true,
-        secure: true,
-        sameSite: "lax",
+        secure: isProd,
+        sameSite: isProd ? ("none" as "none" | "lax" | "strict") : ("lax" as "none" | "lax" | "strict"),
         maxAge: 30 * 24 * 60 * 60 * 1000,
-      });
+      };
+      res.cookie("token", token, cookieOptions);
       new SuccessResponse("Web User Logged In!", { user, token }).send(res);
     } else {
       new SuccessResponse("Mobile User Logged In!", { user, token }).send(res);

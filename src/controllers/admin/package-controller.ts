@@ -104,6 +104,7 @@ export const subMemberToPackage = asyncHandler(async function (
 ): Promise<void> {
   const { uid, pkgId, pkgStartDate, paymentMethod, paymentDate, amount, note } =
     req.body;
+  const io = req.app.get("io");
   await SubscriptionsService.frontDeskSubscribeToPackage(
     uid,
     pkgId,
@@ -111,7 +112,8 @@ export const subMemberToPackage = asyncHandler(async function (
     paymentMethod,
     paymentDate,
     amount,
-    note
+    note,
+    io
   );
   new SuccessResponse("Package Added!").send(res);
 });
