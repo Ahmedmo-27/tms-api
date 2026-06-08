@@ -8,6 +8,7 @@ import Coach, { ICoach } from "../models/coach";
 import { BadRequestError, ForbiddenError, NotFoundError } from "../core/ApiError";
 import {
   ClientResponseDto,
+  PaginatedClientsResponseDto,
   DeductSessionRequestDto,
   DeductSessionResponseDto,
   MemberPackageResponseDto,
@@ -27,19 +28,56 @@ export class CoachService {
    * Returns the deduplicated list of members who have been booked into any
    * ScheduledClass assigned to the given coach or have PT packages with the coach.
    */
-  static async getClients(coachDocId: Types.ObjectId): Promise<ClientResponseDto[]> {
+  static async getClients(
+    coachDocId: Types.ObjectId,
+    options?: { page?: number; limit?: number; search?: string; filter?: string }
+  ): Promise<PaginatedClientsResponseDto> {
     const clientsMap = new Map<string, ClientResponseDto>();
 
     // Source 1: PT clients
-    const packages = await Package.find({ coachId: coachDocId });
-    const ptPkgIds = packages.map(p => p._id);
+    const ptPackages = await Package.find({ coachId: coachDocId });
+    const ptPkgIds = ptPackages.map(p => p._id);
     const ptMembers = await Member.find({ "packages.pkgId": { $in: ptPkgIds } }).populate<{ uid: any }>("uid");
 
+    // Source 2: Group session clients
+    const classes = await ScheduledClass.find({ coachId: coachDocId });
+    const groupUidSet = new Set<string>();
+    for (const cls of classes) {
+      for (const booking of cls.bookedMembers) {
+        groupUidSet.add(booking.uid.toString());
+      }
+    }
+
+    const groupMembers = [];
+    for (const uidStr of groupUidSet) {
+      const member = await Member.findOne({ uid: new Types.ObjectId(uidStr) }).populate<{ uid: any }>("uid");
+      if (member && member.uid) groupMembers.push(member);
+    }
+
+    // Collect all unique pkgIds from both sets of members to find allowed packages
+    const allPkgIds = new Set<string>();
+    for (const member of ptMembers) {
+      member.packages.forEach(p => allPkgIds.add(p.pkgId.toString()));
+    }
+    for (const member of groupMembers) {
+      member.packages.forEach(p => allPkgIds.add(p.pkgId.toString()));
+    }
+
+    // Fetch the packages to determine which are allowed (owned by coach or general group packages)
+    const packagesInfo = await Package.find({ _id: { $in: Array.from(allPkgIds) } });
+    const allowedPkgIdSet = new Set<string>();
+    for (const pkg of packagesInfo) {
+      if (!pkg.coachId || pkg.coachId.toString() === coachDocId.toString()) {
+        allowedPkgIdSet.add(pkg._id.toString());
+      }
+    }
+
+    // Process PT members
     for (const member of ptMembers) {
       if (!member.uid) continue;
       const uidStr = member.uid._id.toString();
       const activePackagesCount = member.packages.filter(p =>
-        ptPkgIds.some(id => id.equals(p.pkgId)) && p.status === "ACTIVE"
+        allowedPkgIdSet.has(p.pkgId.toString()) && p.status === "ACTIVE"
       ).length;
 
       clientsMap.set(uidStr, {
@@ -52,24 +90,18 @@ export class CoachService {
       });
     }
 
-    // Source 2: Group session clients
-    const classes = await ScheduledClass.find({ coachId: coachDocId });
-    const groupUidSet = new Set<string>();
-    for (const cls of classes) {
-      for (const booking of cls.bookedMembers) {
-        groupUidSet.add(booking.uid.toString());
-      }
-    }
-
-    for (const uidStr of groupUidSet) {
-      const member = await Member.findOne({ uid: new Types.ObjectId(uidStr) }).populate<{ uid: any }>("uid");
-      if (!member || !member.uid) continue;
-
-      const activePackagesCount = member.packages.filter(p => p.status === "ACTIVE").length;
+    // Process Group members
+    for (const member of groupMembers) {
+      const uidStr = member.uid._id.toString();
+      const activePackagesCount = member.packages.filter(p =>
+        allowedPkgIdSet.has(p.pkgId.toString()) && p.status === "ACTIVE"
+      ).length;
 
       const existing = clientsMap.get(uidStr);
       if (existing) {
-        existing.source = [...existing.source, "GROUP"];
+        if (!existing.source.includes("GROUP")) {
+          existing.source = [...existing.source, "GROUP"];
+        }
         existing.activePackagesCount = Math.max(existing.activePackagesCount, activePackagesCount);
       } else {
         clientsMap.set(uidStr, {
@@ -83,7 +115,43 @@ export class CoachService {
       }
     }
 
-    return Array.from(clientsMap.values());
+    let allClients = Array.from(clientsMap.values());
+
+    // Apply search
+    if (options?.search) {
+      const q = options.search.toLowerCase();
+      allClients = allClients.filter(c => 
+        c.name.toLowerCase().includes(q) || c.phoneNumber.includes(options.search!)
+      );
+    }
+
+    // Apply filter
+    if (options?.filter && options.filter !== "All") {
+      const f = options.filter;
+      if (f === "PT only") {
+        allClients = allClients.filter(c => c.source.includes("PT") && !c.source.includes("GROUP"));
+      } else if (f === "Group only") {
+        allClients = allClients.filter(c => c.source.includes("GROUP") && !c.source.includes("PT"));
+      } else if (f === "Both") {
+        allClients = allClients.filter(c => c.source.includes("PT") && c.source.includes("GROUP"));
+      }
+    }
+
+    const total = allClients.length;
+    const page = options?.page ?? 1;
+    const limit = options?.limit ?? 10;
+    const totalPages = Math.ceil(total / limit);
+    const skip = (page - 1) * limit;
+
+    const paginatedClients = allClients.slice(skip, skip + limit);
+
+    return {
+      clients: paginatedClients,
+      total,
+      page,
+      limit,
+      totalPages
+    };
   }
 
   /**
@@ -116,18 +184,20 @@ export class CoachService {
       throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
     }
 
-    // Fetch all Package documents assigned to this coach to build the allowed
-    // pkgId set.  Package.coachId is stored as an ObjectId in MongoDB even
-    // though the TypeScript interface declares it as string — compare via
-    // .toString() to stay safe.
-    const coachPackages = await Package.find({ coachId: coachDocId });
-    const coachPkgIdSet = new Set<string>(
-      coachPackages.map((p) => (p._id as Types.ObjectId).toString()),
-    );
+    // Fetch the package documents referenced by the member
+    const memberPkgIds = member.packages.map(p => p.pkgId);
+    const packagesInfo = await Package.find({ _id: { $in: memberPkgIds } });
+    
+    const allowedPkgIdSet = new Set<string>();
+    for (const pkg of packagesInfo) {
+      if (!pkg.coachId || pkg.coachId.toString() === coachDocId.toString()) {
+        allowedPkgIdSet.add(pkg._id.toString());
+      }
+    }
 
-    // Filter member packages to those whose pkgId is in the coach-assigned set
+    // Filter member packages to those whose pkgId is in the allowed set
     const filtered = member.packages.filter((pkg) =>
-      coachPkgIdSet.has(pkg.pkgId.toString()),
+      allowedPkgIdSet.has(pkg.pkgId.toString()),
     );
 
     if (filtered.length === 0) {
@@ -247,14 +317,11 @@ export class CoachService {
   }
 
   static async getSchedule(coachDocId: Types.ObjectId, weekStart: Date): Promise<ScheduleResponseDto> {
-    const weekEnd = addDays(weekStart, 6);
+    const weekEnd = addDays(weekStart, 7);
     const scheduledClasses = await ScheduledClass.find({
       coachId: coachDocId,
-      startTime: { $gte: weekStart, $lte: weekEnd }
+      startTime: { $gte: weekStart, $lt: weekEnd }
     }).sort({ startTime: 1 });
-
-    const packages = await Package.find({ coachId: coachDocId });
-    const ptPkgIds = packages.map(p => p._id);
 
     const sessionsMap = new Map<string, any[]>();
 
@@ -267,8 +334,19 @@ export class CoachService {
         const member = await Member.findOne({ uid: entry.uid }).populate<{ uid: any }>("uid");
         if (!member || !member.uid) continue;
 
-        const activePtPackage = member.packages.find(p =>
-          ptPkgIds.some(id => id.equals(p.pkgId)) && p.status === "ACTIVE"
+        // Fetch the package documents referenced by the member to check if they are allowed
+        const memberPkgIds = member.packages.map(p => p.pkgId);
+        const packagesInfo = await Package.find({ _id: { $in: memberPkgIds } });
+        
+        const allowedPkgIdSet = new Set<string>();
+        for (const pkg of packagesInfo) {
+          if (!pkg.coachId || pkg.coachId.toString() === coachDocId.toString()) {
+            allowedPkgIdSet.add(pkg._id.toString());
+          }
+        }
+
+        const activePackage = member.packages.find(p =>
+          p.pkgId && allowedPkgIdSet.has(p.pkgId.toString()) && p.status === "ACTIVE"
         );
 
         clients.push({
@@ -276,10 +354,10 @@ export class CoachService {
           name: member.uid.name ?? "",
           phoneNumber: member.uid.phoneNumber ?? "",
           bookingMethod: entry.method,
-          activePackage: activePtPackage ? {
-            pkgId: activePtPackage.pkgId.toString(),
-            pkgStartDate: activePtPackage.pkgStartDate.toISOString(),
-            remainingClasses: activePtPackage.remainingClasses
+          activePackage: activePackage ? {
+            pkgId: activePackage.pkgId.toString(),
+            pkgStartDate: activePackage.pkgStartDate.toISOString(),
+            remainingClasses: activePackage.remainingClasses
           } : null
         });
       }

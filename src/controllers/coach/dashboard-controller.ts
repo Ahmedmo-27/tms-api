@@ -16,8 +16,17 @@ import { BadRequestError } from "../../core/ApiError";
  */
 export const getClients = asyncHandler(async (req: Request, res: Response) => {
   const coachReq = req as CoachAuthRequest;
-  const clients = await CoachService.getClients(coachReq.coachDocId);
-  return new SuccessResponse("Clients found", { clients }).send(res);
+  const { page, limit, search, filter } = req.query;
+  
+  const options = {
+    page: page ? parseInt(page as string, 10) : 1,
+    limit: limit ? parseInt(limit as string, 10) : 10,
+    search: search as string | undefined,
+    filter: filter as string | undefined,
+  };
+
+  const paginatedClients = await CoachService.getClients(coachReq.coachDocId, options);
+  return new SuccessResponse("Clients found", paginatedClients).send(res);
 });
 
 /**
@@ -30,7 +39,8 @@ export const getClients = asyncHandler(async (req: Request, res: Response) => {
 export const getMemberPackages = asyncHandler(async (req: Request, res: Response) => {
   const coachReq = req as CoachAuthRequest;
   const packages = await CoachService.getMemberPackages(coachReq.coachDocId, req.params.memberId);
-  return new SuccessResponse("Packages found", { packages }).send(res);
+  const message = packages.length > 0 ? "Packages found" : "No packages found";
+  return new SuccessResponse(message, { packages }).send(res);
 });
 
 /**

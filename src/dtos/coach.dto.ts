@@ -40,6 +40,14 @@ export interface ClientListResponseDto {
   clients: ClientResponseDto[];
 }
 
+export interface PaginatedClientsResponseDto {
+  clients: ClientResponseDto[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
 export interface CalendarClientDto {
   memberId: string;
   name: string;
@@ -77,6 +85,7 @@ export interface ScheduleResponseDto {
 
 export interface MemberPackageResponseDto {
   pkgId: string;
+  name?: string;
   pkgStartDate: Date;
   pkgEndDate: Date;
   remainingClasses: number;
@@ -111,6 +120,7 @@ export function mapMemberPackageResponseDto(
   const endTime = pkg.pkgEndDate.getTime();
   return {
     pkgId: pkg.pkgId.toString(),
+    name: pkg.name,
     pkgStartDate: pkg.pkgStartDate,
     pkgEndDate: pkg.pkgEndDate,
     remainingClasses: pkg.remainingClasses,
