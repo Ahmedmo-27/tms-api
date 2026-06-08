@@ -16,5 +16,6 @@ router.use("/challenge", challengeRoutes)
 router.use("/feed", feedRoutes)
 router.use("/external", exposedRoutes);
 router.use("/coach", coachRoutes);
+router.use("/api/coach", coachRoutes);
 
 export default router;
