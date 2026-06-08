@@ -187,10 +187,13 @@ export class CoachService {
     let hasPtPackage = false;
     const allowedPkgIdSet = new Set<string>();
     const packageCategoryMap = new Map<string, string>();
+    const packageNameMap = new Map<string, string>();
+
     for (const pkg of packagesInfo) {
       if (!pkg.coachId || pkg.coachId.toString() === coachDocId.toString()) {
         allowedPkgIdSet.add(pkg._id.toString());
         packageCategoryMap.set(pkg._id.toString(), pkg.category);
+        packageNameMap.set(pkg._id.toString(), pkg.name);
         if (pkg.coachId && pkg.coachId.toString() === coachDocId.toString()) {
           hasPtPackage = true;
         }
@@ -214,7 +217,12 @@ export class CoachService {
     return filtered.map((pkg) => {
       const dto = mapMemberPackageResponseDto(pkg);
       const category = packageCategoryMap.get(pkg.pkgId.toString());
-      return { ...dto, isPtPackage: category === "PERSONAL_TRAINING" };
+      const pkgName = packageNameMap.get(pkg.pkgId.toString());
+      return { 
+        ...dto, 
+        name: pkgName || dto.name, 
+        isPtPackage: category === "PERSONAL_TRAINING" 
+      };
     });
   }
 

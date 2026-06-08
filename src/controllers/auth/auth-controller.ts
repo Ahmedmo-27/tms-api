@@ -102,6 +102,7 @@ export const loginUser = asyncHandler(
       token,
       userId: String(user._id),
       role: user.role,
+      name: user.name,
     };
     if (deviceType == "web") {
       const isProd = process.env.NODE_ENV === "production";
