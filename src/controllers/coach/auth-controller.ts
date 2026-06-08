@@ -4,6 +4,8 @@ import User from "../../models/user";
 import { BadRequestError, ForbiddenError } from "../../core/ApiError";
 import { SuccessResponse } from "../../core/ApiResponse";
 import asyncHandler from "../../utils/asyncHandler";
+import Package from "../../models/package";
+import Coach from "../../models/coach";
 
 export const coachLogin = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
@@ -39,9 +41,17 @@ export const coachLogin = asyncHandler(
       res.cookie("token", token, cookieOptions);
     }
 
+    let hasPtSessions = false;
+    const coachDoc = await Coach.findOne({ userId: user._id });
+    if (coachDoc) {
+      const ptPackagesCount = await Package.countDocuments({ coachId: coachDoc._id as Types.ObjectId });
+      hasPtSessions = ptPackagesCount > 0;
+    }
+
     new SuccessResponse("Login successful", {
       token,
-      coachId: (user._id as Types.ObjectId).toString(),
+      coachId: coachDoc ? (coachDoc._id as Types.ObjectId).toString() : (user._id as Types.ObjectId).toString(),
+      hasPtSessions,
     }).send(res);
   }
 );
