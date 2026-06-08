@@ -98,6 +98,11 @@ export const loginUser = asyncHandler(
     const cleanPhoneNumber = phoneNumber.replace(/\s/g, "");
     const user = await User.findByCredentials(cleanPhoneNumber, password);
     const token = await user.generateAuthToken(deviceType, fcmToken);
+    const responseData = {
+      token,
+      userId: String(user._id),
+      role: user.role,
+    };
     if (deviceType == "web") {
       const isProd = process.env.NODE_ENV === "production";
       const cookieOptions: CookieOptions = {
@@ -107,9 +112,9 @@ export const loginUser = asyncHandler(
         maxAge: 30 * 24 * 60 * 60 * 1000,
       };
       res.cookie("token", token, cookieOptions);
-      new SuccessResponse("Web User Logged In!", { user, token }).send(res);
+      new SuccessResponse("Web User Logged In!", responseData).send(res);
     } else {
-      new SuccessResponse("Mobile User Logged In!", { user, token }).send(res);
+      new SuccessResponse("Mobile User Logged In!", responseData).send(res);
     }
   }
 );
