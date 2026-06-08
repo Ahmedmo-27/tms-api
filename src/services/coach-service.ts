@@ -5,6 +5,7 @@ import Package from "../models/package";
 import DeductionLog from "../models/deductionLog";
 import Class from "../models/class";
 import Coach, { ICoach } from "../models/coach";
+import DailyAttendance from "../models/dailyAttendance";
 import { BadRequestError, ForbiddenError, NotFoundError } from "../core/ApiError";
 import {
   ClientResponseDto,
@@ -30,28 +31,30 @@ export class CoachService {
    */
   static async getClients(
     coachDocId: Types.ObjectId,
-    options?: { page?: number; limit?: number; search?: string; filter?: string }
+    options?: { page?: number; limit?: number; search?: string; filter?: string; type?: string }
   ): Promise<PaginatedClientsResponseDto> {
     const clientsMap = new Map<string, ClientResponseDto>();
+    const ptOnly = options?.type === "PT";
 
     // Source 1: PT clients
     const ptPackages = await Package.find({ coachId: coachDocId });
     const ptPkgIds = ptPackages.map(p => p._id);
     const ptMembers = await Member.find({ "packages.pkgId": { $in: ptPkgIds } }).populate<{ uid: any }>("uid");
 
-    // Source 2: Group session clients
-    const classes = await ScheduledClass.find({ coachId: coachDocId });
-    const groupUidSet = new Set<string>();
-    for (const cls of classes) {
-      for (const booking of cls.bookedMembers) {
-        groupUidSet.add(booking.uid.toString());
-      }
-    }
-
+    // Source 2: Group session clients (skipped when PT-only is requested)
     const groupMembers = [];
-    for (const uidStr of groupUidSet) {
-      const member = await Member.findOne({ uid: new Types.ObjectId(uidStr) }).populate<{ uid: any }>("uid");
-      if (member && member.uid) groupMembers.push(member);
+    if (!ptOnly) {
+      const classes = await ScheduledClass.find({ coachId: coachDocId });
+      const groupUidSet = new Set<string>();
+      for (const cls of classes) {
+        for (const booking of cls.bookedMembers) {
+          groupUidSet.add(booking.uid.toString());
+        }
+      }
+      for (const uidStr of groupUidSet) {
+        const member = await Member.findOne({ uid: new Types.ObjectId(uidStr) }).populate<{ uid: any }>("uid");
+        if (member && member.uid) groupMembers.push(member);
+      }
     }
 
     // Collect all unique pkgIds from both sets of members to find allowed packages
@@ -116,6 +119,11 @@ export class CoachService {
     }
 
     let allClients = Array.from(clientsMap.values());
+
+    // When PT-only mode, strip any client that isn't solely PT-sourced
+    if (ptOnly) {
+      allClients = allClients.filter(c => c.source.includes("PT"));
+    }
 
     // Exclude clients with 0 active packages
     allClients = allClients.filter(c => c.activePackagesCount > 0);
@@ -424,5 +432,97 @@ export class CoachService {
       weekEnd: weekEnd.toISOString(),
       days
     };
+  }
+
+  /**
+   * GET /api/coach/scans?date=YYYY-MM-DD
+   * Returns all of the coach's scheduled classes for the given calendar day,
+   * each with its full scan list (member name, phone, time, method, status).
+   */
+  static async getScans(coachDocId: Types.ObjectId, date: Date): Promise<any[]> {
+    // Build a [start-of-day, start-of-next-day) window in UTC
+    const dayStart = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+    const dayEnd   = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + 1));
+
+    const scheduledClasses = await ScheduledClass.find({
+      coachId: coachDocId,
+      startTime: { $gte: dayStart, $lt: dayEnd },
+    })
+      .populate<{ "scans.uid": any }>("scans.uid")
+      .sort({ startTime: 1 });
+
+    const result = [];
+
+    for (const sc of scheduledClasses) {
+      const cls = await Class.findById(sc.cid);
+      if (!cls) continue;
+
+      // Build scan entries — uid is populated as a User document
+      const scans = sc.scans.map((scan: any) => {
+        const user = scan.uid as any; // populated User
+        return {
+          member: user?.name ?? "Unknown",
+          phone:  user?.phoneNumber ?? "",
+          time:   scan.scanTime.toISOString(),
+          method: scan.method ?? "",
+          status: scan.status ? "SUCCESS" : "FAILED",
+        };
+      });
+
+      result.push({
+        scheduledClassId: (sc._id as Types.ObjectId).toString(),
+        classTitle:  cls.title,
+        category:    cls.category,
+        startTime:   format(sc.startTime, "HH:mm"),
+        endTime:     format(sc.endTime,   "HH:mm"),
+        capacity:    sc.availableSlots + sc.bookedMembers.length,
+        bookedCount: sc.bookedMembers.length,
+        scans,
+      });
+    }
+
+    return result;
+  }
+
+  /**
+   * GET /api/coach/pt-attendance?date=YYYY-MM-DD
+   * Returns the PT check-in entries for the given date that belong to the
+   * authenticated coach (identified by their PT package names).
+   * Does NOT return the coach/package name — only member identity and status.
+   */
+  static async getPtAttendance(coachDocId: Types.ObjectId, date: Date): Promise<any[]> {
+    // 1. Collect all PT package names assigned to this coach
+    const ptPackages = await Package.find({
+      coachId: coachDocId,
+      category: "PERSONAL_TRAINING",
+    });
+    const coachPkgNames = new Set(ptPackages.map((p) => p.name));
+
+    if (coachPkgNames.size === 0) return [];
+
+    // 2. Find the DailyAttendance document for the requested date
+    const dayStart = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+
+    const attendance = await DailyAttendance.findOne({ date: dayStart }).populate<{
+      "ptAttendance.uid": any;
+    }>("ptAttendance.uid");
+
+    if (!attendance) return [];
+
+    // 3. Filter ptAttendance entries by coach package names and map to response
+    const result: any[] = [];
+    for (const entry of attendance.ptAttendance) {
+      if (!coachPkgNames.has(entry.method)) continue;
+      const user = entry.uid as any; // populated User
+      result.push({
+        member: user?.name ?? "Unknown",
+        phone:  user?.phoneNumber ?? "",
+        time:   entry.time.toISOString(),
+        method: entry.method,
+        status: entry.status, // "SUCCESS" | "FAILED"
+      });
+    }
+
+    return result;
   }
 }

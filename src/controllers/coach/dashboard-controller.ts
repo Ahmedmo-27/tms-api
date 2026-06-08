@@ -16,13 +16,14 @@ import { BadRequestError } from "../../core/ApiError";
  */
 export const getClients = asyncHandler(async (req: Request, res: Response) => {
   const coachReq = req as CoachAuthRequest;
-  const { page, limit, search, filter } = req.query;
+  const { page, limit, search, filter, type } = req.query;
   
   const options = {
     page: page ? parseInt(page as string, 10) : 1,
     limit: limit ? parseInt(limit as string, 10) : 10,
     search: search as string | undefined,
     filter: filter as string | undefined,
+    type: type as string | undefined,
   };
 
   const paginatedClients = await CoachService.getClients(coachReq.coachDocId, options);
@@ -71,4 +72,48 @@ export const getSchedule = asyncHandler(async (req: Request, res: Response) => {
 
   const schedule = await CoachService.getSchedule(coachReq.coachDocId, weekStart);
   return new SuccessResponse("Schedule fetched", schedule).send(res);
+});
+
+/**
+ * GET /api/coach/scans?date=YYYY-MM-DD
+ * Returns the authenticated coach's scheduled classes for the given day,
+ * each with its scan/check-in data.
+ */
+export const getScans = asyncHandler(async (req: Request, res: Response) => {
+  const coachReq = req as CoachAuthRequest;
+
+  let date: Date;
+  if (req.query.date) {
+    date = new Date(req.query.date as string);
+    if (isNaN(date.getTime())) {
+      throw new BadRequestError("INVALID_DATE", "Invalid date provided. Expected YYYY-MM-DD.");
+    }
+  } else {
+    date = new Date();
+  }
+
+  const scans = await CoachService.getScans(coachReq.coachDocId, date);
+  return new SuccessResponse("Scans fetched", scans).send(res);
+});
+
+/**
+ * GET /api/coach/pt-attendance?date=YYYY-MM-DD
+ * Returns the PT daily attendance entries for the given date that are linked
+ * to the authenticated coach via their PT package names.
+ */
+export const getPtAttendance = asyncHandler(async (req: Request, res: Response) => {
+  const coachReq = req as CoachAuthRequest;
+
+  let date: Date;
+  if (req.query.date) {
+    date = new Date(req.query.date as string);
+    if (isNaN(date.getTime())) {
+      throw new BadRequestError("INVALID_DATE", "Invalid date provided. Expected YYYY-MM-DD.");
+    }
+  } else {
+    date = new Date();
+  }
+
+  const ptAttendance = await CoachService.getPtAttendance(coachReq.coachDocId, date);
+  return new SuccessResponse("PT attendance fetched", ptAttendance).send(res);
 });
