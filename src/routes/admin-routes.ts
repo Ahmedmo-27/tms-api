@@ -69,6 +69,13 @@ import {
   createOrder,
   deleteOrder,
 } from "../controllers/admin/orders-controller";
+import {
+  createMemberRefund,
+  createCashOut,
+  getRefundByPaymentId,
+  searchMembers,
+  getMemberRecentPayments,
+} from "../controllers/admin/refunds-controller";
 const adminRoutes = express.Router();
 
 // Member Routes
@@ -375,6 +382,40 @@ adminRoutes.get(
   authenticateUser,
   authorizeUser(["admin"]),
   getPayments
+);
+
+// Refund Routes
+adminRoutes.post(
+  "/refunds/member",
+  authenticateUser,
+  authorizeUser(["admin"]),
+  createMemberRefund
+);
+adminRoutes.post(
+  "/refunds/cashout",
+  authenticateUser,
+  authorizeUser(["admin"]),
+  createCashOut
+);
+adminRoutes.get(
+  "/refunds",
+  authenticateUser,
+  authorizeUser(["admin"]),
+  getRefundByPaymentId
+);
+
+// Member Search Route
+adminRoutes.get(
+  "/members/search",
+  authenticateUser,
+  authorizeUser(["admin", "fd"]),
+  searchMembers
+);
+adminRoutes.get(
+  "/members/:memberId/recent-payments",
+  authenticateUser,
+  authorizeUser(["admin"]),
+  getMemberRecentPayments
 );
 
 // Products Routes\

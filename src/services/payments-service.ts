@@ -1,10 +1,84 @@
 import Payment from "../models/payment";
+import Refund, { IRefund } from "../models/refund";
 import { ClientSession, Types } from "mongoose";
 import axios from "axios";
 import { BadRequestError, NotFoundError } from "../core/ApiError";
 import { IPayment } from "../models/payment";
 import logger from "../config/logger";
 import { refundPaymentToRentalSystem } from "./egygap-erp-service";
+
+export type PaymentListEntry = IPayment & {
+  entryType?: "REFUND" | "CASHOUT";
+  isMoneyOut?: boolean;
+  refundId?: Types.ObjectId;
+  linkedPaymentId?: Types.ObjectId | null;
+};
+
+function buildDateRangeQuery(
+  dateField: string,
+  dateString?: string,
+  month?: number,
+  year?: number
+): Record<string, unknown> {
+  const query: Record<string, unknown> = {};
+  const currentYear = new Date().getUTCFullYear();
+  const targetYear = year || currentYear;
+
+  if (dateString && dateString !== "") {
+    const date = new Date(dateString);
+    const startOfDay = new Date(
+      Date.UTC(
+        date.getUTCFullYear(),
+        date.getUTCMonth(),
+        date.getUTCDate(),
+        0,
+        0,
+        0
+      )
+    );
+    const endOfDay = new Date(
+      Date.UTC(
+        date.getUTCFullYear(),
+        date.getUTCMonth(),
+        date.getUTCDate() + 1,
+        0,
+        0,
+        0
+      )
+    );
+    query[dateField] = { $gte: startOfDay, $lt: endOfDay };
+  } else if (month) {
+    const m = month - 1;
+    const start = new Date(Date.UTC(targetYear, m, 1));
+    const end = new Date(Date.UTC(targetYear, m + 1, 1));
+    query[dateField] = { $gte: start, $lt: end };
+  }
+
+  return query;
+}
+
+function mapRefundToPaymentEntry(refund: IRefund): PaymentListEntry {
+  const isCashOut = refund.type === "CASHOUT";
+
+  return {
+    _id: refund._id as Types.ObjectId,
+    uid: refund.memberId ?? undefined,
+    nonMemberName: isCashOut ? "Cash Out" : (refund.memberName ?? ""),
+    nonMemberPhone: "",
+    // Negative amount so daily revenue totals subtract cash outs and refunds
+    amount: -refund.amount,
+    paymentMethod: "CASH",
+    paymentTime: refund.createdAt,
+    purpose: "OTHER",
+    isRefunded: !isCashOut,
+    refundReason: refund.reason,
+    note: refund.reason,
+    entryType: refund.type,
+    isMoneyOut: true,
+    refundId: refund._id as Types.ObjectId,
+    linkedPaymentId: refund.paymentId,
+  } as PaymentListEntry;
+}
 
 export class PaymentsService {
   static token = Buffer.from(
@@ -23,53 +97,44 @@ export class PaymentsService {
     dateString?: string,
     month?: number,
     year?: number
-  ): Promise<IPayment[]> {
-    const query: Record<string, any> = {};
+  ): Promise<PaymentListEntry[]> {
+    const paymentQuery = buildDateRangeQuery(
+      "paymentTime",
+      dateString,
+      month,
+      year
+    );
+    const refundQuery = {
+      ...buildDateRangeQuery("createdAt", dateString, month, year),
+      // Standalone refunds/cash outs only — linked refunds already appear on their Payment row
+      paymentId: null,
+    };
 
-    const currentYear = new Date().getUTCFullYear();
-    const targetYear = year || currentYear;
+    const [payments, refunds] = await Promise.all([
+      Payment.find(paymentQuery)
+        .populate("uid")
+        .populate({
+          path: "scid",
+          populate: { path: "cid", populate: { path: "locations" } },
+        })
+        .populate("pkgId"),
+      Refund.find(refundQuery)
+        .populate("memberId", "name phoneNumber email")
+        .sort({ createdAt: -1 }),
+    ]);
 
-    if (dateString && dateString !== "") {
-      const date = new Date(dateString);
-      const startOfDay = new Date(
-        Date.UTC(
-          date.getUTCFullYear(),
-          date.getUTCMonth(),
-          date.getUTCDate(),
-          0,
-          0,
-          0
-        )
-      );
+    const refundEntries = refunds.map((refund) => {
+      const entry = mapRefundToPaymentEntry(refund);
+      if (refund.memberId) {
+        entry.uid = refund.memberId as Types.ObjectId;
+      }
+      return entry;
+    });
 
-      const endOfDay = new Date(
-        Date.UTC(
-          date.getUTCFullYear(),
-          date.getUTCMonth(),
-          date.getUTCDate() + 1,
-          0,
-          0,
-          0
-        )
-      );
-      query.paymentTime = {
-        $gte: startOfDay,
-        $lt: endOfDay,
-      };
-    } else if (month) {
-      const m = month - 1;
-      const start = new Date(Date.UTC(targetYear, m, 1));
-      const end = new Date(Date.UTC(targetYear, m + 1, 1));
-      query.paymentTime = { $gte: start, $lt: end };
-    }
-    const payments = await Payment.find(query)
-      .populate("uid")
-      .populate({
-        path: "scid",
-        populate: { path: "cid", populate: { path: "locations" } },
-      })
-      .populate("pkgId");
-    return payments;
+    return [...payments, ...refundEntries].sort(
+      (a, b) =>
+        new Date(b.paymentTime).getTime() - new Date(a.paymentTime).getTime()
+    );
   }
 
   static async getExposedPayments(

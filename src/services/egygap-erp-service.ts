@@ -2,6 +2,7 @@ import axios from "axios";
 import { Types } from "mongoose";
 import logger from "../config/logger";
 import { IPayment } from "../models/payment";
+import { IRefund } from "../models/refund";
 import { InternalError } from "../core/ApiError";
 
 // Disable on testing
@@ -111,6 +112,28 @@ async function createRentalPayment(body: any) {
   }
 }
 
+/** Shared ERP payload for any money-out (refunds, cash outs, payment reversals) */
+export function buildNegativeErpPayload(params: {
+  amount: number;
+  invoiceDate: string;
+  externalId: string;
+  externalReference: string;
+  typeName: string;
+}) {
+  const negativeAmount = -Math.abs(params.amount);
+
+  return {
+    store: RENTAL_STORE_ID,
+    invoice_date: params.invoiceDate,
+    invoice_amount: negativeAmount,
+    net_amount: negativeAmount,
+    external_id: params.externalId,
+    external_reference: params.externalReference,
+    external_type: 0,
+    external_type_name: params.typeName,
+  };
+}
+
 /** PUBLIC FUNCTION → Call this from your main payment handler */
 export async function sendPaymentToRentalSystem(payment: IPayment) {
   // Map your internal payment to ERP request format
@@ -132,23 +155,63 @@ export async function sendPaymentToRentalSystem(payment: IPayment) {
   return createRentalPayment(payload);
 }
 
-/** PUBLIC FUNCTION → Call this to refund a payment from the ERP */
-export async function refundPaymentToRentalSystem(payment: IPayment) {
-  // Refund uses the current date instead of the original payment date
+/** ERP payload for automated payment refunds (drop-in cancel, class cancel, etc.) */
+export function buildPaymentRefundErpPayload(
+  payment: IPayment,
+  amount?: number
+) {
+  const paymentId = (payment._id as Types.ObjectId).toString();
+  const refundAmount = amount ?? payment.amount;
   const invoiceDate = new Date().toISOString().substring(0, 10);
-  const payload = {
-    store: RENTAL_STORE_ID,
-    invoice_date: invoiceDate,
-    invoice_amount: -payment.amount,
-    net_amount: -payment.amount,
-    // Add -refund to avoid external_id collision
-    external_id: `${RENTAL_STORE_ID}-refund-${(payment._id as Types.ObjectId).toString()}`,    
-    external_reference: `refund-${(payment._id as Types.ObjectId).toString()}`,  
-    external_type: 0,                
-    external_type_name: "Active"
-  };
+  const typeName = payment.refundReason
+    ? `Payment Refund: ${payment.refundReason}`
+    : "Payment Refund";
 
-  // Ensure logged-in
+  return buildNegativeErpPayload({
+    amount: refundAmount,
+    invoiceDate,
+    externalId: `${RENTAL_STORE_ID}-refund-${paymentId}`,
+    externalReference: `refund-${paymentId}`,
+    typeName,
+  });
+}
+
+/** PUBLIC FUNCTION → Call this to refund a payment from the ERP */
+export async function refundPaymentToRentalSystem(
+  payment: IPayment,
+  amount?: number
+) {
+  const payload = buildPaymentRefundErpPayload(payment, amount);
+
+  if (!sessionCookie) await loginToERP();
+
+  return createRentalPayment(payload);
+}
+
+/** ERP payload for manual member refunds and cash outs recorded on the Refunds page */
+export function buildRefundErpPayload(refund: IRefund) {
+  const refundId = (refund._id as Types.ObjectId).toString();
+  const invoiceDate = new Date(refund.createdAt).toISOString().substring(0, 10);
+  const typeSlug = refund.type === "CASHOUT" ? "cashout" : "refund";
+  const typeLabel =
+    refund.type === "CASHOUT"
+      ? "Cash Out"
+      : refund.paymentId
+        ? `Member Refund (linked): ${refund.reason}`
+        : `Member Refund: ${refund.reason}`;
+
+  return buildNegativeErpPayload({
+    amount: refund.amount,
+    invoiceDate,
+    externalId: `${RENTAL_STORE_ID}-${typeSlug}-${refundId}`,
+    externalReference: `${typeSlug}-${refundId}`,
+    typeName: typeLabel,
+  });
+}
+
+export async function sendRefundToRentalSystem(refund: IRefund) {
+  const payload = buildRefundErpPayload(refund);
+
   if (!sessionCookie) await loginToERP();
 
   return createRentalPayment(payload);

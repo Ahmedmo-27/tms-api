@@ -43,6 +43,8 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 });
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(specs));
 app.use(router);
+// Mirror all routes under /api for dashboard clients that prefix requests with /api
+app.use("/api", router);
 
 app.get("/", (req, res) => {
   res.send("API running!");
