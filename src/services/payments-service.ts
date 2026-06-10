@@ -115,49 +115,80 @@ export class PaymentsService {
         .sort({ createdAt: -1 }),
     ]);
 
+    const purposeLabels: Record<string, string> = {
+      DROPIN: "Drop-in",
+      PACKAGE: "Package",
+      WALKIN: "Walk-in",
+      NON_USER_BOOKING: "Non-user booking",
+      NON_USER_PACKAGE: "Non-user package",
+      OTHER: "Other",
+    };
+
+    function buildPaymentLabel(p: IPayment): string {
+      let itemName: string = purposeLabels[p.purpose] ?? p.purpose;
+      if (p.purpose === "PACKAGE" && p.pkgId) {
+        const pkg = p.pkgId as unknown as { name: string };
+        itemName = pkg.name;
+      } else if (p.scid) {
+        const sc = p.scid as unknown as { cid?: { title?: string } };
+        if (sc.cid?.title) itemName = sc.cid.title;
+      }
+      const dateStr = p.paymentTime.toLocaleDateString("en-GB", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      });
+      return `${purposeLabels[p.purpose] ?? p.purpose}: ${itemName} · EGP ${p.amount} · ${dateStr}`;
+    }
+
+    // Build a quick lookup map from the already-fetched payments (same date window)
+    const paymentMap = new Map<string, IPayment>(
+      payments.map((p) => [(p._id as Types.ObjectId).toString(), p])
+    );
+
+    // First pass: stamp labels for refunds whose linked payment is in the current window
+    const missingPaymentIds: Types.ObjectId[] = [];
     const refundEntries = refunds.map((refund) => {
       const entry = mapRefundToPaymentEntry(refund);
       if (refund.memberId) {
         entry.uid = refund.memberId as Types.ObjectId;
       }
 
-      // Stamp the label of the original purchase onto the refund entry so the
-      // UI can show "Refunded for: Package: 5 Studio · EGP 300 · 10 Jun 2026"
       if (refund.paymentId) {
-        const linkedPayment = payments.find(
-          (p) => (p._id as Types.ObjectId).toString() === refund.paymentId!.toString()
-        );
-        if (linkedPayment) {
-          const purposeLabels: Record<string, string> = {
-            DROPIN: "Drop-in",
-            PACKAGE: "Package",
-            WALKIN: "Walk-in",
-            NON_USER_BOOKING: "Non-user booking",
-            NON_USER_PACKAGE: "Non-user package",
-            OTHER: "Other",
-          };
-
-          let itemName: string = purposeLabels[linkedPayment.purpose] ?? linkedPayment.purpose;
-          if (linkedPayment.purpose === "PACKAGE" && linkedPayment.pkgId) {
-            const pkg = linkedPayment.pkgId as unknown as { name: string };
-            itemName = pkg.name;
-          } else if (linkedPayment.scid) {
-            const sc = linkedPayment.scid as unknown as { cid?: { title?: string } };
-            if (sc.cid?.title) itemName = sc.cid.title;
-          }
-
-          const dateStr = linkedPayment.paymentTime.toLocaleDateString("en-GB", {
-            day: "2-digit",
-            month: "short",
-            year: "numeric",
-          });
-
-          entry.paymentLabel = `${purposeLabels[linkedPayment.purpose] ?? linkedPayment.purpose}: ${itemName} · EGP ${linkedPayment.amount} · ${dateStr}`;
+        const linked = paymentMap.get(refund.paymentId.toString());
+        if (linked) {
+          entry.paymentLabel = buildPaymentLabel(linked);
+        } else {
+          // Linked payment is outside the current date window — resolve later
+          missingPaymentIds.push(refund.paymentId);
         }
       }
 
       return entry;
     });
+
+    // Second pass: fetch any cross-date linked payments in one extra query
+    if (missingPaymentIds.length > 0) {
+      const extraPayments = await Payment.find({ _id: { $in: missingPaymentIds } })
+        .populate({
+          path: "scid",
+          populate: { path: "cid", populate: { path: "locations" } },
+        })
+        .populate("pkgId");
+
+      const extraMap = new Map<string, IPayment>(
+        extraPayments.map((p) => [(p._id as Types.ObjectId).toString(), p])
+      );
+
+      for (const entry of refundEntries) {
+        if (!entry.paymentLabel && entry.linkedPaymentId) {
+          const linked = extraMap.get(entry.linkedPaymentId.toString());
+          if (linked) {
+            entry.paymentLabel = buildPaymentLabel(linked);
+          }
+        }
+      }
+    }
 
     return [...payments, ...refundEntries].sort(
       (a, b) =>
