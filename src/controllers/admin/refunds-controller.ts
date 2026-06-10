@@ -209,7 +209,7 @@ export const getRefundByPaymentId = asyncHandler(
       res.status(200).json({
         statusCode: 200,
         message: "Refunds Fetched!",
-        data: refunds.map(mapRefundResponseDto),
+        data: refunds.map((r) => mapRefundResponseDto(r)),
       });
       return;
     }
