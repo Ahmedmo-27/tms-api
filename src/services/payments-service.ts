@@ -13,6 +13,7 @@ export type PaymentListEntry = IPayment & {
   isMoneyOut?: boolean;
   refundId?: Types.ObjectId;
   linkedPaymentId?: Types.ObjectId | null;
+  paymentLabel?: string | null;
 };
 
 function buildDateRangeQuery(
@@ -119,6 +120,42 @@ export class PaymentsService {
       if (refund.memberId) {
         entry.uid = refund.memberId as Types.ObjectId;
       }
+
+      // Stamp the label of the original purchase onto the refund entry so the
+      // UI can show "Refunded for: Package: 5 Studio · EGP 300 · 10 Jun 2026"
+      if (refund.paymentId) {
+        const linkedPayment = payments.find(
+          (p) => (p._id as Types.ObjectId).toString() === refund.paymentId!.toString()
+        );
+        if (linkedPayment) {
+          const purposeLabels: Record<string, string> = {
+            DROPIN: "Drop-in",
+            PACKAGE: "Package",
+            WALKIN: "Walk-in",
+            NON_USER_BOOKING: "Non-user booking",
+            NON_USER_PACKAGE: "Non-user package",
+            OTHER: "Other",
+          };
+
+          let itemName: string = purposeLabels[linkedPayment.purpose] ?? linkedPayment.purpose;
+          if (linkedPayment.purpose === "PACKAGE" && linkedPayment.pkgId) {
+            const pkg = linkedPayment.pkgId as unknown as { name: string };
+            itemName = pkg.name;
+          } else if (linkedPayment.scid) {
+            const sc = linkedPayment.scid as unknown as { cid?: { title?: string } };
+            if (sc.cid?.title) itemName = sc.cid.title;
+          }
+
+          const dateStr = linkedPayment.paymentTime.toLocaleDateString("en-GB", {
+            day: "2-digit",
+            month: "short",
+            year: "numeric",
+          });
+
+          entry.paymentLabel = `${purposeLabels[linkedPayment.purpose] ?? linkedPayment.purpose}: ${itemName} · EGP ${linkedPayment.amount} · ${dateStr}`;
+        }
+      }
+
       return entry;
     });
 
