@@ -6,6 +6,8 @@ import { BadRequestError, NotFoundError } from "../core/ApiError";
 import { IPayment } from "../models/payment";
 import logger from "../config/logger";
 import { refundPaymentToRentalSystem } from "./egygap-erp-service";
+import { startOfDay, endOfDay } from "date-fns";
+import { toZonedTime } from "date-fns-tz";
 
 export type PaymentListEntry = IPayment & {
   entryType?: "REFUND" | "CASHOUT";
@@ -23,34 +25,27 @@ function buildDateRangeQuery(
   const query: Record<string, unknown> = {};
   const currentYear = new Date().getUTCFullYear();
   const targetYear = year || currentYear;
+  const timeZone = "Africa/Cairo";
 
   if (dateString && dateString !== "") {
     const date = new Date(dateString);
-    const startOfDay = new Date(
-      Date.UTC(
-        date.getUTCFullYear(),
-        date.getUTCMonth(),
-        date.getUTCDate(),
-        0,
-        0,
-        0
-      )
-    );
-    const endOfDay = new Date(
-      Date.UTC(
-        date.getUTCFullYear(),
-        date.getUTCMonth(),
-        date.getUTCDate() + 1,
-        0,
-        0,
-        0
-      )
-    );
-    query[dateField] = { $gte: startOfDay, $lt: endOfDay };
+    if (!isNaN(date.getTime())) {
+      const start = toZonedTime(startOfDay(date), timeZone);
+      const end = toZonedTime(endOfDay(date), timeZone);
+      query[dateField] = { $gte: start, $lte: end };
+    }
   } else if (month) {
     const m = month - 1;
-    const start = new Date(Date.UTC(targetYear, m, 1));
-    const end = new Date(Date.UTC(targetYear, m + 1, 1));
+    // For month queries, we can construct the date strings to ensure they are interpreted correctly
+    const startStr = `${targetYear}-${String(m + 1).padStart(2, '0')}-01T00:00:00`;
+    const startDate = new Date(startStr);
+    
+    // Get the last day of the month
+    const nextMonthStr = `${m === 11 ? targetYear + 1 : targetYear}-${String(m === 11 ? 1 : m + 2).padStart(2, '0')}-01T00:00:00`;
+    const endDate = new Date(nextMonthStr);
+
+    const start = toZonedTime(startDate, timeZone);
+    const end = toZonedTime(endDate, timeZone);
     query[dateField] = { $gte: start, $lt: end };
   }
 
@@ -146,38 +141,28 @@ export class PaymentsService {
 
     const currentYear = new Date().getUTCFullYear();
     const targetYear = year || currentYear;
+    const timeZone = "Africa/Cairo";
 
     if (dateString && dateString !== "") {
       const date = new Date(dateString);
-      const startOfDay = new Date(
-        Date.UTC(
-          date.getUTCFullYear(),
-          date.getUTCMonth(),
-          date.getUTCDate(),
-          0,
-          0,
-          0
-        )
-      );
-
-      const endOfDay = new Date(
-        Date.UTC(
-          date.getUTCFullYear(),
-          date.getUTCMonth(),
-          date.getUTCDate() + 1,
-          0,
-          0,
-          0
-        )
-      );
-      query.paymentTime = {
-        $gte: startOfDay,
-        $lt: endOfDay,
-      };
+      if (!isNaN(date.getTime())) {
+        const start = toZonedTime(startOfDay(date), timeZone);
+        const end = toZonedTime(endOfDay(date), timeZone);
+        query.paymentTime = {
+          $gte: start,
+          $lt: end,
+        };
+      }
     } else if (month) {
       const m = month - 1;
-      const start = new Date(Date.UTC(targetYear, m, 1));
-      const end = new Date(Date.UTC(targetYear, m + 1, 1));
+      const startStr = `${targetYear}-${String(m + 1).padStart(2, '0')}-01T00:00:00`;
+      const startDate = new Date(startStr);
+      
+      const nextMonthStr = `${m === 11 ? targetYear + 1 : targetYear}-${String(m === 11 ? 1 : m + 2).padStart(2, '0')}-01T00:00:00`;
+      const endDate = new Date(nextMonthStr);
+
+      const start = toZonedTime(startDate, timeZone);
+      const end = toZonedTime(endDate, timeZone);
       query.paymentTime = { $gte: start, $lt: end };
     }
 
