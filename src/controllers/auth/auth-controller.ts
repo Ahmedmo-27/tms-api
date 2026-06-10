@@ -62,7 +62,7 @@ export const registerUser = asyncHandler(
       data: { name, email, phoneNumber, role },
     });
     const cleanPhoneNumber = phoneNumber.replace(/\s/g, "");
-    
+
     // Check if user exists with phone
     if (await User.findOne({ phoneNumber: cleanPhoneNumber }))
       throw new ConflictError("PHONE_ALREADY_EXISTS", "Phone number already exists", {
@@ -102,7 +102,7 @@ export const registerUser = asyncHandler(
 
 export const loginUser = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
-    const { phoneNumber, password , fcmToken} = req.body;
+    const { phoneNumber, password, fcmToken } = req.body;
     //verify fcmToken here
     const deviceType = req.headers["x-device-type"] ? "mobile" : "web";
     logger.info("Started user login", {
@@ -125,7 +125,7 @@ export const loginUser = asyncHandler(
       if (coachDoc) {
         const ptPackagesCount = await Package.countDocuments({ coachId: coachDoc._id as Types.ObjectId });
         hasPtSessions = ptPackagesCount > 0;
-        
+
         const scheduledClassesCount = await ScheduledClass.countDocuments({ coachId: coachDoc._id as Types.ObjectId });
         hasScheduledClasses = scheduledClassesCount > 0;
       }
@@ -151,7 +151,7 @@ export const loginUser = asyncHandler(
 export const logoutUser = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const authReq = req as AuthRequest;
-    const {fcmToken} = req.body
+    const { fcmToken } = req.body
     logger.info("Started user logout", {
       data: { user: authReq.user },
     });
@@ -237,9 +237,9 @@ export const deactivateAccount = asyncHandler(
 export const registerCoachUser = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const { name, email, password, phoneNumber, coachId } = req.body;
-    
+
     const cleanPhoneNumber = phoneNumber.replace(/\s/g, "");
-    
+
     // Check if user exists with phone
     if (await User.findOne({ phoneNumber: cleanPhoneNumber }))
       throw new ConflictError("PHONE_ALREADY_EXISTS", "Phone number already exists", {

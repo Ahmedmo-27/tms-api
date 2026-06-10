@@ -7,6 +7,7 @@ import { runInTransaction } from "../../utils/transaction";
 import Refund from "../../models/refund";
 import Payment from "../../models/payment";
 import User from "../../models/user";
+import Member from "../../models/member";
 import {
   CreateMemberRefundDto,
   CreateCashOutDto,
@@ -264,6 +265,9 @@ export const getMemberRecentPayments = asyncHandler(
       throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
     }
 
+    const memberDoc = await Member.findOne({ uid: memberId });
+    const memberPackages = memberDoc ? memberDoc.packages : [];
+
     const payments = await Payment.find({
       uid: memberId,
       isRefunded: false,
@@ -276,10 +280,60 @@ export const getMemberRecentPayments = asyncHandler(
         populate: { path: "cid", select: "title" },
       });
 
+    const getUidString = (uid: any): string => {
+      if (!uid) return "";
+      if (uid instanceof Types.ObjectId || typeof uid === "string") {
+        return uid.toString();
+      }
+      if (uid._id) {
+        return uid._id.toString();
+      }
+      return uid.toString();
+    };
+
+    const filteredPayments = [];
+    for (const payment of payments) {
+      if (payment.scid) {
+        const scheduledClass = payment.scid as any;
+        const scans = scheduledClass.scans || [];
+        const hasAttended = scans.some(
+          (scan: any) =>
+            getUidString(scan.uid) === memberId.toString() &&
+            scan.status === true
+        );
+        if (hasAttended) {
+          continue;
+        }
+      }
+      if (payment.pkgId) {
+        const pkgIdStr = payment.pkgId.toString();
+        const matchingPkg = memberPackages
+          .filter((pkg: any) => pkg.pkgId.toString() === pkgIdStr)
+          .reduce((closest: any, current: any) => {
+            if (!closest) return current;
+            const closestDiff = Math.abs(new Date(closest.pkgStartDate).getTime() - new Date(payment.paymentTime).getTime());
+            const currentDiff = Math.abs(new Date(current.pkgStartDate).getTime() - new Date(payment.paymentTime).getTime());
+            return currentDiff < closestDiff ? current : closest;
+          }, null);
+
+        if (matchingPkg) {
+          const isExpired =
+            matchingPkg.status === "EXPIRED" ||
+            matchingPkg.status === "COMPLETED" ||
+            matchingPkg.status === "DELETED" ||
+            new Date(matchingPkg.pkgEndDate) < new Date();
+          if (isExpired) {
+            continue;
+          }
+        }
+      }
+      filteredPayments.push(payment);
+    }
+
     res.status(200).json({
       statusCode: 200,
       message: "Member Payments Found!",
-      data: payments.map(mapMemberRecentPaymentDto),
+      data: filteredPayments.map(mapMemberRecentPaymentDto),
     });
   }
 );

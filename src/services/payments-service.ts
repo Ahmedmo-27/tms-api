@@ -97,8 +97,8 @@ export class PaymentsService {
     );
     const refundQuery = {
       ...buildDateRangeQuery("createdAt", dateString, month, year),
-      // Standalone refunds/cash outs only — linked refunds already appear on their Payment row
-      paymentId: null,
+      // Include ALL refunds (both standalone and linked to a payment) so each
+      // refund appears as its own negative row alongside the original purchase.
     };
 
     const [payments, refunds] = await Promise.all([
