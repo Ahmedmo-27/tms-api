@@ -33,6 +33,7 @@ export interface RefundResponseDto {
   memberName: string | null;
   memberId: string | null;
   paymentId: string | null;
+  paymentLabel: string | null;
   recordedBy: { _id: string; name: string };
   createdAt: Date;
 }
@@ -109,7 +110,7 @@ export function mapMemberRecentPaymentDto(payment: IPayment): MemberRecentPaymen
 // Mapper functions
 // ---------------------------------------------------------------------------
 
-export function mapRefundResponseDto(refund: IRefund): RefundResponseDto {
+export function mapRefundResponseDto(refund: IRefund, paymentLabel?: string | null): RefundResponseDto {
   const recordedBy = refund.recordedBy as unknown as {
     _id: Types.ObjectId;
     name: string;
@@ -123,6 +124,7 @@ export function mapRefundResponseDto(refund: IRefund): RefundResponseDto {
     memberName: refund.memberName,
     memberId: refund.memberId ? refund.memberId.toString() : null,
     paymentId: refund.paymentId ? refund.paymentId.toString() : null,
+    paymentLabel: paymentLabel ?? null,
     recordedBy: {
       _id: recordedBy._id.toString(),
       name: recordedBy.name,

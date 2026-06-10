@@ -62,10 +62,19 @@ export const registerUser = asyncHandler(
       data: { name, email, phoneNumber, role },
     });
     const cleanPhoneNumber = phoneNumber.replace(/\s/g, "");
+    
+    // Check if user exists with phone
     if (await User.findOne({ phoneNumber: cleanPhoneNumber }))
-      throw new ConflictError("USER_ALREADY_EXISTS", "User already exists", {
+      throw new ConflictError("PHONE_ALREADY_EXISTS", "Phone number already exists", {
         phoneNumber,
       });
+
+    // Check if user exists with email
+    if (await User.findOne({ email: email.toLowerCase() }))
+      throw new ConflictError("EMAIL_ALREADY_EXISTS", "Email already exists", {
+        email,
+      });
+
     const user = new User({
       name,
       email: email.toLowerCase(),
@@ -231,10 +240,16 @@ export const registerCoachUser = asyncHandler(
     
     const cleanPhoneNumber = phoneNumber.replace(/\s/g, "");
     
-    // Check if user exists
+    // Check if user exists with phone
     if (await User.findOne({ phoneNumber: cleanPhoneNumber }))
-      throw new ConflictError("USER_ALREADY_EXISTS", "User already exists", {
+      throw new ConflictError("PHONE_ALREADY_EXISTS", "Phone number already exists", {
         phoneNumber,
+      });
+
+    // Check if user exists with email
+    if (await User.findOne({ email: email.toLowerCase() }))
+      throw new ConflictError("EMAIL_ALREADY_EXISTS", "Email already exists", {
+        email,
       });
 
     // Verify coach exists and isn't linked

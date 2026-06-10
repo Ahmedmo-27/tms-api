@@ -11,13 +11,14 @@ import {
   CreateMemberRefundDto,
   CreateCashOutDto,
   mapRefundResponseDto,
-  mapMemberSearchResultDto,
   mapMemberRecentPaymentDto,
+  mapMemberSearchResultDto,
 } from "../../dtos/refund.dto";
 import { sendRefundToRentalSystem, refundPaymentToRentalSystem } from "../../services/egygap-erp-service";
 import logger from "../../config/logger";
 import { IRefund } from "../../models/refund";
 import { IPayment } from "../../models/payment";
+import { startOfDay, endOfDay } from "date-fns";
 
 async function syncRefundToErp(
   refund: IRefund,
@@ -136,6 +137,49 @@ export const createCashOut = asyncHandler(
     await refund.populate("recordedBy", "name");
     await syncRefundToErp(refund);
     sendCreatedResponse(res, "Cash Out Created!", mapRefundResponseDto(refund));
+  }
+);
+
+export const listRefunds = asyncHandler(
+  async (req: Request, res: Response): Promise<void> => {
+    const { date } = req.query;
+
+    const filter: Record<string, unknown> = { type: "REFUND" };
+
+    if (date) {
+      const parsed = new Date(date as string);
+      if (!isNaN(parsed.getTime())) {
+        filter.createdAt = {
+          $gte: startOfDay(parsed),
+          $lte: endOfDay(parsed),
+        };
+      }
+    }
+
+    const refunds = await Refund.find(filter)
+      .sort({ createdAt: -1 })
+      .populate("recordedBy", "name")
+      .populate({
+        path: "paymentId",
+        select: "purpose amount paymentTime pkgId scid",
+        populate: [
+          { path: "pkgId", select: "name" },
+          { path: "scid", populate: { path: "cid", select: "title" } },
+        ],
+      });
+
+    res.status(200).json({
+      statusCode: 200,
+      message: "Refunds Fetched!",
+      data: refunds.map((refund) => {
+        let paymentLabel: string | null = null;
+        const linkedPayment = refund.paymentId as unknown as IPayment | null;
+        if (linkedPayment && typeof linkedPayment === "object" && "_id" in linkedPayment) {
+          paymentLabel = mapMemberRecentPaymentDto(linkedPayment).label;
+        }
+        return mapRefundResponseDto(refund, paymentLabel);
+      }),
+    });
   }
 );
 
