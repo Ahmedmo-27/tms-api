@@ -19,7 +19,6 @@ import logger from "../../config/logger";
 import { IRefund } from "../../models/refund";
 import { IPayment } from "../../models/payment";
 import { startOfDay, endOfDay } from "date-fns";
-import { formatInTimeZone, toZonedTime } from "date-fns-tz";
 
 async function syncRefundToErp(
   refund: IRefund,
@@ -150,12 +149,9 @@ export const listRefunds = asyncHandler(
     if (date) {
       const parsed = new Date(date as string);
       if (!isNaN(parsed.getTime())) {
-        const timeZone = "Africa/Cairo";
-        const start = toZonedTime(startOfDay(parsed), timeZone);
-        const end = toZonedTime(endOfDay(parsed), timeZone);
         filter.createdAt = {
-          $gte: start,
-          $lte: end,
+          $gte: startOfDay(parsed),
+          $lte: endOfDay(parsed),
         };
       }
     }
