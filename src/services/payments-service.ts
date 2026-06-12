@@ -256,7 +256,11 @@ export class PaymentsService {
       return paymentWithoutPkg;
     });
     let total = 0;
-    filteredPayments.forEach((payment) => total = total + payment.amount)
+    filteredPayments.forEach((payment) => {
+      if (!payment.isRefunded) {
+        total = total + payment.amount;
+      }
+    });
     return {payments: finalPayments, total};
   }
 

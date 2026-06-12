@@ -8,6 +8,7 @@ import Refund from "../../models/refund";
 import Payment from "../../models/payment";
 import User from "../../models/user";
 import Member from "../../models/member";
+import ScheduledClass from "../../models/scheduledClass";
 import {
   CreateMemberRefundDto,
   CreateCashOutDto,
@@ -96,6 +97,51 @@ export const createMemberRefund = asyncHandler(
             "PAYMENT_MEMBER_MISMATCH",
             "Payment does not belong to this member"
           );
+        }
+
+        if (linkedPayment.uid) {
+          if (linkedPayment.pkgId) {
+            await Member.updateOne(
+              {
+                uid: linkedPayment.uid,
+                packages: {
+                  $elemMatch: {
+                    pkgId: linkedPayment.pkgId,
+                    status: { $in: ["ACTIVE", "POSTPONED"] }
+                  }
+                }
+              },
+              {
+                $set: { "packages.$[pkg].status": "DELETED" }
+              },
+              {
+                arrayFilters: [
+                  {
+                    "pkg.pkgId": linkedPayment.pkgId,
+                    "pkg.status": { $in: ["ACTIVE", "POSTPONED"] }
+                  }
+                ],
+                session
+              }
+            );
+          } else if (linkedPayment.scid) {
+            await Member.updateOne(
+              {
+                uid: linkedPayment.uid,
+                "bookings.scid": { $eq: linkedPayment.scid },
+              },
+              {
+                $pull: { bookings: { scid: linkedPayment.scid } },
+              },
+              { session }
+            );
+
+            await ScheduledClass.removeBookedMember(
+              linkedPayment.scid.toString(),
+              linkedPayment.uid.toString(),
+              session
+            );
+          }
         }
       }
 
