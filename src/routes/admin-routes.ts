@@ -19,7 +19,7 @@ import {
   getMemberBookings,
   bookClass,
   cancelBooking,
-  // bookDropIn,
+  bookDropIn,
   bookNonUser,
   getNonUserBookings,
   recordNonUserAttendance,
@@ -203,12 +203,12 @@ adminRoutes.delete(
   manualRemoveMemberAttendance
 );
 
-// adminRoutes.post(
-//   "/bookDropIn",
-//   authenticateUser,
-//   authorizeUser(["admin", "fd"]),
-//   bookDropIn
-// );
+adminRoutes.post(
+  "/bookDropIn",
+  authenticateUser,
+  authorizeUser(["admin", "fd"]),
+  bookDropIn
+);
 
 adminRoutes.get(
   "/nonUserBooking",

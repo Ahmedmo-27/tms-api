@@ -174,15 +174,17 @@ export const bookClass = asyncHandler(async function (
   new SuccessResponse("Class Booked!").send(res);
 });
 
-// export const bookDropIn = asyncHandler(async function (
-//   req: Request,
-//   res: Response
-// ): Promise<void> {
-//   const { uid, scid, paymentMethod } = req.body;
-//   const scheduledClass = await ScheduledClass.findById(scid);
-//   // await BookingsService.bookFrontDestDropIn(uid, scid, paymentMethod);
-//   new SuccessResponse("Class Booked!").send(res);
-// });
+export const bookDropIn = asyncHandler(async function (
+  req: Request,
+  res: Response
+): Promise<void> {
+  const { uid, scid, paymentMethod } = req.body;
+  if (!uid || !scid || !paymentMethod) {
+    throw new BadRequestError("INVALID_REQUEST", "uid, scid, and paymentMethod are required");
+  }
+  await BookingsService.bookAdminDropIn(uid, scid, paymentMethod);
+  new SuccessResponse("Drop-in Booked!").send(res);
+});
 
 export const cancelBooking = asyncHandler(async function (
   req: Request,
@@ -323,11 +325,4 @@ export const manualRemoveMemberAttendance = asyncHandler(async function (
   new SuccessResponse("Attendance removed").send(res);
 });
 
-// export const bookDropIn = asyncHandler(async function (
-//   req: Request,
-//   res: Response
-// ): Promise<void> {
-//   const {uid, scid, transaction_id} = req.body
-//   await BookingsService.bookDropIn(uid, scid, transaction_id)
-//   new SuccessResponse("Class Booked!").send(res);
-// });
+

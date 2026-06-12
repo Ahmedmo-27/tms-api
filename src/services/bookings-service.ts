@@ -452,6 +452,49 @@ export class BookingsService {
     });
   }
 
+  static async bookAdminDropIn(
+    uid: string,
+    scid: string,
+    paymentMethod: string,
+  ) {
+    const member = await Member.findOne({ uid });
+    if (!member)
+      throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
+    const scheduledClass: any = await ScheduledClass.findById(scid).populate({
+      path: "cid",
+    });
+    if (!scheduledClass)
+      throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
+    if ((scheduledClass.cid as any).allowDropIn === false)
+      throw new ConflictError("DROP_IN_DISABLED", "Drop-ins are not allowed for this class");
+    
+    let price = scheduledClass.cid.price;
+    const scId = new Types.ObjectId(scid);
+    await runInTransaction(async (session: ClientSession) => {
+      const payment = await PaymentsService.savePayment(
+        uid,
+        price,
+        paymentMethod,
+        "DROPIN",
+        session,
+        undefined,
+        undefined,
+        scId,
+        undefined,
+        undefined,
+      );
+      const paymentIdStr = (payment._id as Types.ObjectId).toString();
+      
+      await Member.saveDropIn(
+        uid,
+        scid,
+        paymentIdStr,
+        session,
+      );
+      await ScheduledClass.bookMember(scid, uid, "Drop In", session);
+    });
+  }
+
   static async bookDropIn(
     uid: string,
     scid: string,
