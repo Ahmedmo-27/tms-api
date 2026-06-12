@@ -51,6 +51,7 @@ export const sendMail = async (req: Request, res: Response) => {
 
     const mailOptions: any = {
       from: `"${process.env.MAIL_FROM_NAME}" <${process.env.MAIL_FROM_ADDRESS}>`,
+      replyTo: process.env.MAIL_FROM_ADDRESS,
       subject,
       html: body,
     };
