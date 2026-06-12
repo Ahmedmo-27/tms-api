@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const url = 'mongodb+srv://omar-tolan:q47gSAsN4mGZk3U@cluster0.hftng.mongodb.net/test';
+const url = 'YOUR_MONGODB_URI';
 mongoose.connect(url).then(async () => {
   const ScheduledClass = require('./src/models/scheduledClass').default;
   const classes = await ScheduledClass.find({});
