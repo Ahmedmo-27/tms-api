@@ -7,18 +7,10 @@ import Class from "../models/class";
 import Coach, { ICoach } from "../models/coach";
 import DailyAttendance from "../models/dailyAttendance";
 import { BadRequestError, ForbiddenError, NotFoundError } from "../core/ApiError";
-import {
-  ClientResponseDto,
-  PaginatedClientsResponseDto,
-  DeductSessionRequestDto,
-  DeductSessionResponseDto,
-  MemberPackageResponseDto,
-  ScheduleResponseDto,
-  mapDeductSessionResponseDto,
-  mapMemberPackageResponseDto,
-} from "../dtos/coach.dto";
+import { ClientResponseDto, PaginatedClientsResponseDto, DeductSessionRequestDto, DeductSessionResponseDto, MemberPackageResponseDto, ScheduleResponseDto, mapDeductSessionResponseDto, mapMemberPackageResponseDto } from "../dtos/coach.dto";
 import { runInTransaction } from "../utils/transaction";
 import { addDays, format } from "date-fns";
+import { formatInTimeZone } from "date-fns-tz";
 
 export class CoachService {
   static async getCoachDocumentByUserId(userId: Types.ObjectId): Promise<ICoach | null> {
@@ -398,13 +390,13 @@ export class CoachService {
         });
       }
 
-      const dateStr = format(scheduledClass.startTime, "yyyy-MM-dd");
+      const dateStr = formatInTimeZone(scheduledClass.startTime, "Africa/Cairo", "yyyy-MM-dd");
       const sessionDto = {
         scheduledClassId: (scheduledClass._id as Types.ObjectId).toString(),
         classTitle: cls.title,
         category: cls.category,
-        startTime: format(scheduledClass.startTime, "HH:mm"),
-        endTime: format(scheduledClass.endTime, "HH:mm"),
+        startTime: formatInTimeZone(scheduledClass.startTime, "Africa/Cairo", "HH:mm"),
+        endTime: formatInTimeZone(scheduledClass.endTime, "Africa/Cairo", "HH:mm"),
         capacity: scheduledClass.availableSlots + scheduledClass.bookedMembers.length,
         bookedCount: scheduledClass.bookedMembers.length,
         clients
@@ -473,8 +465,8 @@ export class CoachService {
         scheduledClassId: (sc._id as Types.ObjectId).toString(),
         classTitle:  cls.title,
         category:    cls.category,
-        startTime:   format(sc.startTime, "HH:mm"),
-        endTime:     format(sc.endTime,   "HH:mm"),
+        startTime:   formatInTimeZone(sc.startTime, "Africa/Cairo", "HH:mm"),
+        endTime:     formatInTimeZone(sc.endTime,   "Africa/Cairo", "HH:mm"),
         capacity:    sc.availableSlots + sc.bookedMembers.length,
         bookedCount: sc.bookedMembers.length,
         scans,
