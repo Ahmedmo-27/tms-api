@@ -45,7 +45,8 @@ export const sendMail = async (req: Request, res: Response) => {
     }
 
     if (!recipients.length) {
-      return res.status(400).json({ success: false, error: "No recipients found." });
+      res.status(400).json({ success: false, error: "No recipients found." });
+      return;
     }
 
     const mailOptions: any = {
@@ -91,7 +92,7 @@ export const sendMail = async (req: Request, res: Response) => {
     });
     await emailLog.save();
 
-    return res.status(200).json({ success: true, sent: recipients.length });
+    res.status(200).json({ success: true, sent: recipients.length });
   } catch (error: any) {
     logger.error("Error sending mail:", error);
     
@@ -107,15 +108,15 @@ export const sendMail = async (req: Request, res: Response) => {
     });
     await emailLog.save();
 
-    return res.status(500).json({ success: false, error: error.message || "Failed to send email" });
+    res.status(500).json({ success: false, error: error.message || "Failed to send email" });
   }
 };
 
 export const getLogs = async (req: Request, res: Response) => {
   try {
     const logs = await EmailLog.find().sort({ sent_at: -1 }).limit(100);
-    return res.status(200).json(logs);
+    res.status(200).json(logs);
   } catch (error: any) {
-    return res.status(500).json({ error: error.message });
+    res.status(500).json({ error: error.message });
   }
 };
