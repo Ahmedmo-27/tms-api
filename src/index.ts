@@ -5,6 +5,7 @@ import { createServer } from "http";
 import { Server as SocketIOServer } from "socket.io";
 import connectDB from "./config/db";
 import logger from "./config/logger";
+import { syncEmails } from "./services/imap-service";
 
 const app = require("./app"); // your Express app
 
@@ -41,6 +42,12 @@ const startServer = async () => {
   // Start the server (NOT app.listen)
   server.listen(port, "0.0.0.0", () => {
     logger.info(`Server is listening at http://0.0.0.0:${port}`);
+    
+    // Start IMAP Sync
+    syncEmails().catch((err) => logger.error("Initial IMAP sync failed", err));
+    setInterval(() => {
+      syncEmails().catch((err) => logger.error("IMAP sync failed", err));
+    }, 2 * 60 * 1000); // Every 2 minutes
   });
 
   process.on("uncaughtException", (err) => {

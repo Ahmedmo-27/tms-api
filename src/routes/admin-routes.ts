@@ -77,7 +77,7 @@ import {
   searchMembers,
   getMemberRecentPayments,
 } from "../controllers/admin/refunds-controller";
-import { sendMail, getLogs } from "../controllers/admin/mail-controller";
+import { sendMail, getLogs, getInbox } from "../controllers/admin/mail-controller";
 
 const adminRoutes = express.Router();
 
@@ -491,6 +491,13 @@ adminRoutes.get(
   authenticateUser,
   authorizeUser(["admin"]),
   getLogs
+);
+
+adminRoutes.get(
+  "/mail/inbox",
+  authenticateUser,
+  authorizeUser(["admin"]),
+  getInbox
 );
 
 export default adminRoutes;

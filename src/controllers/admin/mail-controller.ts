@@ -1,11 +1,15 @@
 import { Request, Response } from "express";
 import nodemailer from "nodemailer";
 import EmailLog from "../../models/emailLog";
+import ReceivedEmail from "../../models/receivedEmail";
 import Member from "../../models/member";
 import User from "../../models/user";
 import logger from "../../config/logger";
 
 const transporter = nodemailer.createTransport({
+  pool: true,
+  maxConnections: 5,
+  maxMessages: 100,
   service: "gmail",
   host: process.env.MAIL_HOST || "smtp.gmail.com",
   port: parseInt(process.env.MAIL_PORT || "587"),
@@ -78,8 +82,13 @@ export const sendMail = async (req: Request, res: Response) => {
 
     for (let i = 0; i < recipients.length; i += BATCH_SIZE) {
       const batch = recipients.slice(i, i + BATCH_SIZE);
-      mailOptions.bcc = batch; // Use BCC to hide recipients from each other
-      await transporter.sendMail(mailOptions);
+      
+      const sendPromises = batch.map((recipient) => {
+        const individualMailOptions = { ...mailOptions, to: recipient };
+        return transporter.sendMail(individualMailOptions);
+      });
+
+      await Promise.all(sendPromises);
 
       if (i + BATCH_SIZE < recipients.length) {
         await delay(DELAY_MS);
@@ -121,6 +130,15 @@ export const getLogs = async (req: Request, res: Response) => {
   try {
     const logs = await EmailLog.find().sort({ sent_at: -1 }).limit(100);
     res.status(200).json(logs);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+export const getInbox = async (req: Request, res: Response) => {
+  try {
+    const emails = await ReceivedEmail.find().sort({ date: -1 }).limit(100);
+    res.status(200).json(emails);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
