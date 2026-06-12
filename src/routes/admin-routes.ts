@@ -77,6 +77,8 @@ import {
   searchMembers,
   getMemberRecentPayments,
 } from "../controllers/admin/refunds-controller";
+import { sendMail, getLogs } from "../controllers/admin/mail-controller";
+
 const adminRoutes = express.Router();
 
 // Member Routes
@@ -474,6 +476,21 @@ adminRoutes.delete(
   authenticateUser,
   authorizeUser(["admin"]),
   deleteOrder
+);
+
+// Mail System Routes
+adminRoutes.post(
+  "/mail/send",
+  authenticateUser,
+  authorizeUser(["admin"]),
+  sendMail
+);
+
+adminRoutes.get(
+  "/mail/logs",
+  authenticateUser,
+  authorizeUser(["admin"]),
+  getLogs
 );
 
 export default adminRoutes;

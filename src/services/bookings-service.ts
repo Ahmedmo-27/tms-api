@@ -21,7 +21,7 @@ import { NotificationsService } from "./notifications-service";
 import ChallengeRecord from "../models/challengeRecord";
 
 export class BookingsService {
-  static async addBooking(uid: string, scid: string) {
+  static async addBooking(uid: string, scid: string, isAdminOverride: boolean = false) {
     // Validate Member and ScheduledClass
     const member = await Member.findOne({ uid });
     if (!member)
@@ -34,7 +34,7 @@ export class BookingsService {
       throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
 
     // Apply booking policy restriction (30 mins after class start time)
-    if ((scheduledClass.cid as any).category !== "WORKSPACE") {
+    if (!isAdminOverride && (scheduledClass.cid as any).category !== "WORKSPACE") {
       if (
         new Date() >
         new Date(scheduledClass.startTime.getTime() + 30 * 60 * 1000)
@@ -336,8 +336,9 @@ export class BookingsService {
     const isBooked = scheduledClass.bookedMembers.some(
       (b) => b.uid.toString() === uid,
     );
-    if (!isBooked)
-      throw new NotFoundError("CLASS_NOT_BOOKED", "Member not booked");
+    if (!isBooked) {
+      await BookingsService.addBooking(uid, scid, true);
+    }
 
     await runInTransaction(async (session: ClientSession) => {
       await Member.recordAttendance(
