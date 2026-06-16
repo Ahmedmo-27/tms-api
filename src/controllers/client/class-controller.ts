@@ -25,7 +25,7 @@ export const getBookings = asyncHandler(async function (
 ): Promise<void> {
   const authReq = req as AuthRequest;
   // get member
-  const _id = authReq.user.id;
+  const _id = authReq.user._id;
   const member = await Member.findOne({ uid: _id })
     .populate({
       path: "bookings.scid",
