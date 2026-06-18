@@ -1083,10 +1083,11 @@ MemberSchema.static(
     session: ClientSession,
     classRestrictions?: IClassRestrictionRecord[]
   ): Promise<void> {
-    const date = new Date(startDate);
-    const startOfDay = new Date(date.setHours(0, 0, 0, 0));
-    const endOfDay = new Date(date);
-    endOfDay.setDate(endOfDay.getDate() + 1);
+    const { startOfDateCairo, startOfTodayCairo } = await import("../utils/timezone");
+    const pkgStartDay = startOfDateCairo(startDate);
+    const pkgStartDayEnd = new Date(pkgStartDay);
+    pkgStartDayEnd.setDate(pkgStartDayEnd.getDate() + 1);
+    const todayCairo = startOfTodayCairo();
     const result = await this.findOneAndUpdate(
       {
         uid,
@@ -1094,7 +1095,7 @@ MemberSchema.static(
           $not: {
             $elemMatch: {
               pkgId: new Types.ObjectId(pkgId),
-              pkgStartDate: { $gte: startOfDay, $lt: endOfDay },
+              pkgStartDate: { $gte: pkgStartDay, $lt: pkgStartDayEnd },
             },
           },
         },
@@ -1106,7 +1107,7 @@ MemberSchema.static(
             name: pkgName,
             pkgStartDate: new Date(startDate),
             pkgEndDate: new Date(endDate),
-            status: startOfDay > new Date(new Date().setHours(0, 0, 0, 0)) ? "POSTPONED" : "ACTIVE",
+            status: pkgStartDay > todayCairo ? "POSTPONED" : "ACTIVE",
             remainingClasses: numberOfSessions,
             classRestrictionsRecord: classRestrictions,
           },

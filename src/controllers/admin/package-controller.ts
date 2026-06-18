@@ -9,6 +9,7 @@ import { logoutUser } from "../auth/auth-controller";
 import NonUserPackage from "../../models/nonUserPackage";
 import { runInTransaction } from "../../utils/transaction";
 import { ClientSession } from "mongoose";
+import { startOfTodayCairo, startOfDateCairo } from "../../utils/timezone";
 
 export const getPackage = asyncHandler(async function (
   req: Request,
@@ -149,12 +150,11 @@ export const editMemberPackage = asyncHandler(async function (
 
   if (pkgEndDate) {
     pkg.pkgEndDate = new Date(pkgEndDate);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const todayCairo = startOfTodayCairo();
 
     if (new Date(pkgEndDate) < new Date()) {
       pkg.status = "EXPIRED";
-    } else if (new Date(pkg.pkgStartDate) > today) {
+    } else if (startOfDateCairo(pkg.pkgStartDate) > todayCairo) {
       pkg.status = "POSTPONED";
     } else {
       pkg.status = "ACTIVE";
