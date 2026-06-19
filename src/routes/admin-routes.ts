@@ -31,6 +31,7 @@ import {
   overrideAddToWaitlist,
   overrideRemoveFromWaitlist,
   getWaitlistedMembers,
+  promoteFromWaitlist,
 } from "../controllers/admin/class-controller";
 import {
   addPackage,
@@ -213,6 +214,13 @@ adminRoutes.delete(
   authenticateUser,
   authorizeUser(["admin", "fd"]),
   overrideRemoveFromWaitlist
+);
+
+adminRoutes.post(
+  "/bookings/waitlist/promote",
+  authenticateUser,
+  authorizeUser(["admin", "fd"]),
+  promoteFromWaitlist
 );
 
 adminRoutes.post(

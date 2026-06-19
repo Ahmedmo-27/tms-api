@@ -325,6 +325,17 @@ export const manualRemoveMemberAttendance = asyncHandler(async function (
   new SuccessResponse("Attendance removed").send(res);
 });
 
+export const promoteFromWaitlist = asyncHandler(async function (
+  req: Request,
+  res: Response
+): Promise<void> {
+  const { uid, scid } = req.body;
+  if (!uid || !scid)
+    throw new BadRequestError("INVALID_REQUEST", "uid and scid are required");
+  await BookingsService.adminPromoteFromWaitlist(uid, scid);
+  new SuccessResponse("Member promoted from waitlist to booking").send(res);
+});
+
 export const overrideAddToWaitlist = asyncHandler(async function (
   req: Request,
   res: Response

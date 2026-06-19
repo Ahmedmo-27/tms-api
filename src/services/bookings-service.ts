@@ -605,6 +605,12 @@ export class BookingsService {
     return result;
   }
 
+  static async adminPromoteFromWaitlist(uid: string, scid: string) {
+    await ScheduledClass.assertOnWaitlist(scid, uid);
+    await BookingsService.addBooking(uid, scid, true);
+    await ScheduledClass.removeMemberFromWaitlist(scid, uid);
+  }
+
   static async adminAddToWaitlist(uid: string, scid: string) {
     const member = await Member.findOne({ uid });
     if (!member)

@@ -67,6 +67,7 @@ interface IScheduledClassStatics {
   ): Promise<void>;
   addMemberToWaitlistOverride(scid: string, uid: string): Promise<void>;
   removeMemberFromWaitlist(scid: string, uid: string): Promise<void>;
+  assertOnWaitlist(scid: string, uid: string): Promise<void>;
 }
 
 type IScheduledClassModel = Model<IScheduledClass, {}, IScheduledClassMethods> &
@@ -391,6 +392,20 @@ ScheduledClassSchema.static(
         },
       },
     );
+  },
+);
+
+ScheduledClassSchema.static(
+  "assertOnWaitlist",
+  async function (scid: string, uid: string): Promise<void> {
+    const scheduledClass = await this.findById(scid);
+    if (!scheduledClass)
+      throw new NotFoundError("CLASS_NOT_FOUND", "Scheduled class not found");
+    const onWaitlist = scheduledClass.waitlistedMembers.some(
+      (m) => m.uid.toString() === uid,
+    );
+    if (!onWaitlist)
+      throw new NotFoundError("NOT_ON_WAITLIST", "Member is not on the waitlist");
   },
 );
 
