@@ -12,4 +12,4 @@ The Member document holds two attendance record types:
 
 Note: memberId in any response refers to the User _id, not the Member _id. For date filtering always use Cairo timezone utilities from src/utils/timezone.ts — avoid raw UTC comparisons. Follow existing controller/route patterns throughout.
 
-Let me know if you need any clarification.
+Please have this completed within a day. Let me know if you need any clarification.
