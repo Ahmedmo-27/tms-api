@@ -1,195 +1,54 @@
 Hi [Developer Name],
 
-I would like to provide some context about the TMS (Training Management System) project before assigning a new task.
+Here's some context on the TMS project before your task.
 
 ---
 
 Project Overview
+Fitness/wellness studio management platform — members, coaches, classes, PT sessions, attendance, packages, payments.
 
-TMS is a fitness/wellness studio management platform that handles members, coaches, group classes, personal training sessions, attendance tracking, package subscriptions, payments, refunds, and administrative operations.
-
----
-
-Technology Stack
-
-* Backend: Node.js / Express.js / TypeScript
-* Database: MongoDB (Mongoose ODM)
-* Authentication: JWT Bearer Token Authentication (cookie-based for web clients, Authorization header for mobile clients)
-* Architecture: RESTful API with role-based authorization
-* Roles: admin, fd (front desk), member, coach, user
-
----
-
-Project Structure
-
-src/
-  config/         — DB connection, logger, rate limiter
-  controllers/
-    admin/        — Admin-only endpoints (class, package, refunds, etc.)
-    auth/         — Login, register, password reset
-    client/       — Member-facing endpoints
-  middlewares/    — Auth middleware (authenticateUser, authorizeUser)
-  models/         — Mongoose models (Member, User, ScheduledClass, Package, etc.)
-  routes/         — Express routers (admin-routes.ts, member-routes.ts, auth-routes.ts, etc.)
-  services/       — Business logic (BookingsService, SubscriptionsService, PaymentsService, etc.)
-  utils/          — Helpers including timezone.ts (Cairo/Egypt UTC+2/+3 aware date utilities)
-  scripts/        — One-off migration/seed scripts
-
----
-
-Key Domain Concepts
-
-* User: Authentication identity (name, phoneNumber, password, role, fcmTokens)
-* Member: Studio member profile linked to a User (packages, bookings, attendance, ptAttendance)
-* ScheduledClass: An instance of a Class at a specific time with availableSlots and bookedMembers
-* Package: A subscription product that grants access to classes or PT sessions (remainingClasses, status: ACTIVE / POSTPONED / EXPIRED)
-* Booking: A member reserving a slot in a ScheduledClass, deducts one session from their package
+Stack
+- Backend: Node.js / Express.js / TypeScript
+- Database: MongoDB (Mongoose ODM)
+- Auth: JWT Bearer Token (cookie for web, header for mobile)
+- Roles: admin, fd, member, coach
 
 ---
 
 Existing Attendance Logic
-
-The system currently stores two types of attendance records on the Member document:
-
-1. Class attendance (member.attendance[])
-   - Linked to a ScheduledClass via scid
-   - Recorded when a member scans in within 30 minutes of class start
-
-2. Personal Training attendance (member.ptAttendance[])
-   - Linked to a Package (PT package) via pkgId
-   - Recorded when a member scans in for a PT session
+Two attendance record types stored on the Member document:
+1. Class attendance (member.attendance[]) — linked to a ScheduledClass via scid
+2. PT attendance (member.ptAttendance[]) — linked to a Package via pkgId
 
 ---
 
 New Requirement
+Implement: GET /admin/attendance
 
-We need a new Admin endpoint that allows viewing attendance history across all members with advanced filtering capabilities.
+- Auth: Bearer Token, admin or fd role
+- Filters (combinable): startDate, endDate, type (CLASS or PT), memberName (partial, case-insensitive)
+- Pagination: page, limit (default 25), ordered by attendanceTime desc
 
-User Story
-
-As an Admin, I want to view all members' attendance history with advanced filtering options, so that I can effectively monitor and track studio utilization.
-
----
-
-Required Tasks
-
-Task 1
-
-Implement a secure endpoint:
-
-GET /admin/attendance
-
-Requirements:
-
-* Bearer Token authentication required
-* Admin or fd (front desk) role authorization required
-* Wire the route in src/routes/admin-routes.ts following the existing pattern
-
-Task 2
-
-Add date range filtering using query parameters:
-
-GET /admin/attendance?startDate=2026-01-01&endDate=2026-01-31
-
-Behavior:
-
-* Filter attendance records between the provided dates (inclusive)
-* Support using either parameter individually or both together
-* IMPORTANT: All date comparisons must use Egypt/Cairo timezone (Africa/Cairo).
-  Use the shared utility at src/utils/timezone.ts — specifically startOfDateCairo()
-  and endOfDateCairo(). Do NOT use raw UTC midnight comparisons (setHours(0,0,0,0)).
-
-Task 3
-
-Add session type filtering:
-
-GET /admin/attendance?type=PT
-GET /admin/attendance?type=CLASS
-
-Behavior:
-
-* Return only attendance records matching the requested session type
-* When type is omitted, return both CLASS and PT records
-
-Task 4
-
-Add member name search:
-
-GET /admin/attendance?memberName=Ahmed
-
-Behavior:
-
-* Partial and case-insensitive match against the member's full name
-
-Task 5
-
-Add pagination:
-
-GET /admin/attendance?page=2&limit=25
-
-Behavior:
-
-* Default: page=1, limit=25
-* Return total record count alongside the paginated results
-* Results must be ordered by attendanceTime descending
-
-Task 6
-
-Standardize response schema
-
-Expected response structure:
-
+Response:
 {
-  "statusCode": 200,
-  "message": "Attendance history fetched",
   "data": {
     "total": 142,
-    "records": [
-      {
-        "memberId": "69e7968e54d83d6549333715",
-        "memberName": "Ahmed Mostafa",
-        "memberPhone": "01012345678",
-        "type": "CLASS",
-        "className": "Mat Pilates",
-        "coachName": "Sara Ahmed",
-        "refId": "69ec4f2bd221810c5f6aeef5",
-        "attendanceTime": "2026-06-18T09:00:00.000Z"
-      },
-      {
-        "memberId": "69e7968e54d83d6549333715",
-        "memberName": "Ahmed Mostafa",
-        "memberPhone": "01012345678",
-        "type": "PT",
-        "className": "Personal Training Package",
-        "coachName": null,
-        "refId": "69e53352408d55818779818b",
-        "attendanceTime": "2026-06-17T11:30:00.000Z"
-      }
-    ]
+    "records": [{
+      "memberId": "...",
+      "memberName": "Ahmed Mostafa",
+      "memberPhone": "01012345678",
+      "type": "CLASS",
+      "className": "Mat Pilates",
+      "coachName": "Sara Ahmed",
+      "refId": "...",
+      "attendanceTime": "2026-06-18T09:00:00.000Z"
+    }]
   }
 }
 
-Field Definitions:
+Notes
+- memberId is the User _id, not the Member _id
+- Use Cairo timezone utilities from src/utils/timezone.ts for date filtering
+- Follow existing controller/route patterns in the codebase
 
-* total:          Total number of matching records before pagination
-* memberId:       User _id of the member (note: this is the User _id, not the Member _id)
-* memberName:     Full name from the populated User document (member.uid.name)
-* memberPhone:    Phone number from the populated User document (member.uid.phoneNumber)
-* type:           "CLASS" or "PT"
-* className:      Class title for CLASS type; Package name for PT type
-* coachName:      Coach name for CLASS type if a coach is assigned; null for PT
-* refId:          ScheduledClass _id for CLASS type; Package _id for PT type
-* attendanceTime: UTC timestamp of the attendance event
-
----
-
-Additional Notes
-
-* Filters must be fully combinable (e.g. date range + type + memberName + pagination all at once).
-* The Member model uses uid as a ref to the User model. Populate uid to access name and phoneNumber.
-  The Member _id and the User _id are different — use User _id as memberId in the response.
-* Use SuccessResponse from src/core/ApiResponse.ts for consistent response formatting,
-  following the pattern used across all other admin controllers.
-* Avoid N+1 queries — use Mongoose populate to load related data in a single query where possible.
-
-Please review the existing Member model and its attendance/ptAttendance sub-documents before implementation and let me know if any clarification is needed.
+Let me know if you need any clarification.
