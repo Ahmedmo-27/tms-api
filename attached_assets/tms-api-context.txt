@@ -25,7 +25,7 @@ Project Structure
 src/
   config/         — DB connection, logger, rate limiter
   controllers/
-    admin/        — Admin-only endpoints (class, package, attendance, refunds, etc.)
+    admin/        — Admin-only endpoints (class, package, refunds, etc.)
     auth/         — Login, register, password reset
     client/       — Member-facing endpoints
   middlewares/    — Auth middleware (authenticateUser, authorizeUser)
@@ -41,58 +41,103 @@ Key Domain Concepts
 
 * User: Authentication identity (name, phoneNumber, password, role, fcmTokens)
 * Member: Studio member profile linked to a User (packages, bookings, attendance, ptAttendance)
-* ScheduledClass: An instance of a Class at a specific time with availableSlots, bookedMembers, waitlistedMembers
+* ScheduledClass: An instance of a Class at a specific time with availableSlots and bookedMembers
 * Package: A subscription product that grants access to classes or PT sessions (remainingClasses, status: ACTIVE / POSTPONED / EXPIRED)
 * Booking: A member reserving a slot in a ScheduledClass, deducts one session from their package
-* Waitlist: Admin-managed list (waitlistedMembers) on a ScheduledClass for members waiting on a full session
 
 ---
 
 Existing Attendance Logic
 
-The system stores two types of attendance records on the Member document:
+The system currently stores two types of attendance records on the Member document:
 
 1. Class attendance (member.attendance[])
    - Linked to a ScheduledClass via scid
-   - Recorded when member scans in within 30 minutes of class start
+   - Recorded when a member scans in within 30 minutes of class start
 
 2. Personal Training attendance (member.ptAttendance[])
    - Linked to a Package (PT package) via pkgId
-   - Recorded when member scans in for a PT session
+   - Recorded when a member scans in for a PT session
 
 ---
 
-Implemented Attendance Endpoint
+New Requirement
+
+We need a new Admin endpoint that allows viewing attendance history across all members with advanced filtering capabilities.
+
+User Story
+
+As an Admin, I want to view all members' attendance history with advanced filtering options, so that I can effectively monitor and track studio utilization.
+
+---
+
+Required Tasks
+
+Task 1
+
+Implement a secure endpoint:
 
 GET /admin/attendance
 
-Authentication: Bearer Token required
-Authorization: admin or fd role required
+Requirements:
 
-Query Parameters:
+* Bearer Token authentication required
+* Admin or fd (front desk) role authorization required
+* Wire the route in src/routes/admin-routes.ts following the existing pattern
 
-| Parameter  | Type   | Description                                      |
-|------------|--------|--------------------------------------------------|
-| startDate  | string | ISO date string — filters attendance from this date (inclusive, Cairo timezone) |
-| endDate    | string | ISO date string — filters attendance up to this date (inclusive, Cairo timezone) |
-| type       | string | "CLASS" or "PT" — filters by session type. Omit for both. |
-| memberName | string | Partial, case-insensitive search on member full name |
-| page       | number | Page number (default: 1)                         |
-| limit      | number | Records per page (default: 25)                   |
+Task 2
 
-Example requests:
+Add date range filtering using query parameters:
 
-GET /admin/attendance
 GET /admin/attendance?startDate=2026-01-01&endDate=2026-01-31
+
+Behavior:
+
+* Filter attendance records between the provided dates (inclusive)
+* Support using either parameter individually or both together
+* IMPORTANT: All date comparisons must use Egypt/Cairo timezone (Africa/Cairo).
+  Use the shared utility at src/utils/timezone.ts — specifically startOfDateCairo()
+  and endOfDateCairo(). Do NOT use raw UTC midnight comparisons (setHours(0,0,0,0)).
+
+Task 3
+
+Add session type filtering:
+
 GET /admin/attendance?type=PT
-GET /admin/attendance?type=CLASS&memberName=Ahmed
-GET /admin/attendance?startDate=2026-06-01&type=CLASS&memberName=Sara&page=2&limit=10
+GET /admin/attendance?type=CLASS
 
-All filters are combinable.
+Behavior:
 
----
+* Return only attendance records matching the requested session type
+* When type is omitted, return both CLASS and PT records
 
-Response Schema
+Task 4
+
+Add member name search:
+
+GET /admin/attendance?memberName=Ahmed
+
+Behavior:
+
+* Partial and case-insensitive match against the member's full name
+
+Task 5
+
+Add pagination:
+
+GET /admin/attendance?page=2&limit=25
+
+Behavior:
+
+* Default: page=1, limit=25
+* Return total record count alongside the paginated results
+* Results must be ordered by attendanceTime descending
+
+Task 6
+
+Standardize response schema
+
+Expected response structure:
 
 {
   "statusCode": 200,
@@ -126,35 +171,25 @@ Response Schema
 
 Field Definitions:
 
-* total:          Total number of matching records (before pagination)
-* memberId:       User _id of the member
-* memberName:     Full name from the User document
-* memberPhone:    Phone number from the User document
+* total:          Total number of matching records before pagination
+* memberId:       User _id of the member (note: this is the User _id, not the Member _id)
+* memberName:     Full name from the populated User document (member.uid.name)
+* memberPhone:    Phone number from the populated User document (member.uid.phoneNumber)
 * type:           "CLASS" or "PT"
 * className:      Class title for CLASS type; Package name for PT type
-* coachName:      Coach name for CLASS type (if assigned); null for PT
+* coachName:      Coach name for CLASS type if a coach is assigned; null for PT
 * refId:          ScheduledClass _id for CLASS type; Package _id for PT type
-* attendanceTime: UTC timestamp of the attendance event, ordered descending by default
+* attendanceTime: UTC timestamp of the attendance event
 
 ---
 
-Important Notes for Developers
+Additional Notes
 
-* All date filtering uses Egypt/Cairo timezone (Africa/Cairo — UTC+2 in winter, UTC+3 in summer).
-  Use the shared utility at src/utils/timezone.ts: startOfDateCairo(), endOfDateCairo(), etc.
+* Filters must be fully combinable (e.g. date range + type + memberName + pagination all at once).
+* The Member model uses uid as a ref to the User model. Populate uid to access name and phoneNumber.
+  The Member _id and the User _id are different — use User _id as memberId in the response.
+* Use SuccessResponse from src/core/ApiResponse.ts for consistent response formatting,
+  following the pattern used across all other admin controllers.
+* Avoid N+1 queries — use Mongoose populate to load related data in a single query where possible.
 
-* Do NOT use new Date().setHours(0,0,0,0) for "today" comparisons — this gives UTC midnight,
-  which is wrong for Egypt. Always use startOfTodayCairo() from the timezone utility.
-
-* Package status logic: a package is ACTIVE if its start date (Cairo midnight) <= today (Cairo midnight).
-  Do not compare raw UTC timestamps for this check.
-
-* The Member model uses uid as a ref to the User model. When you need the user's name or phone,
-  populate uid. The Member _id and the User _id are different fields.
-
-* Admin booking endpoints pass the User _id (uid) as the uid parameter, not the Member _id.
-
-* Role-based guards are applied at the route level using authorizeUser(["admin", "fd"]).
-  All admin routes require both authenticateUser and authorizeUser middleware.
-
-Please review the existing models and services before implementation and let me know if any clarification is needed.
+Please review the existing Member model and its attendance/ptAttendance sub-documents before implementation and let me know if any clarification is needed.
