@@ -1,0 +1,120 @@
+Hi [Developer Name],
+
+I would like to provide some context about the TMS (Training Management System) project before assigning a new task.
+
+Project Overview
+
+TMS is a gym/training management platform that manages members, trainers, classes, personal training sessions, attendance tracking, subscriptions, and administrative operations.
+
+Technology Stack
+
+* Backend: [Insert backend technology, e.g., ASP.NET Core / Node.js]
+* Database: [Insert database technology]
+* Authentication: JWT Bearer Token Authentication
+* Architecture: RESTful API with role-based authorization
+
+Existing Attendance Logic
+
+The system currently stores attendance records for:
+
+1. Personal Training (PT) sessions
+2. Group Classes
+
+Attendance records are linked to members and session information. The attendance data includes member details and references to the associated PT session or class.
+
+New Requirement
+
+We need a new Admin endpoint that allows viewing attendance history across all members with advanced filtering capabilities.
+
+User Story
+
+As an Admin, I want to view all members’ attendance history with advanced filtering options, so that I can effectively monitor and track gym utilization.
+
+Required Tasks
+
+Task 1
+
+Implement a secure endpoint:
+
+GET /admin/attendance
+
+Requirements:
+
+* Bearer Token authentication required
+* Admin authorization required
+
+Task 2
+
+Add date range filtering using query parameters:
+
+GET /admin/attendance?startDate=2026-01-01&endDate=2026-01-31
+
+Behavior:
+
+* Filter attendance records between the provided dates
+* Support using either parameter individually or both together
+
+Task 3
+
+Add session type filtering using:
+
+GET /admin/attendance?type=PT
+
+or
+
+GET /admin/attendance?type=Class
+
+Behavior:
+
+* Return only attendance records matching the requested session type
+
+Task 4
+
+Add member search capability using:
+
+GET /admin/attendance?memberName=Ahmed
+
+Behavior:
+
+* Partial and case-insensitive search
+* Search against member full name
+
+Task 5
+
+Standardize response schema
+
+Expected response structure:
+
+{
+“success”: true,
+“data”: [
+{
+“memberId”: 1,
+“memberName”: “Ahmed Mostafa”,
+“memberPhone”: “+20xxxxxxxxxx”,
+“type”: “PT”,
+“className”: null,
+“refId”: 15,
+“attendanceDate”: “2026-01-15T10:00:00Z”
+}
+]
+}
+
+Field Definitions:
+
+* memberId: Member identifier
+* memberName: Full member name
+* memberPhone: Member phone number
+* type: PT or Class
+* className: Class name when applicable, otherwise null
+* refId: Related PT session ID or Class ID
+* attendanceDate: Attendance timestamp
+
+Additional Notes
+
+* Filters should be combinable (date range + type + memberName).
+* Apply pagination if the current API standard requires it.
+* Ensure efficient querying and avoid N+1 database queries.
+* Return data ordered by attendanceDate descending by default.
+
+Please review the existing attendance entities and relationships before implementation and let me know if any clarification is needed.

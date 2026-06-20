@@ -1,0 +1,160 @@
+Hi [Developer Name],
+
+I would like to provide some context about the TMS (Training Management System) project before assigning a new task.
+
+---
+
+Project Overview
+
+TMS is a fitness/wellness studio management platform that handles members, coaches, group classes, personal training sessions, attendance tracking, package subscriptions, payments, refunds, and administrative operations.
+
+---
+
+Technology Stack
+
+* Backend: Node.js / Express.js / TypeScript
+* Database: MongoDB (Mongoose ODM)
+* Authentication: JWT Bearer Token Authentication (cookie-based for web clients, Authorization header for mobile clients)
+* Architecture: RESTful API with role-based authorization
+* Roles: admin, fd (front desk), member, coach, user
+
+---
+
+Project Structure
+
+src/
+  config/         — DB connection, logger, rate limiter
+  controllers/
+    admin/        — Admin-only endpoints (class, package, attendance, refunds, etc.)
+    auth/         — Login, register, password reset
+    client/       — Member-facing endpoints
+  middlewares/    — Auth middleware (authenticateUser, authorizeUser)
+  models/         — Mongoose models (Member, User, ScheduledClass, Package, etc.)
+  routes/         — Express routers (admin-routes.ts, member-routes.ts, auth-routes.ts, etc.)
+  services/       — Business logic (BookingsService, SubscriptionsService, PaymentsService, etc.)
+  utils/          — Helpers including timezone.ts (Cairo/Egypt UTC+2/+3 aware date utilities)
+  scripts/        — One-off migration/seed scripts
+
+---
+
+Key Domain Concepts
+
+* User: Authentication identity (name, phoneNumber, password, role, fcmTokens)
+* Member: Studio member profile linked to a User (packages, bookings, attendance, ptAttendance)
+* ScheduledClass: An instance of a Class at a specific time with availableSlots, bookedMembers, waitlistedMembers
+* Package: A subscription product that grants access to classes or PT sessions (remainingClasses, status: ACTIVE / POSTPONED / EXPIRED)
+* Booking: A member reserving a slot in a ScheduledClass, deducts one session from their package
+* Waitlist: Admin-managed list (waitlistedMembers) on a ScheduledClass for members waiting on a full session
+
+---
+
+Existing Attendance Logic
+
+The system stores two types of attendance records on the Member document:
+
+1. Class attendance (member.attendance[])
+   - Linked to a ScheduledClass via scid
+   - Recorded when member scans in within 30 minutes of class start
+
+2. Personal Training attendance (member.ptAttendance[])
+   - Linked to a Package (PT package) via pkgId
+   - Recorded when member scans in for a PT session
+
+---
+
+Implemented Attendance Endpoint
+
+GET /admin/attendance
+
+Authentication: Bearer Token required
+Authorization: admin or fd role required
+
+Query Parameters:
+
+| Parameter  | Type   | Description                                      |
+|------------|--------|--------------------------------------------------|
+| startDate  | string | ISO date string — filters attendance from this date (inclusive, Cairo timezone) |
+| endDate    | string | ISO date string — filters attendance up to this date (inclusive, Cairo timezone) |
+| type       | string | "CLASS" or "PT" — filters by session type. Omit for both. |
+| memberName | string | Partial, case-insensitive search on member full name |
+| page       | number | Page number (default: 1)                         |
+| limit      | number | Records per page (default: 25)                   |
+
+Example requests:
+
+GET /admin/attendance
+GET /admin/attendance?startDate=2026-01-01&endDate=2026-01-31
+GET /admin/attendance?type=PT
+GET /admin/attendance?type=CLASS&memberName=Ahmed
+GET /admin/attendance?startDate=2026-06-01&type=CLASS&memberName=Sara&page=2&limit=10
+
+All filters are combinable.
+
+---
+
+Response Schema
+
+{
+  "statusCode": 200,
+  "message": "Attendance history fetched",
+  "data": {
+    "total": 142,
+    "records": [
+      {
+        "memberId": "69e7968e54d83d6549333715",
+        "memberName": "Ahmed Mostafa",
+        "memberPhone": "01012345678",
+        "type": "CLASS",
+        "className": "Mat Pilates",
+        "coachName": "Sara Ahmed",
+        "refId": "69ec4f2bd221810c5f6aeef5",
+        "attendanceTime": "2026-06-18T09:00:00.000Z"
+      },
+      {
+        "memberId": "69e7968e54d83d6549333715",
+        "memberName": "Ahmed Mostafa",
+        "memberPhone": "01012345678",
+        "type": "PT",
+        "className": "Personal Training Package",
+        "coachName": null,
+        "refId": "69e53352408d55818779818b",
+        "attendanceTime": "2026-06-17T11:30:00.000Z"
+      }
+    ]
+  }
+}
+
+Field Definitions:
+
+* total:          Total number of matching records (before pagination)
+* memberId:       User _id of the member
+* memberName:     Full name from the User document
+* memberPhone:    Phone number from the User document
+* type:           "CLASS" or "PT"
+* className:      Class title for CLASS type; Package name for PT type
+* coachName:      Coach name for CLASS type (if assigned); null for PT
+* refId:          ScheduledClass _id for CLASS type; Package _id for PT type
+* attendanceTime: UTC timestamp of the attendance event, ordered descending by default
+
+---
+
+Important Notes for Developers
+
+* All date filtering uses Egypt/Cairo timezone (Africa/Cairo — UTC+2 in winter, UTC+3 in summer).
+  Use the shared utility at src/utils/timezone.ts: startOfDateCairo(), endOfDateCairo(), etc.
+
+* Do NOT use new Date().setHours(0,0,0,0) for "today" comparisons — this gives UTC midnight,
+  which is wrong for Egypt. Always use startOfTodayCairo() from the timezone utility.
+
+* Package status logic: a package is ACTIVE if its start date (Cairo midnight) <= today (Cairo midnight).
+  Do not compare raw UTC timestamps for this check.
+
+* The Member model uses uid as a ref to the User model. When you need the user's name or phone,
+  populate uid. The Member _id and the User _id are different fields.
+
+* Admin booking endpoints pass the User _id (uid) as the uid parameter, not the Member _id.
+
+* Role-based guards are applied at the route level using authorizeUser(["admin", "fd"]).
+  All admin routes require both authenticateUser and authorizeUser middleware.
+
+Please review the existing models and services before implementation and let me know if any clarification is needed.
