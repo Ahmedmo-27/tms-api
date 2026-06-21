@@ -1,15 +1,28 @@
-Hi [Developer Name],
+--- Message 1 ---
 
-Here's a quick overview of the TMS project before your task.
+Hi Ameera,
 
-TMS is a fitness/wellness studio management platform handling members, coaches, classes, PT sessions, attendance, packages, and payments.
+Hope you're doing well! I wanted to share a bit of context about the project before getting into the task.
 
-Stack: Node.js / Express.js / TypeScript, MongoDB (Mongoose), JWT auth (cookie for web, header for mobile). Roles: admin, fd, member, coach.
+TMS is a fitness/wellness studio management platform — it handles members, coaches, group classes, PT sessions, attendance, packages, and payments. The backend is built with Node.js / Express.js / TypeScript, MongoDB (Mongoose), and JWT authentication. Roles include admin, fd (front desk), member, and coach.
 
-The Member document holds two attendance record types:
-- Class attendance (member.attendance[]) — linked to a ScheduledClass
-- PT attendance (member.ptAttendance[]) — linked to a Package
+Let me know once you've had a chance to look it over and I'll send over the task details!
 
-Note: memberId in any response refers to the User _id, not the Member _id. For date filtering always use Cairo timezone utilities from src/utils/timezone.ts — avoid raw UTC comparisons. Follow existing controller/route patterns throughout.
+--- Message 2 ---
 
-Please have this completed within a day. Let me know if you need any clarification.
+Great! So the task is to implement a new admin endpoint: GET /admin/attendance
+
+It should support these query filters (all combinable):
+- startDate / endDate — date range filtering
+- type — "CLASS" or "PT"
+- memberName — partial, case-insensitive search
+- page / limit — pagination, default limit 25, ordered by attendanceTime descending
+
+The system already stores two attendance types on the Member document — class attendance linked to a ScheduledClass, and PT attendance linked to a Package. You'll need to pull from both.
+
+A couple of things to keep in mind:
+- memberId in the response should be the User _id, not the Member _id
+- Use Cairo timezone utilities from src/utils/timezone.ts for date filtering (avoid raw UTC comparisons)
+- Follow the existing controller/route patterns in the codebase
+
+Please have this done within a day. Let me know if anything needs clarification!
