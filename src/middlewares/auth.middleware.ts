@@ -70,7 +70,6 @@ export const authenticateUser = asyncHandler(
       "tokens.token": token,
     });
     if (!user) throw new BadTokenError("MEMBER_NOT_FOUND", "Invalid token - user not found or token revoked");
-    await user.removeExpiredTokens();
     (req as AuthRequest).user = user;
     (req as AuthRequest).deviceType = deviceType;
     next();
@@ -83,18 +82,7 @@ export const authorizeUser = (allowedRoles: UserRole[]): RequestHandler => {
       if (!authReq.user.role) {
         throw new AuthFailureError("AUTH_FAILURE", "Authentication required");
       }
-      if(authReq.user.role === "user"){
-        const savedUser = await User.findById(authReq.user._id)
-        if(!savedUser) throw new NotFoundError("USER_NOT_FOUND", "User is not found!")
-        if(savedUser.role === "member") {
-          const currentToken = authReq.deviceType === "mobile"
-            ? req.headers.authorization!.split(" ")[1]
-            : req.cookies.token;
-          await savedUser.removeToken(currentToken);
-          const token = await savedUser.generateAuthToken(authReq.deviceType);
-          throw new TokenExpiredError("TOKEN_UPDATED", token);
-        }
-      }
+      // Role update check removed to prevent token updates and forced logouts.
       if (!allowedRoles.includes(authReq.user.role as UserRole))
         throw new ForbiddenError("INSUFFICIENT_PERMISSIONS", "Access denied - Insufficient permissions");
       next();

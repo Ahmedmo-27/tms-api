@@ -29,17 +29,16 @@ export const getBookings = asyncHandler(async function (
   const member = await Member.findOne({ uid: _id })
     .populate({
       path: "bookings.scid",
-      populate: {
-        path: "cid",
-        model: "Class",
-      },
-    })
-    .populate({
-      path: "bookings.scid",
-      populate: {
-        path: "coachId",
-        model: "Coach",
-      },
+      populate: [
+        {
+          path: "cid",
+          model: "Class",
+        },
+        {
+          path: "coachId",
+          model: "Coach",
+        },
+      ],
     });
   if (!member)
     throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found", { _id });

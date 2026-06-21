@@ -33,6 +33,6 @@ authRoutes.get("/logout", authenticateUser, logoutUser);
 authRoutes.get("/logout-all", authenticateUser, logoutFromAllDevices);
 authRoutes.post("/reset-password", sendResetCode);
 authRoutes.post("/confirm-password-reset", confirmPasswordReset);
-authRoutes.get("/verifyToken", authenticateUser, authorizeUser(["admin", "fd", "coach"]), verifyToken)
+authRoutes.get("/verifyToken", authenticateUser, verifyToken)
 
 export default authRoutes;
