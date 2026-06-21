@@ -15,12 +15,15 @@ import cors from "cors";
 
 const app = express();
 
+app.set("trust proxy", 1); // Enable trusting proxy to fix express-rate-limit X-Forwarded-For error
+
 app.use(
   cors({
     origin: [
       "http://localhost:3000",
       "https://tms-dashboard-ashen.vercel.app",
       "https://tms-dashboard-test.vercel.app", // Add mobile client
+      "https://tms-dashboard-psi.vercel.app",
     ],
     credentials: true, // Allow cookies / Authorization headers
   })
