@@ -30,9 +30,9 @@ export const getAttendanceHistory = asyncHandler(async function (
   const pageNumber = Math.max(1, parseInt(page as string, 10) || 1);
   const limitNumber = Math.max(1, parseInt(limit as string, 10) || 25);
 
-  const start = startDate ? new Date(startDate as string) : null;
-  const end = endDate ? new Date(endDate as string) : null;
-  if (end) end.setHours(23, 59, 59, 999);
+  const { startOfDateCairo, endOfDateCairo } = await import("../../utils/timezone");
+  const start = startDate ? startOfDateCairo(startDate as string) : null;
+  const end = endDate ? endOfDateCairo(endDate as string) : null;
 
   const members = await Member.find({ isActive: true })
     .populate("uid")

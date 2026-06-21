@@ -5,12 +5,17 @@ import { IPayment } from "../models/payment";
 import { IRefund } from "../models/refund";
 import { InternalError } from "../core/ApiError";
 
-// Disable on testing
-const disabled = process.env.ENVIRONMENT === "testing"
+// Disable on testing or when env vars are not configured
+const disabled = process.env.ENVIRONMENT === "testing" ||
+  !process.env.EGYGAP_ERP_BASE_URL ||
+  !process.env.EGYGAP_ERP_LOGIN_URL ||
+  !process.env.EGYGAP_ERP_SALES_URL ||
+  !process.env.RENTAL_USER ||
+  !process.env.RENTAL_PASS ||
+  !process.env.RENTAL_STORE_ID;
 
-// Validate and clean environment variables
-if (!disabled && (!process.env.EGYGAP_ERP_BASE_URL || !process.env.EGYGAP_ERP_LOGIN_URL || !process.env.EGYGAP_ERP_SALES_URL || !process.env.RENTAL_USER || !process.env.RENTAL_PASS || !process.env.RENTAL_STORE_ID)) {
-  throw new InternalError("EGYGAP_ERP_INTEGRATION_ERROR", "Missing required environment variables for ERP integration");
+if (disabled) {
+  logger.warn("ERP integration disabled — missing environment variables or running in testing mode");
 }
 
 const BASE_URL = process.env.EGYGAP_ERP_BASE_URL!

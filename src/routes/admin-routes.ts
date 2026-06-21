@@ -28,6 +28,10 @@ import {
   saveNonUserPayment,
   manualRecordMemberAttendance,
   manualRemoveMemberAttendance,
+  overrideAddToWaitlist,
+  overrideRemoveFromWaitlist,
+  getWaitlistedMembers,
+  promoteFromWaitlist,
 } from "../controllers/admin/class-controller";
 import {
   addPackage,
@@ -189,6 +193,34 @@ adminRoutes.delete(
   authenticateUser,
   authorizeUser(["admin", "fd"]),
   cancelBooking
+);
+
+adminRoutes.get(
+  "/bookings/waitlist",
+  authenticateUser,
+  authorizeUser(["admin", "fd"]),
+  getWaitlistedMembers
+);
+
+adminRoutes.post(
+  "/bookings/waitlist",
+  authenticateUser,
+  authorizeUser(["admin", "fd"]),
+  overrideAddToWaitlist
+);
+
+adminRoutes.delete(
+  "/bookings/waitlist",
+  authenticateUser,
+  authorizeUser(["admin", "fd"]),
+  overrideRemoveFromWaitlist
+);
+
+adminRoutes.post(
+  "/bookings/waitlist/promote",
+  authenticateUser,
+  authorizeUser(["admin", "fd"]),
+  promoteFromWaitlist
 );
 
 adminRoutes.post(

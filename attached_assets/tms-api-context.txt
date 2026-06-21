@@ -1,0 +1,28 @@
+--- Message 1 ---
+
+Hi Ameera,
+
+Hope you're doing well! I wanted to share a bit of context about the project before getting into the task.
+
+TMS is a fitness/wellness studio management platform — it handles members, coaches, group classes, PT sessions, attendance, packages, and payments. The backend is built with Node.js / Express.js / TypeScript, MongoDB (Mongoose), and JWT authentication. Roles include admin, fd (front desk), member, and coach.
+
+Let me know once you've had a chance to look it over and I'll send over the task details!
+
+--- Message 2 ---
+
+Great! So the task is to implement a new admin endpoint: GET /admin/attendance
+
+It should support these query filters (all combinable):
+- startDate / endDate — date range filtering
+- type — "CLASS" or "PT"
+- memberName — partial, case-insensitive search
+- page / limit — pagination, default limit 25, ordered by attendanceTime descending
+
+The system already stores two attendance types on the Member document — class attendance linked to a ScheduledClass, and PT attendance linked to a Package. You'll need to pull from both.
+
+A couple of things to keep in mind:
+- memberId in the response should be the User _id, not the Member _id
+- Use Cairo timezone utilities from src/utils/timezone.ts for date filtering (avoid raw UTC comparisons)
+- Follow the existing controller/route patterns in the codebase
+
+Please have this done within a day. Let me know if anything needs clarification!

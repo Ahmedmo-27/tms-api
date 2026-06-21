@@ -325,4 +325,48 @@ export const manualRemoveMemberAttendance = asyncHandler(async function (
   new SuccessResponse("Attendance removed").send(res);
 });
 
+export const promoteFromWaitlist = asyncHandler(async function (
+  req: Request,
+  res: Response
+): Promise<void> {
+  const { uid, scid } = req.body;
+  if (!uid || !scid)
+    throw new BadRequestError("INVALID_REQUEST", "uid and scid are required");
+  await BookingsService.adminPromoteFromWaitlist(uid, scid);
+  new SuccessResponse("Member promoted from waitlist to booking").send(res);
+});
+
+export const overrideAddToWaitlist = asyncHandler(async function (
+  req: Request,
+  res: Response
+): Promise<void> {
+  const { uid, scid } = req.body;
+  if (!uid || !scid)
+    throw new BadRequestError("INVALID_REQUEST", "uid and scid are required");
+  await BookingsService.adminAddToWaitlist(uid, scid);
+  new SuccessResponse("Member added to waitlist").send(res);
+});
+
+export const overrideRemoveFromWaitlist = asyncHandler(async function (
+  req: Request,
+  res: Response
+): Promise<void> {
+  const { uid, scid } = req.body;
+  if (!uid || !scid)
+    throw new BadRequestError("INVALID_REQUEST", "uid and scid are required");
+  await BookingsService.adminRemoveFromWaitlist(uid, scid);
+  new SuccessResponse("Member removed from waitlist").send(res);
+});
+
+export const getWaitlistedMembers = asyncHandler(async function (
+  req: Request,
+  res: Response
+): Promise<void> {
+  const scid = req.query.scid as string;
+  if (!scid)
+    throw new BadRequestError("INVALID_REQUEST", "scid is required");
+  const waitlist = await BookingsService.getWaitlistedMembers(scid);
+  new SuccessResponse("Waitlist fetched", waitlist).send(res);
+});
+
 

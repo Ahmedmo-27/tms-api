@@ -14,6 +14,11 @@ interface IMemberBooking {
   method: string;
 }
 
+interface IWaitlistedMember {
+  uid: Types.ObjectId;
+  addedAt: Date;
+}
+
 export interface IScheduledClass extends Document {
   cid: Types.ObjectId;
   startTime: Date;
@@ -57,6 +62,9 @@ interface IScheduledClassStatics {
     uid: string,
     session?: ClientSession,
   ): Promise<void>;
+  addMemberToWaitlistOverride(scid: string, uid: string): Promise<void>;
+  removeMemberFromWaitlist(scid: string, uid: string): Promise<void>;
+  assertOnWaitlist(scid: string, uid: string): Promise<void>;
 }
 
 type IScheduledClassModel = Model<IScheduledClass, {}, IScheduledClassMethods> &
@@ -333,6 +341,81 @@ ScheduledClassSchema.static(
       },
       { session },
     );
+  },
+);
+
+ScheduledClassSchema.static(
+  "addMemberToWaitlistOverride",
+  async function (scid: string, uid: string): Promise<void> {
+    const scheduledClass = await this.findById(scid);
+    if (!scheduledClass)
+      throw new NotFoundError("CLASS_NOT_FOUND", "Scheduled class not found");
+    const alreadyBooked = scheduledClass.bookedMembers.some(
+      (m) => m.uid.toString() === uid,
+    );
+    if (alreadyBooked)
+      throw new ConflictError("ALREADY_BOOKED", "Member is already booked into this session");
+    const alreadyWaitlisted = scheduledClass.waitlistedMembers.some(
+      (m) => m.uid.toString() === uid,
+    );
+    if (alreadyWaitlisted)
+      throw new ConflictError("ALREADY_WAITLISTED", "Member is already on the waitlist");
+    await this.updateOne(
+      { _id: new Types.ObjectId(scid) },
+      {
+        $push: {
+          waitlistedMembers: { uid: new Types.ObjectId(uid), addedAt: new Date() },
+        },
+      },
+    );
+  },
+);
+
+ScheduledClassSchema.static(
+  "assertOnWaitlist",
+  async function (scid: string, uid: string): Promise<void> {
+    const scheduledClass = await this.findById(scid);
+    if (!scheduledClass)
+      throw new NotFoundError("CLASS_NOT_FOUND", "Scheduled class not found");
+    const onWaitlist = scheduledClass.waitlistedMembers.some(
+      (m) => m.uid.toString() === uid,
+    );
+    if (!onWaitlist)
+      throw new NotFoundError("NOT_ON_WAITLIST", "Member is not on the waitlist");
+  },
+);
+
+ScheduledClassSchema.static(
+  "removeMemberFromWaitlist",
+  async function (scid: string, uid: string): Promise<void> {
+    const result = await this.updateOne(
+      {
+        _id: new Types.ObjectId(scid),
+        "waitlistedMembers.uid": new Types.ObjectId(uid),
+      },
+      { $pull: { waitlistedMembers: { uid: new Types.ObjectId(uid) } } },
+    );
+    if (result.matchedCount === 0)
+      throw new NotFoundError("NOT_ON_WAITLIST", "Member is not on the waitlist");
+  },
+);
+
+ScheduledClassSchema.method(
+  "addMemberToWaitingList",
+  async function (fcmToken: string): Promise<void> {
+    const res = await this.model("ScheduledClass").updateOne(
+      {
+        _id: this._id,
+        availableSlots: { $lte: 0 },
+      },
+      {
+        $addToSet: { waitingList: fcmToken },
+      },
+    );
+
+    if (res.matchedCount === 0) {
+      throw new Error("Cannot join waiting list while slots are available");
+    }
   },
 );
 

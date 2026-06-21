@@ -67,7 +67,8 @@ export const getDailyAttendnace = asyncHandler(async function (
   req: Request,
   res: Response
 ): Promise<void> {
-  const date = req.query.date as string || new Date().toISOString()
+  const { nowInCairo } = await import("../../utils/timezone");
+  const date = req.query.date as string || nowInCairo().toISOString()
   const record = await SchedulerService.getDayAttendance(date);
   new SuccessResponse("Attendnace Fetched!", record).send(res);
 });

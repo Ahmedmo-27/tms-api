@@ -87,7 +87,10 @@ export const authorizeUser = (allowedRoles: UserRole[]): RequestHandler => {
         const savedUser = await User.findById(authReq.user._id)
         if(!savedUser) throw new NotFoundError("USER_NOT_FOUND", "User is not found!")
         if(savedUser.role === "member") {
-          await savedUser.removeAllTokens()
+          const currentToken = authReq.deviceType === "mobile"
+            ? req.headers.authorization!.split(" ")[1]
+            : req.cookies.token;
+          await savedUser.removeToken(currentToken);
           const token = await savedUser.generateAuthToken(authReq.deviceType);
           throw new TokenExpiredError("TOKEN_UPDATED", token);
         }

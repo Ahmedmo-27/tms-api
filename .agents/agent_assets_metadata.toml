@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "a6qUt9rj_UnjQFclXElc4"
+uri = "file://attached_assets/tms-api-context.txt"
+type = "text"
+title = "LinkedIn Messages — Ameera"

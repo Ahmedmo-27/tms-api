@@ -20,7 +20,7 @@ import { sendRefundToRentalSystem, refundPaymentToRentalSystem } from "../../ser
 import logger from "../../config/logger";
 import { IRefund } from "../../models/refund";
 import { IPayment } from "../../models/payment";
-import { startOfDay, endOfDay } from "date-fns";
+import { startOfDateCairo, endOfDateCairo } from "../../utils/timezone";
 
 async function syncRefundToErp(
   refund: IRefund,
@@ -197,8 +197,8 @@ export const listRefunds = asyncHandler(
       const parsed = new Date(date as string);
       if (!isNaN(parsed.getTime())) {
         filter.createdAt = {
-          $gte: startOfDay(parsed),
-          $lte: endOfDay(parsed),
+          $gte: startOfDateCairo(parsed),
+          $lte: endOfDateCairo(parsed),
         };
       }
     }

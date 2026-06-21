@@ -698,6 +698,40 @@ export class BookingsService {
     return result;
   }
 
+  static async adminPromoteFromWaitlist(uid: string, scid: string) {
+    await ScheduledClass.assertOnWaitlist(scid, uid);
+    await BookingsService.addBooking(uid, scid, true);
+    await ScheduledClass.removeMemberFromWaitlist(scid, uid);
+  }
+
+  static async adminAddToWaitlist(uid: string, scid: string) {
+    const member = await Member.findOne({ uid });
+    if (!member)
+      throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
+    const scheduledClass = await ScheduledClass.findById(scid);
+    if (!scheduledClass)
+      throw new NotFoundError("CLASS_NOT_FOUND", "Scheduled class not found");
+    await ScheduledClass.addMemberToWaitlistOverride(scid, uid);
+  }
+
+  static async adminRemoveFromWaitlist(uid: string, scid: string) {
+    const scheduledClass = await ScheduledClass.findById(scid);
+    if (!scheduledClass)
+      throw new NotFoundError("CLASS_NOT_FOUND", "Scheduled class not found");
+    await ScheduledClass.removeMemberFromWaitlist(scid, uid);
+  }
+
+  static async getWaitlistedMembers(scid: string) {
+    const scheduledClass = await ScheduledClass.findById(scid).populate({
+      path: "waitlistedMembers.uid",
+      model: "User",
+      select: "name phone",
+    });
+    if (!scheduledClass)
+      throw new NotFoundError("CLASS_NOT_FOUND", "Scheduled class not found");
+    return scheduledClass.waitlistedMembers;
+  }
+
   static async addMemberToWaitingList(
     uid: string,
     fcmToken: string,
