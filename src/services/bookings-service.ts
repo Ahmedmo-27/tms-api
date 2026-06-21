@@ -18,6 +18,9 @@ import logger from "../config/logger";
 import NonUserBooking, { INonUserBooking } from "../models/nonUserBookings";
 import { sendPaymentToRentalSystem } from "./egygap-erp-service";
 import { NotificationsService } from "./notifications-service";
+import { WaitlistService } from "./waitlist-service";
+import Reservation from "../models/reservation";
+import WaitlistEntry from "../models/waitlistEntry";
 import ChallengeRecord from "../models/challengeRecord";
 
 export class BookingsService {
@@ -32,6 +35,42 @@ export class BookingsService {
     });
     if (!scheduledClass)
       throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
+
+    // Enforce Waitlist Reservations
+    if (!isAdminOverride) {
+      const activeReservationsCount = await Reservation.countDocuments({
+        sessionId: scheduledClass._id,
+        status: "ACTIVE"
+      });
+      const userHasReservation = await Reservation.findOne({
+        sessionId: scheduledClass._id,
+        userId: new Types.ObjectId(uid),
+        status: "ACTIVE"
+      });
+      
+      const publicSlots = scheduledClass.availableSlots - activeReservationsCount;
+      if (publicSlots <= 0 && !userHasReservation) {
+        const expiredReservation = await Reservation.findOne({
+          sessionId: scheduledClass._id,
+          userId: new Types.ObjectId(uid),
+          status: "EXPIRED"
+        });
+        if (expiredReservation) {
+          throw new ForbiddenError("RESERVATION_EXPIRED", "Your reservation window has expired. The spot has been passed to the next person.");
+        }
+
+        const waitingEntry = await WaitlistEntry.findOne({
+          sessionId: scheduledClass._id,
+          userId: new Types.ObjectId(uid),
+          status: "WAITING"
+        });
+        if (waitingEntry) {
+          throw new ForbiddenError("STILL_WAITING", "You are currently on the waitlist. We will notify you when it is your turn.");
+        }
+
+        throw new ForbiddenError("SPOT_RESERVED", "Available spots are currently reserved for waitlisted members. Please join the waitlist.");
+      }
+    }
 
     // Apply booking policy restriction (30 mins after class start time)
     if (!isAdminOverride && (scheduledClass.cid as any).category !== "WORKSPACE") {
@@ -161,6 +200,23 @@ export class BookingsService {
           }
         }
       }
+
+      // If user had a reservation, mark it COMPLETED
+      const userReservation = await Reservation.findOne({
+        sessionId: scheduledClass._id,
+        userId: new Types.ObjectId(uid),
+        status: "ACTIVE"
+      }).session(session);
+      
+      if (userReservation) {
+        userReservation.status = "COMPLETED";
+        await userReservation.save({ session });
+        await WaitlistEntry.updateOne(
+          { sessionId: scheduledClass._id, userId: new Types.ObjectId(uid), status: "NOTIFIED" },
+          { status: "BOOKED" },
+          { session }
+        );
+      }
     });
   }
 
@@ -214,15 +270,10 @@ export class BookingsService {
         uid,
         session,
       );
-
-      // notify waiting list
-      // if (waitingList)
-      //   await NotificationsService.notifyWaitingList(
-      //     waitingList,
-      //     (scheduledClass.cid as any).title,
-      //     scheduledClass.startTime.getDay(),
-      //   );
     });
+    
+    // Trigger waitlist processing after transaction succeeds
+    await WaitlistService.processWaitlist(scid);
   }
 
   static async cancelDropIn(uid: string, scid: string): Promise<void> {
@@ -264,14 +315,10 @@ export class BookingsService {
         uid,
         session,
       );
-      //notify wainting list
-      // if (waitingList)
-      //   await NotificationsService.notifyWaitingList(
-      //     waitingList,
-      //     classTitle ?? "Class",
-      //     scheduledClass.startTime.getDay(),
-      //   );
     });
+
+    // Trigger waitlist processing after transaction succeeds
+    await WaitlistService.processWaitlist(scid);
   }
 
   static async recordAttendance(uid: string, scid: string, io: Server) {
@@ -527,6 +574,41 @@ export class BookingsService {
         throw new NotFoundError("PROMO_CODE_NOT_FOUND", "Promo code not found");
       price = discountedPrice;
     }
+
+    // Enforce Waitlist Reservations
+    const activeReservationsCount = await Reservation.countDocuments({
+      sessionId: scheduledClass._id,
+      status: "ACTIVE"
+    });
+    const userHasReservation = await Reservation.findOne({
+      sessionId: scheduledClass._id,
+      userId: new Types.ObjectId(uid),
+      status: "ACTIVE"
+    });
+    
+    const publicSlots = scheduledClass.availableSlots - activeReservationsCount;
+    if (publicSlots <= 0 && !userHasReservation) {
+      const expiredReservation = await Reservation.findOne({
+        sessionId: scheduledClass._id,
+        userId: new Types.ObjectId(uid),
+        status: "EXPIRED"
+      });
+      if (expiredReservation) {
+        throw new ForbiddenError("RESERVATION_EXPIRED", "Your reservation window has expired. The spot has been passed to the next person.");
+      }
+
+      const waitingEntry = await WaitlistEntry.findOne({
+        sessionId: scheduledClass._id,
+        userId: new Types.ObjectId(uid),
+        status: "WAITING"
+      });
+      if (waitingEntry) {
+        throw new ForbiddenError("STILL_WAITING", "You are currently on the waitlist. We will notify you when it is your turn.");
+      }
+
+      throw new ForbiddenError("SPOT_RESERVED", "Available spots are currently reserved for waitlisted members. Please join the waitlist.");
+    }
+
     const orderId = await PaymentsService.checkPayment(
       merchantReferenceId,
       price,
@@ -553,6 +635,17 @@ export class BookingsService {
       );
       await ScheduledClass.bookMember(scid, uid, "Drop In", session);
       await sendPaymentToRentalSystem(payment);
+
+      // If user had a reservation, mark it COMPLETED
+      if (userHasReservation) {
+        userHasReservation.status = "COMPLETED";
+        await userHasReservation.save({ session });
+        await WaitlistEntry.updateOne(
+          { sessionId: scheduledClass._id, userId: new Types.ObjectId(uid), status: "NOTIFIED" },
+          { status: "BOOKED" },
+          { session }
+        );
+      }
     });
   }
 
@@ -610,19 +703,13 @@ export class BookingsService {
     fcmToken: string,
     scid: string,
   ) {
-    const scheduledClass = await ScheduledClass.findById(scid);
-    if (!scheduledClass)
-      return new NotFoundError(
-        "CLASS_NOT_FOUND",
-        "Scheduled Class is not found!",
-      );
+    // Also save the FCM token to the user if not exists
     const user = await User.findById(uid);
-    if (!user) return new NotFoundError("USER_NOT_FOUND", "User is not found!");
-    if (!user.fcmTokens.includes(fcmToken)) {
+    if (user && !user.fcmTokens.includes(fcmToken)) {
       user.fcmTokens.push(fcmToken);
       await user.save();
     }
-    await scheduledClass.addMemberToWaitingList(fcmToken);
+    await WaitlistService.joinWaitlist(uid, scid);
   }
 
   static async recordNonUserAttendance(

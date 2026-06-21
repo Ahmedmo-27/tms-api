@@ -16,6 +16,7 @@ import logger from "../config/logger";
 import Payment from "../models/payment";
 import { PaymentsService } from "./payments-service";
 import { NotificationsService } from "./notifications-service";
+import { WaitlistService } from "./waitlist-service";
 
 export class SchedulerService {
   static async getSchedule(date: string): Promise<IScheduledClass[]> {
@@ -169,7 +170,6 @@ export class SchedulerService {
     scid: string,
   ): Promise<IScheduledClass | null> {
     const validUpdates = ["startTime", "endTime", "availableSlots", "coachId"];
-    let notifyWaitingList = false;
     const updates = Object.keys(updatedClass);
     const isValidUpdate = updates.every((update) =>
       validUpdates.includes(update),
@@ -183,8 +183,6 @@ export class SchedulerService {
       logger.info("Original Class", { scheduledClass });
       if (!scheduledClass)
         throw new NotFoundError("CLASS_NOT_FOUND", "Class not found", { scid });
-      if (scheduledClass.availableSlots == 0) notifyWaitingList = true;
-      const waitingList = scheduledClass.waitingList;
       newClass = await ScheduledClass.findByIdAndUpdate(
         scid,
         {
@@ -201,15 +199,16 @@ export class SchedulerService {
       if (startTime || endTime) {
         await Schedule.rescheduleClass(scheduledClass, newClass, session);
       }
-      // send notification to wainting list
-      // if (notifyWaitingList && waitingList) {
-      //   await NotificationsService.notifyWaitingList(
-      //     waitingList,
-      //     (scheduledClass.cid as any).title,
-      //     scheduledClass.startTime.getDay(),
-      //   );
-      // }
     });
+
+    // Trigger waitlist processing if slots were increased
+    if (availableSlots !== undefined) {
+      const scheduledClassOld = await ScheduledClass.findById(scid);
+      if (scheduledClassOld && Number(availableSlots) > scheduledClassOld.availableSlots) {
+        await WaitlistService.processWaitlist(scid);
+      }
+    }
+
     return newClass;
   }
 

@@ -50,6 +50,35 @@ export class NotificationsService {
   }
 
   /**
+   * Notify a specific waitlist user about their reservation window
+   */
+  static async notifyWaitlistUser(
+    userId: string,
+    fcmTokens: string[],
+    title: string,
+    dayIndex: number,
+    expiresAt: Date
+  ) {
+    const dayNames = [
+      "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
+    ]; 
+    const day = dayNames[dayIndex];
+    const message = `A slot is reserved for you for ${title} on ${day}. Book within your reservation window!`;
+
+    return this.sendNotification(
+      fcmTokens,
+      "RESERVATION AVAILABLE",
+      message,
+      {
+        type: "WAITLIST_RESERVATION_AVAILABLE",
+        title,
+        day,
+        expiresAt: expiresAt.toISOString(),
+      }
+    );
+  }
+
+  /**
    * Send push notifications to multiple users
    */
   static async sendNotification(
