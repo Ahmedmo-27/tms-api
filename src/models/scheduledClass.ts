@@ -27,6 +27,7 @@ export interface IScheduledClass extends Document {
   bookedMembers: IMemberBooking[];
   coachId: Types.ObjectId;
   scans: IMemberScan[];
+  waitlistedMembers: IWaitlistedMember[];
 }
 
 export interface IScheduledClassMethods {
