@@ -9,7 +9,7 @@ import logger from "../config/logger";
 export interface Itoken {
   token: string;
   device: string;
-  expiresIn: string;
+  expiresIn?: string;
 }
 
 export interface IUser extends Document {
@@ -53,7 +53,7 @@ const TokenSchema: Schema<Itoken> = new Schema({
   },
   expiresIn: {
     type: String,
-    required: true,
+    required: false,
   },
 });
 
@@ -186,15 +186,10 @@ UserSchema.method(
       jti: crypto.randomUUID(),
       iat: Math.floor(Date.now() / 1000),
     };
-    const token = jwt.sign(tokenData, secret, {
-      expiresIn: "10y",
-    });
-    const expiresAt = new Date();
-    expiresAt.setFullYear(expiresAt.getFullYear() + 10);
+    const token = jwt.sign(tokenData, secret);
     user.tokens.push({
       token,
       device: deviceType,
-      expiresIn: expiresAt.toISOString(),
     });
     logger.info("Generated auth token for user", {
       data: { userId: user._id, deviceType, fcmToken },
@@ -221,7 +216,7 @@ UserSchema.method("removeAllTokens", async function () {
 
 UserSchema.method("removeExpiredTokens", async function () {
   const user = this;
-  user.tokens = user.tokens.filter((t) => new Date(t.expiresIn) > new Date());
+  user.tokens = user.tokens.filter((t) => !t.expiresIn || new Date(t.expiresIn) > new Date());
   user.fcmTokens = []
   await user.save();
 });

@@ -25,7 +25,7 @@ export interface IScheduledClass extends Document {
   endTime: Date;
   availableSlots: number;
   bookedMembers: IMemberBooking[];
-  coachId: Types.ObjectId;
+  coachId: Types.ObjectId[];
   scans: IMemberScan[];
   waitlistedMembers: IWaitlistedMember[];
 }
@@ -133,10 +133,10 @@ const ScheduledClassSchema = new Schema<
       },
     },
   ],
-  coachId: {
+  coachId: [{
     type: Schema.Types.ObjectId,
     ref: "Coach",
-  },
+  }],
   scans: [MemberScanSchema],
 });
 

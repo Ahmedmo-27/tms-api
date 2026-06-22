@@ -83,7 +83,7 @@ export class SchedulerService {
     startTime: string,
     endTime: string,
     availableSlots: string,
-    coachId: string,
+    coachId: string | string[],
   ): Promise<IScheduledClass> {
     const cls = await Class.findById(cid);
     if (!cls)
@@ -104,7 +104,7 @@ export class SchedulerService {
       startTime,
       endTime,
       availableSlots,
-      coachId: new Types.ObjectId(coachId),
+      coachId: Array.isArray(coachId) ? coachId.map(id => new Types.ObjectId(id)) : (coachId ? [new Types.ObjectId(coachId)] : []),
     });
     await scheduledClass.save();
     await Schedule.scheduleClass(scheduledClass._id as string);
@@ -189,7 +189,9 @@ export class SchedulerService {
           startTime,
           endTime,
           availableSlots,
-          coachId: coachId ? new Types.ObjectId(coachId as string) : undefined,
+          coachId: coachId 
+            ? (Array.isArray(coachId) ? coachId.map(id => new Types.ObjectId(id as string)) : [new Types.ObjectId(coachId as string)]) 
+            : undefined,
         },
         { new: true },
       );

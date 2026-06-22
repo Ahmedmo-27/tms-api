@@ -74,7 +74,7 @@ export const getAttendanceHistory = asyncHandler(async function (
           memberPhone: phone,
           type: "CLASS",
           className: sc.cid?.title || "—",
-          coachName: sc.coachId?.name || undefined,
+          coachName: Array.isArray(sc.coachId) ? sc.coachId.map((c: any) => c.name).filter(Boolean).join(", ") || undefined : (sc.coachId?.name || undefined),
           refId: sc._id?.toString() || "",
           attendanceTime: time,
         });
