@@ -21,6 +21,7 @@ app.use(
   cors({
     origin: [
       "http://localhost:3000",
+      "http://localhost:3803",
       "https://tms-dashboard-ashen.vercel.app",
       "https://tms-dashboard-test.vercel.app", // Add mobile client
       "https://tms-dashboard-psi.vercel.app",
