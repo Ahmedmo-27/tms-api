@@ -35,13 +35,9 @@ export class SubscriptionsService {
       throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found", {
         pkgId,
       });
-    const fixedStartDate = new Date(startDate);
-    fixedStartDate.setHours(12, 0, 0, 0);
-    startDate = fixedStartDate.toISOString();
+    startDate = new Date(startDate).toISOString();
     if (paymentDate) {
-      const fixedPaymentDate = new Date(paymentDate);
-      fixedPaymentDate.setHours(12, 0, 0, 0);
-      paymentDate = fixedPaymentDate.toISOString();
+      paymentDate = new Date(paymentDate).toISOString();
     }
     const packageId = new Types.ObjectId(pkgId);
     const endDate = new Date(
@@ -122,9 +118,7 @@ export class SubscriptionsService {
         pkgId,
       });
 
-    const fixedStartDate = new Date(startDate);
-    fixedStartDate.setHours(12, 0, 0, 0);
-    startDate = fixedStartDate.toISOString();
+    startDate = new Date(startDate).toISOString();
     const packageId = new Types.ObjectId(pkgId);
     const endDate = new Date(
       new Date(startDate).getTime() + pkg.expiryPeriod * 24 * 60 * 60 * 1000,
@@ -206,9 +200,7 @@ export class SubscriptionsService {
       throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found", {
         pkgId,
       });
-    const fixedStartDate = new Date(startDate);
-    fixedStartDate.setHours(12, 0, 0, 0);
-    startDate = fixedStartDate.toISOString();
+    startDate = new Date(startDate).toISOString();
     const endDate = savedEndDate
       ? savedEndDate
       : new Date(
@@ -269,13 +261,9 @@ export class SubscriptionsService {
     const pkg = await Package.findById(pkgId);
     if (!pkg)
       throw new NotFoundError("PACKAGE_NOT_FOUND", "The package was not found");
-    const fixedStartDate = new Date(pkgStartDate);
-    fixedStartDate.setHours(12, 0, 0, 0);
-    pkgStartDate = fixedStartDate.toISOString();
+    pkgStartDate = new Date(pkgStartDate).toISOString();
     if (paymentDate) {
-      const fixedPaymentDate = new Date(paymentDate);
-      fixedPaymentDate.setHours(12, 0, 0, 0);
-      paymentDate = fixedPaymentDate.toISOString();
+      paymentDate = new Date(paymentDate).toISOString();
     }
     const endDate = new Date(
       new Date(pkgStartDate).getTime() +
