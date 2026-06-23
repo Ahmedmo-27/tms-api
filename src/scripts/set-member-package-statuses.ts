@@ -30,13 +30,13 @@ async function main() {
     let dirty = false;
 
     for (const pkg of member.packages) {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+      const { endOfTodayCairo } = require("../utils/timezone");
+      const todayEnd = endOfTodayCairo();
 
       const newStatus =
         pkg.pkgEndDate < cutoff  ? "EXPIRED"   :
         pkg.remainingClasses <= 0 ? "COMPLETED" : 
-        pkg.pkgStartDate > today ? "POSTPONED" : "ACTIVE";
+        pkg.pkgStartDate > todayEnd ? "POSTPONED" : "ACTIVE";
 
       if (pkg.status !== newStatus) {
         pkg.status = newStatus;

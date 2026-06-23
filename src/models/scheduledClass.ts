@@ -19,6 +19,11 @@ interface IWaitlistedMember {
   addedAt: Date;
 }
 
+interface IWaitlistedMember {
+  uid: Types.ObjectId;
+  addedAt: Date;
+}
+
 export interface IScheduledClass extends Document {
   cid: Types.ObjectId;
   startTime: Date;
@@ -28,10 +33,12 @@ export interface IScheduledClass extends Document {
   coachId: Types.ObjectId[];
   scans: IMemberScan[];
   waitlistedMembers: IWaitlistedMember[];
+  waitingList: string[];
 }
 
 export interface IScheduledClassMethods {
   checkBookedMember(uid: string, member: string, io: Server): Promise<boolean>;
+  addMemberToWaitingList(fcmToken: string): Promise<boolean>;
 }
 
 interface IScheduledClassStatics {
@@ -45,12 +52,12 @@ interface IScheduledClassStatics {
   removeBookedNonUser(
     scid: string,
     session: ClientSession,
-  ): Promise<void>;
+  ): Promise<string[] | undefined>;
   removeBookedMember(
     scid: string,
     uid: string,
     session: ClientSession,
-  ): Promise<void>;
+  ): Promise<string[] | undefined>;
   addMemberScan(
     scid: string,
     uid: string,
@@ -63,6 +70,9 @@ interface IScheduledClassStatics {
     uid: string,
     session?: ClientSession,
   ): Promise<void>;
+  addMemberToWaitlistOverride(scid: string, uid: string): Promise<void>;
+  removeMemberFromWaitlist(scid: string, uid: string): Promise<void>;
+  assertOnWaitlist(scid: string, uid: string): Promise<void>;
   addMemberToWaitlistOverride(scid: string, uid: string): Promise<void>;
   removeMemberFromWaitlist(scid: string, uid: string): Promise<void>;
   assertOnWaitlist(scid: string, uid: string): Promise<void>;
@@ -138,6 +148,19 @@ const ScheduledClassSchema = new Schema<
     ref: "Coach",
   }],
   scans: [MemberScanSchema],
+  waitingList: {
+    type: [String],
+    required: false,
+  },
+  waitlistedMembers: {
+    type: [
+      {
+        uid: { type: Schema.Types.ObjectId, ref: "User", required: true },
+        addedAt: { type: Date, default: Date.now },
+      },
+    ],
+    default: [],
+  },
 });
 
 ScheduledClassSchema.static(
@@ -199,8 +222,9 @@ ScheduledClassSchema.static(
     scid: string,
     uid: string,
     session: ClientSession,
-  ): Promise<void> {
-    const scheduledClass = await this.findById(scid);
+  ): Promise<string[] | undefined> {
+    let notifyWaitingList = false;
+    const scheduledClass = (await this.findById(scid)) as IScheduledClass | null;
     if (!scheduledClass)
       throw new NotFoundError(
         "CLASS_NOT_FOUND",
@@ -210,6 +234,7 @@ ScheduledClassSchema.static(
     if (!member)
       throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
     logger.info("Removing member from cls", { uid, scid });
+    if (scheduledClass.availableSlots == 0) notifyWaitingList = true;
     await this.updateOne(
       {
         _id: new Types.ObjectId(scid),
@@ -221,6 +246,8 @@ ScheduledClassSchema.static(
       },
       { session },
     );
+    if (notifyWaitingList) return scheduledClass.waitingList;
+    else return [];
   },
 );
 
@@ -229,13 +256,15 @@ ScheduledClassSchema.static(
   async function (
     scid: string,
     session: ClientSession,
-  ): Promise<void> {
-    const scheduledClass = await this.findById(scid);
+  ): Promise<string[] | undefined> {
+    let notifyWaitingList = false;
+    const scheduledClass = (await this.findById(scid)) as IScheduledClass | null;
     if (!scheduledClass)
       throw new NotFoundError(
         "CLASS_NOT_FOUND",
         "ScheduledClass was not found",
       );
+    if (scheduledClass.availableSlots == 0) notifyWaitingList = true;
     await this.updateOne(
       {
         _id: new Types.ObjectId(scid),
@@ -245,15 +274,17 @@ ScheduledClassSchema.static(
       },
       { session },
     );
+    if (notifyWaitingList) return scheduledClass.waitingList;
+    else return [];
   },
 );
 
 ScheduledClassSchema.method(
   "checkBookedMember",
   async function (uid: string, member: string, io: Server): Promise<boolean> {
-    const scheduledClass = this;
-    const booking = scheduledClass.bookedMembers.find((memberId) =>
-      memberId.uid.equals(uid),
+    const scheduledClass = this as unknown as IScheduledClass;
+    const booking = scheduledClass.bookedMembers.find((memberBooking: IMemberBooking) =>
+      memberBooking.uid.equals(uid),
     );
     logger.info("DATA: ", {
       uid,

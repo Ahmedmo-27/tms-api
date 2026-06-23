@@ -167,17 +167,21 @@ export class WaitlistService {
       await selectedEntry.save({ session });
     });
 
-    // Notify User
-    const user = await User.findById(selectedEntry.userId);
-    if (user && user.fcmTokens && user.fcmTokens.length > 0) {
-      const classTitle = (scheduledClass.cid as any).title || "Class";
-      await NotificationsService.notifyWaitlistUser(
-        (user._id as Types.ObjectId).toString(),
-        user.fcmTokens,
-        classTitle,
-        scheduledClass.startTime.getDay(),
-        expiresAt
-      );
+    // Notify User (best-effort — notification failure must not roll back the reservation)
+    try {
+      const user = await User.findById(selectedEntry.userId);
+      if (user && user.fcmTokens && user.fcmTokens.length > 0) {
+        const classTitle = (scheduledClass.cid as any).title || "Class";
+        await NotificationsService.notifyWaitlistUser(
+          (user._id as Types.ObjectId).toString(),
+          user.fcmTokens,
+          classTitle,
+          scheduledClass.startTime.getDay(),
+          expiresAt
+        );
+      }
+    } catch (notifyErr) {
+      logger.warn("Waitlist notification failed (non-fatal):", notifyErr);
     }
   }
 
