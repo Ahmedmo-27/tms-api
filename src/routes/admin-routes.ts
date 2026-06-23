@@ -86,6 +86,7 @@ import {
   createCashOut,
   getRefundByPaymentId,
   listRefunds,
+  listCashOuts,
   searchMembers,
   getMemberRecentPayments,
 } from "../controllers/admin/refunds-controller";
@@ -451,6 +452,18 @@ adminRoutes.get(
   authenticateUser,
   authorizeUser(["admin"]),
   listRefunds
+);
+adminRoutes.get(
+  "/refunds/cashouts",
+  authenticateUser,
+  authorizeUser(["admin"]),
+  listCashOuts
+);
+adminRoutes.get(
+  "/refunds/cashout",
+  authenticateUser,
+  authorizeUser(["admin"]),
+  listCashOuts
 );
 
 // Member Search Route

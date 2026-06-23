@@ -230,6 +230,49 @@ export const listRefunds = asyncHandler(
   }
 );
 
+export const listCashOuts = asyncHandler(
+  async (req: Request, res: Response): Promise<void> => {
+    const { date } = req.query;
+
+    const filter: Record<string, unknown> = { type: "CASHOUT" };
+
+    if (date) {
+      const parsed = new Date(date as string);
+      if (!isNaN(parsed.getTime())) {
+        filter.createdAt = {
+          $gte: startOfDateCairo(parsed),
+          $lte: endOfDateCairo(parsed),
+        };
+      }
+    }
+
+    const cashouts = await Refund.find(filter)
+      .sort({ createdAt: -1 })
+      .populate("recordedBy", "name")
+      .populate({
+        path: "paymentId",
+        select: "purpose amount paymentTime pkgId scid",
+        populate: [
+          { path: "pkgId", select: "name" },
+          { path: "scid", populate: { path: "cid", select: "title" } },
+        ],
+      });
+
+    res.status(200).json({
+      statusCode: 200,
+      message: "Cash Outs Fetched!",
+      data: cashouts.map((cashout) => {
+        let paymentLabel: string | null = null;
+        const linkedPayment = cashout.paymentId as unknown as IPayment | null;
+        if (linkedPayment && typeof linkedPayment === "object" && "_id" in linkedPayment) {
+          paymentLabel = mapMemberRecentPaymentDto(linkedPayment).label;
+        }
+        return mapRefundResponseDto(cashout, paymentLabel);
+      }),
+    });
+  }
+);
+
 export const getRefundByPaymentId = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const { paymentId, type } = req.query;

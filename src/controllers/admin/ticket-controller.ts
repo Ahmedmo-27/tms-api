@@ -3,8 +3,9 @@ import asyncHandler from "../../utils/asyncHandler";
 import Ticket, { TICKET_STATUSES } from "../../models/ticket";
 import TicketCategory from "../../models/ticketCategory";
 import { SuccessResponse } from "../../core/ApiResponse";
-import { BadRequestError, NotFoundError } from "../../core/ApiError";
+import { BadRequestError, NotFoundError, AuthFailureError } from "../../core/ApiError";
 import { AuthRequest } from "../../middlewares/auth.middleware";
+import User from "../../models/user";
 import { sendTicketConfirmationEmail } from "../../services/email-service";
 import logger from "../../config/logger";
 
@@ -24,21 +25,21 @@ export const getActiveTicketCategories = asyncHandler(
   }
 );
 
-// Submit a support ticket. No authentication required.
+// Submit a support ticket.
 export const submitTicket = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
-    const name = asTrimmed(req.body?.name);
-    const phone = asTrimmed(req.body?.phone);
-    const email = asTrimmed(req.body?.email).toLowerCase();
+    const authReq = req as AuthRequest;
+    const userId = authReq.user?._id;
+    if (!userId) throw new AuthFailureError("UNAUTHORIZED", "Not authorized to submit ticket");
+
+    const userDoc = await User.findById(userId);
+    if (!userDoc) throw new NotFoundError("USER_NOT_FOUND", "User not found in database");
+
     const category = asTrimmed(req.body?.category);
     const otherDetails = asTrimmed(req.body?.otherDetails);
     const description = asTrimmed(req.body?.description);
     const isOther = category.toLowerCase() === "other";
 
-    if (!name) throw new BadRequestError("VALIDATION", "Name is required");
-    if (!phone) throw new BadRequestError("VALIDATION", "Phone number is required");
-    if (!email || !EMAIL_REGEX.test(email))
-      throw new BadRequestError("VALIDATION", "A valid email is required");
     if (!category)
       throw new BadRequestError("VALIDATION", "Please choose a problem category");
     if (isOther && !otherDetails)
@@ -50,16 +51,16 @@ export const submitTicket = asyncHandler(
       throw new BadRequestError("VALIDATION", "Description is required");
 
     const ticket = await Ticket.create({
-      name,
-      phone,
-      email,
+      name: userDoc.name,
+      phone: userDoc.phoneNumber,
+      email: userDoc.email,
       category,
       otherDetails: isOther ? otherDetails : undefined,
       description,
     });
 
     // Best-effort confirmation email; never blocks or fails the submission.
-    void sendTicketConfirmationEmail(email, name, category).catch((e) =>
+    void sendTicketConfirmationEmail(userDoc.email, userDoc.name, category).catch((e) =>
       logger.error("Ticket confirmation email failed", {
         error: (e as Error).message,
       })
