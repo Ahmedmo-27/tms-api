@@ -8,14 +8,16 @@ import {
   getActiveTicketCategories,
 } from "../controllers/admin/ticket-controller";
 
+import { authenticateUser } from "../middlewares/auth.middleware";
+
 const exposedRoutes = express.Router();
 
 // exposedRoutes.get("/", exposedGetPayments);
 exposedRoutes.get("/unlinked-coaches", getUnlinkedCoaches);
 exposedRoutes.post("/register-coach", registerCoachUser);
 
-// Support tickets (public — no auth)
+// Support tickets (public get, authenticated post)
 exposedRoutes.get("/ticket-categories", getActiveTicketCategories);
-exposedRoutes.post("/tickets", defaultLimiter, submitTicket);
+exposedRoutes.post("/tickets", defaultLimiter, authenticateUser, submitTicket);
 
 export default exposedRoutes;
