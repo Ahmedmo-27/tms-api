@@ -186,10 +186,16 @@ UserSchema.method(
       jti: crypto.randomUUID(),
       iat: Math.floor(Date.now() / 1000),
     };
-    const token = jwt.sign(tokenData, secret);
+    const token = jwt.sign(tokenData, secret, { expiresIn: "30d" });
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    // Clean up expired tokens to prevent array growth
+    user.tokens = user.tokens.filter((t) => !t.expiresIn || new Date(t.expiresIn) > new Date());
+
     user.tokens.push({
       token,
       device: deviceType,
+      expiresIn: expiresAt,
     });
     logger.info("Generated auth token for user", {
       data: { userId: user._id, deviceType, fcmToken },
@@ -217,7 +223,6 @@ UserSchema.method("removeAllTokens", async function () {
 UserSchema.method("removeExpiredTokens", async function () {
   const user = this;
   user.tokens = user.tokens.filter((t) => !t.expiresIn || new Date(t.expiresIn) > new Date());
-  user.fcmTokens = []
   await user.save();
 });
 
