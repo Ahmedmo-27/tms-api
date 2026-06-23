@@ -6,7 +6,6 @@ import { Server as SocketIOServer } from "socket.io";
 import connectDB from "./config/db";
 import logger from "./config/logger";
 import { syncEmails } from "./services/imap-service";
-import { WaitlistService } from "./services/waitlist-service";
 
 const app = require("./app"); // your Express app
 
@@ -49,13 +48,6 @@ const startServer = async () => {
     setInterval(() => {
       syncEmails().catch((err) => logger.error("IMAP sync failed", err));
     }, 2 * 60 * 1000); // Every 2 minutes
-
-    // Start Waitlist Expiration Worker
-    setInterval(() => {
-      WaitlistService.expireReservations().catch((err) => 
-        logger.error("Waitlist expiration worker failed", err)
-      );
-    }, 60 * 1000); // Every 1 minute
   });
 
   process.on("uncaughtException", (err) => {

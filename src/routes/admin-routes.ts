@@ -74,6 +74,14 @@ import {
   deleteOrder,
 } from "../controllers/admin/orders-controller";
 import {
+  getTickets,
+  updateTicketStatus,
+  getTicketCategories,
+  addTicketCategory,
+  updateTicketCategory,
+  deleteTicketCategory,
+} from "../controllers/admin/ticket-controller";
+import {
   createMemberRefund,
   createCashOut,
   getRefundByPaymentId,
@@ -510,6 +518,45 @@ adminRoutes.delete(
   deleteOrder
 );
 
+// Ticket Routes
+adminRoutes.get(
+  "/tickets",
+  authenticateUser,
+  authorizeUser(["admin", "fd"]),
+  getTickets
+);
+adminRoutes.patch(
+  "/tickets/:id",
+  authenticateUser,
+  authorizeUser(["admin", "fd"]),
+  updateTicketStatus
+);
+
+// Ticket Category Routes (admin-editable problem list)
+adminRoutes.get(
+  "/ticket-categories",
+  authenticateUser,
+  authorizeUser(["admin", "fd"]),
+  getTicketCategories
+);
+adminRoutes.post(
+  "/ticket-categories",
+  authenticateUser,
+  authorizeUser(["admin"]),
+  addTicketCategory
+);
+adminRoutes.patch(
+  "/ticket-categories/:id",
+  authenticateUser,
+  authorizeUser(["admin"]),
+  updateTicketCategory
+);
+adminRoutes.delete(
+  "/ticket-categories/:id",
+  authenticateUser,
+  authorizeUser(["admin"]),
+  deleteTicketCategory
+);
 // Mail System Routes
 adminRoutes.post(
   "/mail/send",
