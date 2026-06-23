@@ -60,7 +60,7 @@ export const submitTicket = asyncHandler(
     });
 
     // Best-effort confirmation email; never blocks or fails the submission.
-    void sendTicketConfirmationEmail(email, name, category).catch((e) =>
+    void sendTicketConfirmationEmail(userDoc.email, userDoc.name, category).catch((e) =>
       logger.error("Ticket confirmation email failed", {
         error: (e as Error).message,
       })
