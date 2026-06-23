@@ -25,6 +25,8 @@ app.use(
       "https://tms-dashboard-ashen.vercel.app",
       "https://tms-dashboard-test.vercel.app", // Add mobile client
       "https://tms-dashboard-psi.vercel.app",
+      "http://the-mind-space.com",
+      "http://www.the-mind-space.com",
     ],
     credentials: true, // Allow cookies / Authorization headers
   })
