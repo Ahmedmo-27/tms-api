@@ -1129,10 +1129,7 @@ MemberSchema.static(
     pkgStartDate: string,
     session: ClientSession
   ): Promise<void> {
-    const date = new Date(pkgStartDate);
-    const startOfDay = new Date(date.setHours(0, 0, 0, 0));
-    const endOfDay = new Date(date);
-    endOfDay.setDate(endOfDay.getDate() + 1);
+    // Unused variables removed
     await this.updateOne(
       {
         uid,
@@ -1170,6 +1167,7 @@ MemberSchema.static(
     newClasses: number
   ): Promise<void> {
     logger.info("Data", { pkgId, pkgStartDate });
+    const { startOfDateCairo, startOfTodayCairo } = await import("../utils/timezone");
     const member = await this.findOne({ uid });
     if (!member) throw new NotFoundError("ERROR");
     const p = member.packages.find((p) => {
@@ -1225,7 +1223,7 @@ MemberSchema.static(
         {
           $set: {
             "packages.$[pkg].remainingClasses": newClasses,
-            "packages.$[pkg].status": new Date(pkgStartDate) > new Date(new Date().setHours(0, 0, 0, 0)) ? "POSTPONED" : "ACTIVE",
+            "packages.$[pkg].status": startOfDateCairo(pkgStartDate) > startOfTodayCairo() ? "POSTPONED" : "ACTIVE",
           },
         },
         {
@@ -1250,6 +1248,7 @@ MemberSchema.static(
     newDate: string,
     session: ClientSession
   ): Promise<void> {
+    const { startOfDateCairo, startOfTodayCairo } = await import("../utils/timezone");
     logger.info("Data", { pkgId, pkgStartDate });
     const member = await this.findOne({ uid });
     if (!member) throw new NotFoundError("ERROR");
@@ -1301,7 +1300,7 @@ MemberSchema.static(
         {
           $set: {
             "packages.$[pkg].pkgEndDate": new Date(newDate),
-            "packages.$[pkg].status": new Date(pkgStartDate) > new Date(new Date().setHours(0, 0, 0, 0)) ? "POSTPONED" : "ACTIVE",
+            "packages.$[pkg].status": startOfDateCairo(pkgStartDate) > startOfTodayCairo() ? "POSTPONED" : "ACTIVE",
           },
         },
         {
