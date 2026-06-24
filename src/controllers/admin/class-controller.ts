@@ -18,25 +18,31 @@ import { runInTransaction } from "../../utils/transaction";
 import { ClientSession } from "mongoose";
 import logger from "../../config/logger";
 
+/** Escapes special regex characters so user-supplied strings are treated as literals. */
+const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 const processLocations = async (locationsRaw: any) => {
   if (locationsRaw === undefined || locationsRaw === null || locationsRaw === "") return undefined;
-  const locs = Array.isArray(locationsRaw) ? locationsRaw : [locationsRaw];
+  const raw = Array.isArray(locationsRaw) ? locationsRaw : [locationsRaw];
+  // Filter out any blank/empty entries before processing
+  const locs = raw.map((l: any) => String(l).trim()).filter((l: string) => l.length > 0);
+  if (locs.length === 0) return undefined;
   const mappedLocations = [];
   for (const loc of locs) {
     if (Types.ObjectId.isValid(loc)) {
       mappedLocations.push(loc);
     } else {
-      const cleanLoc = String(loc).trim();
-      const foundLoc = await Location.findOne({ 
+      const escaped = escapeRegex(loc);
+      const foundLoc = await Location.findOne({
         $or: [
-          { branchName: { $regex: new RegExp(`^${cleanLoc}$`, "i") } },
-          { location: { $regex: new RegExp(`^${cleanLoc}$`, "i") } }
-        ]
+          { branchName: { $regex: new RegExp(`^${escaped}$`, "i") } },
+          { location: { $regex: new RegExp(`^${escaped}$`, "i") } },
+        ],
       });
       if (foundLoc) {
         mappedLocations.push(foundLoc._id);
       } else {
-        throw new BadRequestError("INVALID_LOCATION", `Location ${loc} not found`);
+        throw new BadRequestError("INVALID_LOCATION", `Location "${loc}" not found`);
       }
     }
   }
