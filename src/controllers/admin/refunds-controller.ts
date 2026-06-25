@@ -107,7 +107,7 @@ export const createMemberRefund = asyncHandler(
                 packages: {
                   $elemMatch: {
                     pkgId: linkedPayment.pkgId,
-                    status: { $in: ["ACTIVE", "POSTPONED"] }
+                    status: "ACTIVE"
                   }
                 }
               },
@@ -118,7 +118,7 @@ export const createMemberRefund = asyncHandler(
                 arrayFilters: [
                   {
                     "pkg.pkgId": linkedPayment.pkgId,
-                    "pkg.status": { $in: ["ACTIVE", "POSTPONED"] }
+                    "pkg.status": "ACTIVE"
                   }
                 ],
                 session

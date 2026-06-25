@@ -56,7 +56,7 @@ export interface IMemberPackageData {
   name: string;
   pkgStartDate: Date;
   pkgEndDate: Date;
-  status: "ACTIVE" | "EXPIRED" | "DELETED" | "COMPLETED" | "POSTPONED";
+  status: "ACTIVE" | "EXPIRED" | "DELETED" | "COMPLETED";
   remainingClasses: number;
   classRestrictionsRecord?: IClassRestrictionRecord[];
   adjustmentHistory?: IAdjustmentRecord[];
@@ -254,7 +254,7 @@ const MemberPackageSchema: Schema = new Schema({
   status: {
     type: String,
     required: true,
-    enum: ["ACTIVE", "EXPIRED", "DELETED", "COMPLETED", "POSTPONED"],
+    enum: ["ACTIVE", "EXPIRED", "DELETED", "COMPLETED"],
   },
   remainingClasses: {
     type: Number,
@@ -1083,11 +1083,10 @@ MemberSchema.static(
     session: ClientSession,
     classRestrictions?: IClassRestrictionRecord[]
   ): Promise<void> {
-    const { startOfDateCairo, startOfTodayCairo } = await import("../utils/timezone");
+    const { startOfDateCairo } = await import("../utils/timezone");
     const pkgStartDay = startOfDateCairo(startDate);
     const pkgStartDayEnd = new Date(pkgStartDay);
     pkgStartDayEnd.setDate(pkgStartDayEnd.getDate() + 1);
-    const todayCairo = startOfTodayCairo();
     const result = await this.findOneAndUpdate(
       {
         uid,
@@ -1107,7 +1106,7 @@ MemberSchema.static(
             name: pkgName,
             pkgStartDate: new Date(startDate),
             pkgEndDate: new Date(endDate),
-            status: pkgStartDay > todayCairo ? "POSTPONED" : "ACTIVE",
+            status: "ACTIVE",
             remainingClasses: numberOfSessions,
             classRestrictionsRecord: classRestrictions,
           },
@@ -1167,7 +1166,6 @@ MemberSchema.static(
     newClasses: number
   ): Promise<void> {
     logger.info("Data", { pkgId, pkgStartDate });
-    const { startOfDateCairo, startOfTodayCairo } = await import("../utils/timezone");
     const member = await this.findOne({ uid });
     if (!member) throw new NotFoundError("ERROR");
     const p = member.packages.find((p) => {
@@ -1223,7 +1221,7 @@ MemberSchema.static(
         {
           $set: {
             "packages.$[pkg].remainingClasses": newClasses,
-            "packages.$[pkg].status": startOfDateCairo(pkgStartDate) > startOfTodayCairo() ? "POSTPONED" : "ACTIVE",
+            "packages.$[pkg].status": "ACTIVE",
           },
         },
         {
@@ -1248,7 +1246,6 @@ MemberSchema.static(
     newDate: string,
     session: ClientSession
   ): Promise<void> {
-    const { startOfDateCairo, startOfTodayCairo } = await import("../utils/timezone");
     logger.info("Data", { pkgId, pkgStartDate });
     const member = await this.findOne({ uid });
     if (!member) throw new NotFoundError("ERROR");
@@ -1300,7 +1297,7 @@ MemberSchema.static(
         {
           $set: {
             "packages.$[pkg].pkgEndDate": new Date(newDate),
-            "packages.$[pkg].status": startOfDateCairo(pkgStartDate) > startOfTodayCairo() ? "POSTPONED" : "ACTIVE",
+            "packages.$[pkg].status": "ACTIVE",
           },
         },
         {
