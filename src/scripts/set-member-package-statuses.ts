@@ -35,8 +35,7 @@ async function main() {
 
       const newStatus =
         pkg.pkgEndDate < cutoff  ? "EXPIRED"   :
-        pkg.remainingClasses <= 0 ? "COMPLETED" : 
-        pkg.pkgStartDate > todayEnd ? "POSTPONED" : "ACTIVE";
+        pkg.remainingClasses <= 0 ? "COMPLETED" : "ACTIVE";
 
       if (pkg.status !== newStatus) {
         pkg.status = newStatus;
