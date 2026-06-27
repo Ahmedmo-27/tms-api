@@ -66,18 +66,49 @@ export class SchedulerService {
     return resolvedId;
   }
 
+  private static shapeLocationId(
+    loc: unknown,
+  ): { branchName?: string; location?: string } {
+    if (!loc) return {};
+    const obj =
+      typeof (loc as { toObject?: () => Record<string, unknown> }).toObject ===
+      "function"
+        ? (loc as { toObject: () => Record<string, unknown> }).toObject()
+        : (loc as Record<string, unknown>);
+    const branchName =
+      typeof obj.branchName === "string" ? obj.branchName.trim() : "";
+    const location =
+      typeof obj.location === "string" ? obj.location.trim() : "";
+    if (!branchName && !location) return {};
+    return {
+      ...(branchName && { branchName }),
+      ...(location && { location }),
+    };
+  }
+
+  /** Prefer session locationId; fall back only when the class has one unambiguous branch. */
+  private static resolveSessionLocation(cls: any) {
+    if (cls.locationId) return cls.locationId;
+    const classLocations = cls.cid?.locations;
+    if (Array.isArray(classLocations) && classLocations.length === 1) {
+      return classLocations[0];
+    }
+    return null;
+  }
+
   /**
-   * Legacy mobile app filters/displays using cid.locations (class template) instead of
-   * locationId (session branch). Shape the response so those fields only contain
-   * this session's branch until the app is updated.
+   * Mobile app reads locationId on each scheduled session (not cid.locations[]).
+   * Shape the response with this session's branch and keep cid.locations scoped to it.
    */
   private static shapeSessionForLegacyClients(cls: any) {
     const doc = typeof cls.toObject === "function" ? cls.toObject() : { ...cls };
-    const sessionLocation = cls.locationId;
+    const sessionLocation = this.resolveSessionLocation(cls);
+    const locationId = this.shapeLocationId(sessionLocation);
 
     if (!sessionLocation) {
       return {
         ...doc,
+        locationId,
         locations: doc.cid?.locations ?? [],
       };
     }
@@ -94,6 +125,7 @@ export class SchedulerService {
     return {
       ...doc,
       cid,
+      locationId,
       locations: sessionLocations,
       sessionBranchName: sessionLocObj.branchName,
       sessionLocationCity: sessionLocObj.location,
@@ -113,7 +145,7 @@ export class SchedulerService {
     })
       .populate({ path: "scans.uid" })
       .populate({ path: "cid", populate: { path: "locations" } })
-      .populate({ path: "locationId" })
+      .populate({ path: "locationId", select: "branchName location" })
       .populate({ path: "coachId" })
       .populate({ path: "bookedMembers.uid", select: "name phoneNumber" })
       .sort({ startTime: 1 });
