@@ -86,8 +86,8 @@ export class SchedulerService {
     let output: any = [];
     scheduledClasses.forEach((cls: any) => {
       output.push({
-        ...cls._doc,
-        locations: cls.cid.locations,
+        ...cls.toObject(),
+        locations: cls.cid?.locations,
       });
     });
     return output;
