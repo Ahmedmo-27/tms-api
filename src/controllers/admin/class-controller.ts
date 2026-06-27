@@ -53,7 +53,21 @@ export const addClass = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const { title, category, price, locations, location, points, allowDropIn } = req.body;
     const finalLocationsRaw = locations !== undefined ? locations : location;
-    const finalLocations = await processLocations(finalLocationsRaw) || [];
+    if (
+      finalLocationsRaw === undefined ||
+      finalLocationsRaw === null ||
+      finalLocationsRaw === ""
+    )
+      throw new BadRequestError(
+        "LOCATION_REQUIRED",
+        "At least one location is required",
+      );
+    const finalLocations = await processLocations(finalLocationsRaw);
+    if (!finalLocations || finalLocations.length === 0)
+      throw new BadRequestError(
+        "LOCATION_REQUIRED",
+        "At least one location is required",
+      );
     const cls = new Class({ title, category, price, locations: finalLocations, points, allowDropIn });
     await cls.save();
     new SuccessResponse("Class Added!", cls).send(res);
