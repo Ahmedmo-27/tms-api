@@ -66,6 +66,40 @@ export class SchedulerService {
     return resolvedId;
   }
 
+  /**
+   * Legacy mobile app filters/displays using cid.locations (class template) instead of
+   * locationId (session branch). Shape the response so those fields only contain
+   * this session's branch until the app is updated.
+   */
+  private static shapeSessionForLegacyClients(cls: any) {
+    const doc = typeof cls.toObject === "function" ? cls.toObject() : { ...cls };
+    const sessionLocation = cls.locationId;
+
+    if (!sessionLocation) {
+      return {
+        ...doc,
+        locations: doc.cid?.locations ?? [],
+      };
+    }
+
+    const sessionLocObj =
+      typeof sessionLocation.toObject === "function"
+        ? sessionLocation.toObject()
+        : sessionLocation;
+    const sessionLocations = [sessionLocObj];
+    const cid = doc.cid
+      ? { ...doc.cid, locations: sessionLocations }
+      : doc.cid;
+
+    return {
+      ...doc,
+      cid,
+      locations: sessionLocations,
+      sessionBranchName: sessionLocObj.branchName,
+      sessionLocationCity: sessionLocObj.location,
+    };
+  }
+
   static async getSchedule(date: string): Promise<IScheduledClass[]> {
     const scheduledClassesIds = await Schedule.getClasses(date as string);
     if (!scheduledClassesIds || scheduledClassesIds.length === 0)
@@ -83,14 +117,9 @@ export class SchedulerService {
       .populate({ path: "coachId" })
       .populate({ path: "bookedMembers.uid", select: "name phoneNumber" })
       .sort({ startTime: 1 });
-    let output: any = [];
-    scheduledClasses.forEach((cls: any) => {
-      output.push({
-        ...cls.toObject(),
-        locations: cls.cid?.locations,
-      });
-    });
-    return output;
+    return scheduledClasses.map((cls) =>
+      this.shapeSessionForLegacyClients(cls),
+    );
   }
 
   static async getNextSchedule() {
