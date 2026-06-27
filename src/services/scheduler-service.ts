@@ -5,6 +5,7 @@ import {
   BadRequestError,
 } from "../core/ApiError";
 import Class from "../models/class";
+import Location from "../models/location";
 import Schedule from "../models/schedule";
 import ScheduledClass from "../models/scheduledClass";
 import DailyAttendance from "../models/dailyAttendance";
@@ -18,7 +19,53 @@ import { PaymentsService } from "./payments-service";
 import { NotificationsService } from "./notifications-service";
 import { WaitlistService } from "./waitlist-service";
 
+const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 export class SchedulerService {
+  private static async resolveLocationId(
+    locationRaw: string | undefined,
+    classLocationIds: Types.ObjectId[],
+  ): Promise<Types.ObjectId> {
+    if (!locationRaw)
+      throw new BadRequestError("LOCATION_REQUIRED", "Location is required");
+
+    let resolvedId: Types.ObjectId;
+    if (Types.ObjectId.isValid(locationRaw)) {
+      resolvedId = new Types.ObjectId(locationRaw);
+    } else {
+      const escaped = escapeRegex(locationRaw.trim());
+      const foundLoc = await Location.findOne({
+        $or: [
+          { branchName: { $regex: new RegExp(`^${escaped}$`, "i") } },
+          { location: { $regex: new RegExp(`^${escaped}$`, "i") } },
+        ],
+      });
+      if (!foundLoc)
+        throw new BadRequestError(
+          "INVALID_LOCATION",
+          `Location "${locationRaw}" not found`,
+        );
+      resolvedId = foundLoc._id as Types.ObjectId;
+    }
+
+    const locationDoc = await Location.findById(resolvedId);
+    if (!locationDoc)
+      throw new NotFoundError("LOCATION_NOT_FOUND", "Location not found", {
+        locationId: resolvedId,
+      });
+
+    if (
+      classLocationIds.length > 0 &&
+      !classLocationIds.some((id) => id.equals(resolvedId))
+    )
+      throw new BadRequestError(
+        "INVALID_LOCATION",
+        "Class is not offered at this location",
+      );
+
+    return resolvedId;
+  }
+
   static async getSchedule(date: string): Promise<IScheduledClass[]> {
     const scheduledClassesIds = await Schedule.getClasses(date as string);
     if (!scheduledClassesIds || scheduledClassesIds.length === 0)
@@ -32,6 +79,7 @@ export class SchedulerService {
     })
       .populate({ path: "scans.uid" })
       .populate({ path: "cid", populate: { path: "locations" } })
+      .populate({ path: "locationId" })
       .populate({ path: "coachId" })
       .populate({ path: "bookedMembers.uid", select: "name phoneNumber" })
       .sort({ startTime: 1 });
@@ -57,6 +105,7 @@ export class SchedulerService {
       _id: { $in: objectIds },
     })
       .populate({ path: "cid", populate: { path: "locations" } })
+      .populate({ path: "locationId" })
       .populate({ path: "coachId" })
       .populate({ path: "scans.uid" })
       .populate({ path: "bookedMembers.uid", select: "name phoneNumber" });
@@ -71,6 +120,7 @@ export class SchedulerService {
       _id: { $in: objectIds },
     })
       .populate({ path: "cid", populate: { path: "locations" } })
+      .populate({ path: "locationId" })
       .populate({ path: "coachId" })
       .populate({ path: "scans.uid" })
       .populate({ path: "bookedMembers.uid", select: "name phoneNumber" });
@@ -84,22 +134,33 @@ export class SchedulerService {
     endTime: string,
     availableSlots: string,
     coachId: string | string[],
+    locationRaw?: string,
   ): Promise<IScheduledClass> {
     const cls = await Class.findById(cid);
     if (!cls)
       throw new NotFoundError("CLASS_NOT_FOUND", "Class not found", { cid });
-    if (await ScheduledClass.findOne({ cid, startTime }))
+
+    const locationId = await this.resolveLocationId(
+      locationRaw,
+      cls.locations,
+    );
+
+    if (
+      await ScheduledClass.findOne({ cid, startTime, locationId })
+    )
       throw new ConflictError(
         "CLASS_ALREADY_SCHEDULED",
-        "Class already scheduled for this time",
+        "Class already scheduled for this time at this location",
         {
           cid,
           startTime,
+          locationId,
         },
       );
 
     const scheduledClass = new ScheduledClass({
       cid,
+      locationId,
       className: cls.title,
       startTime,
       endTime,
@@ -169,7 +230,14 @@ export class SchedulerService {
     updatedClass: Record<string, any>,
     scid: string,
   ): Promise<IScheduledClass | null> {
-    const validUpdates = ["startTime", "endTime", "availableSlots", "coachId"];
+    const validUpdates = [
+      "startTime",
+      "endTime",
+      "availableSlots",
+      "coachId",
+      "locationId",
+      "location",
+    ];
     const updates = Object.keys(updatedClass);
     const isValidUpdate = updates.every((update) =>
       validUpdates.includes(update),
@@ -177,21 +245,84 @@ export class SchedulerService {
     let newClass = null;
     if (!isValidUpdate)
       throw new BadRequestError("INVALID_UPDATES", "Invalid updates");
-    const { startTime, endTime, availableSlots, coachId } = updatedClass;
+    const {
+      startTime,
+      endTime,
+      availableSlots,
+      coachId,
+      locationId: locationIdRaw,
+      location: locationName,
+    } = updatedClass;
     await runInTransaction(async (session: ClientSession) => {
       const scheduledClass = await ScheduledClass.findById(scid);
       logger.info("Original Class", { scheduledClass });
       if (!scheduledClass)
         throw new NotFoundError("CLASS_NOT_FOUND", "Class not found", { scid });
+
+      let resolvedLocationId: Types.ObjectId | undefined;
+      const locationInput = locationIdRaw ?? locationName;
+      if (locationInput !== undefined) {
+        const cls = await Class.findById(scheduledClass.cid);
+        if (!cls)
+          throw new NotFoundError("CLASS_NOT_FOUND", "Class not found", {
+            cid: scheduledClass.cid,
+          });
+        resolvedLocationId = await this.resolveLocationId(
+          String(locationInput),
+          cls.locations,
+        );
+        if (
+          (startTime || scheduledClass.startTime) &&
+          (await ScheduledClass.findOne({
+            _id: { $ne: scid },
+            cid: scheduledClass.cid,
+            startTime: startTime ?? scheduledClass.startTime,
+            locationId: resolvedLocationId,
+          }))
+        )
+          throw new ConflictError(
+            "CLASS_ALREADY_SCHEDULED",
+            "Class already scheduled for this time at this location",
+            {
+              cid: scheduledClass.cid,
+              startTime: startTime ?? scheduledClass.startTime,
+              locationId: resolvedLocationId,
+            },
+          );
+      } else if (startTime) {
+        const effectiveLocationId = scheduledClass.locationId;
+        if (
+          effectiveLocationId &&
+          (await ScheduledClass.findOne({
+            _id: { $ne: scid },
+            cid: scheduledClass.cid,
+            startTime,
+            locationId: effectiveLocationId,
+          }))
+        )
+          throw new ConflictError(
+            "CLASS_ALREADY_SCHEDULED",
+            "Class already scheduled for this time at this location",
+            {
+              cid: scheduledClass.cid,
+              startTime,
+              locationId: effectiveLocationId,
+            },
+          );
+      }
+
       newClass = await ScheduledClass.findByIdAndUpdate(
         scid,
         {
-          startTime,
-          endTime,
-          availableSlots,
-          coachId: coachId 
-            ? (Array.isArray(coachId) ? coachId.map(id => new Types.ObjectId(id as string)) : [new Types.ObjectId(coachId as string)]) 
-            : undefined,
+          ...(startTime !== undefined && { startTime }),
+          ...(endTime !== undefined && { endTime }),
+          ...(availableSlots !== undefined && { availableSlots }),
+          ...(resolvedLocationId !== undefined && { locationId: resolvedLocationId }),
+          ...(coachId !== undefined && {
+            coachId: Array.isArray(coachId)
+              ? coachId.map((id) => new Types.ObjectId(id as string))
+              : [new Types.ObjectId(coachId as string)],
+          }),
         },
         { new: true },
       );

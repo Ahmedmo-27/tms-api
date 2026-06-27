@@ -15,6 +15,7 @@ export function mapScheduledClassDTO(
       endTime: sc.endTime,
       availableSlots: sc.availableSlots,
       locations: classInfo?.locations ?? [],
+      locationId: sc.locationId,
       price: classInfo?.price ?? 0,
     };
   });
