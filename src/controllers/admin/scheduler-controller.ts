@@ -34,13 +34,14 @@ export const scheduleClass = asyncHandler(async function (
   req: Request,
   res: Response
 ): Promise<void> {
-  const { cid, startTime, endTime, availableSlots, coachId } = req.body;
+  const { cid, startTime, endTime, availableSlots, coachId, locationId, location } = req.body;
   const scheduledClass = await SchedulerService.scheduleClass(
     cid,
     startTime,
     endTime,
     availableSlots,
-    coachId
+    coachId,
+    locationId ?? location,
   );
   new SuccessResponse("Class Scheduled!", scheduledClass).send(res);
 });
