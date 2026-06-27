@@ -26,6 +26,11 @@ const ClassSchema = new Schema({
   locations: {
     type: [Schema.Types.ObjectId],
     ref: "Location",
+    required: true,
+    validate: {
+      validator: (v: Types.ObjectId[]) => Array.isArray(v) && v.length > 0,
+      message: "At least one location is required",
+    },
   },
   points: {
     type: Number,

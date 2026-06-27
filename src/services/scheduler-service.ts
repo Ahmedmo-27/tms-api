@@ -21,10 +21,19 @@ import { WaitlistService } from "./waitlist-service";
 
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+/** Mobile clients sometimes send coachId as {"0":"..."} instead of an array. */
+const normalizeCoachIds = (
+  coachId: string | string[] | Record<string, string> | undefined,
+): string[] => {
+  if (!coachId) return [];
+  if (Array.isArray(coachId)) return coachId.map(String);
+  if (typeof coachId === "object") return Object.values(coachId).map(String);
+  return [String(coachId)];
+};
+
 export class SchedulerService {
   private static async resolveLocationId(
     locationRaw: string | undefined,
-    classLocationIds: Types.ObjectId[],
   ): Promise<Types.ObjectId> {
     if (!locationRaw)
       throw new BadRequestError("LOCATION_REQUIRED", "Location is required");
@@ -53,15 +62,6 @@ export class SchedulerService {
       throw new NotFoundError("LOCATION_NOT_FOUND", "Location not found", {
         locationId: resolvedId,
       });
-
-    if (
-      classLocationIds.length > 0 &&
-      !classLocationIds.some((id) => id.equals(resolvedId))
-    )
-      throw new BadRequestError(
-        "INVALID_LOCATION",
-        "Class is not offered at this location",
-      );
 
     return resolvedId;
   }
@@ -133,17 +133,14 @@ export class SchedulerService {
     startTime: string,
     endTime: string,
     availableSlots: string,
-    coachId: string | string[],
+    coachId: string | string[] | Record<string, string>,
     locationRaw?: string,
   ): Promise<IScheduledClass> {
     const cls = await Class.findById(cid);
     if (!cls)
       throw new NotFoundError("CLASS_NOT_FOUND", "Class not found", { cid });
 
-    const locationId = await this.resolveLocationId(
-      locationRaw,
-      cls.locations,
-    );
+    const locationId = await this.resolveLocationId(locationRaw);
 
     if (
       await ScheduledClass.findOne({ cid, startTime, locationId })
@@ -165,7 +162,7 @@ export class SchedulerService {
       startTime,
       endTime,
       availableSlots,
-      coachId: Array.isArray(coachId) ? coachId.map(id => new Types.ObjectId(id)) : (coachId ? [new Types.ObjectId(coachId)] : []),
+      coachId: normalizeCoachIds(coachId).map((id) => new Types.ObjectId(id)),
     });
     await scheduledClass.save();
     await Schedule.scheduleClass(scheduledClass._id as string);
@@ -262,14 +259,8 @@ export class SchedulerService {
       let resolvedLocationId: Types.ObjectId | undefined;
       const locationInput = locationIdRaw ?? locationName;
       if (locationInput !== undefined) {
-        const cls = await Class.findById(scheduledClass.cid);
-        if (!cls)
-          throw new NotFoundError("CLASS_NOT_FOUND", "Class not found", {
-            cid: scheduledClass.cid,
-          });
         resolvedLocationId = await this.resolveLocationId(
           String(locationInput),
-          cls.locations,
         );
         if (
           (startTime || scheduledClass.startTime) &&
@@ -319,9 +310,9 @@ export class SchedulerService {
           ...(availableSlots !== undefined && { availableSlots }),
           ...(resolvedLocationId !== undefined && { locationId: resolvedLocationId }),
           ...(coachId !== undefined && {
-            coachId: Array.isArray(coachId)
-              ? coachId.map((id) => new Types.ObjectId(id as string))
-              : [new Types.ObjectId(coachId as string)],
+            coachId: normalizeCoachIds(coachId).map(
+              (id) => new Types.ObjectId(id),
+            ),
           }),
         },
         { new: true },
