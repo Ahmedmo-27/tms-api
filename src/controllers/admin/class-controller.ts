@@ -206,6 +206,59 @@ export const bookDropIn = asyncHandler(async function (
   new SuccessResponse("Drop-in Booked!").send(res);
 });
 
+export const getOpenGymDropInPrice = asyncHandler(async function (
+  _req: Request,
+  res: Response
+): Promise<void> {
+  const price = await BookingsService.resolveOpenGymDropInPrice();
+  new SuccessResponse("Open gym drop-in price", { price }).send(res);
+});
+
+export const recordOpenGymMemberDropIn = asyncHandler(async function (
+  req: Request,
+  res: Response
+): Promise<void> {
+  const { uid, paymentMethod, amount, paymentDate } = req.body;
+  if (!uid || !paymentMethod) {
+    throw new BadRequestError(
+      "INVALID_REQUEST",
+      "uid and paymentMethod are required",
+    );
+  }
+  const io = req.app.get("io");
+  await BookingsService.recordAdminOpenGymMemberDropIn(
+    uid,
+    paymentMethod,
+    io,
+    amount,
+    paymentDate,
+  );
+  new SuccessResponse("Open gym drop-in recorded").send(res);
+});
+
+export const recordOpenGymGuestDropIn = asyncHandler(async function (
+  req: Request,
+  res: Response
+): Promise<void> {
+  const { name, phoneNumber, paymentMethod, amount, paymentDate } = req.body;
+  if (!name || !phoneNumber || !paymentMethod) {
+    throw new BadRequestError(
+      "INVALID_REQUEST",
+      "name, phoneNumber, and paymentMethod are required",
+    );
+  }
+  const io = req.app.get("io");
+  await BookingsService.recordAdminOpenGymGuestDropIn(
+    name,
+    phoneNumber,
+    paymentMethod,
+    io,
+    amount,
+    paymentDate,
+  );
+  new SuccessResponse("Guest open gym drop-in recorded").send(res);
+});
+
 export const cancelBooking = asyncHandler(async function (
   req: Request,
   res: Response

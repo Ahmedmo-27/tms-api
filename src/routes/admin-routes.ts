@@ -20,6 +20,9 @@ import {
   bookClass,
   cancelBooking,
   bookDropIn,
+  getOpenGymDropInPrice,
+  recordOpenGymMemberDropIn,
+  recordOpenGymGuestDropIn,
   bookNonUser,
   getNonUserBookings,
   recordNonUserAttendance,
@@ -251,6 +254,27 @@ adminRoutes.post(
   authenticateUser,
   authorizeUser(["admin", "fd"]),
   bookDropIn
+);
+
+adminRoutes.get(
+  "/openGym/dropInPrice",
+  authenticateUser,
+  authorizeUser(["admin", "fd"]),
+  getOpenGymDropInPrice
+);
+
+adminRoutes.post(
+  "/openGym/memberDropIn",
+  authenticateUser,
+  authorizeUser(["admin", "fd"]),
+  recordOpenGymMemberDropIn
+);
+
+adminRoutes.post(
+  "/openGym/guestDropIn",
+  authenticateUser,
+  authorizeUser(["admin", "fd"]),
+  recordOpenGymGuestDropIn
 );
 
 adminRoutes.get(
