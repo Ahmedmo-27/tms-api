@@ -69,6 +69,7 @@ function mapRefundToPaymentEntry(refund: IRefund): PaymentListEntry {
     isMoneyOut: true,
     refundId: refund._id as Types.ObjectId,
     linkedPaymentId: refund.paymentId,
+    locationId: refund.locationId ?? undefined,
   } as PaymentListEntry;
 }
 
@@ -105,12 +106,13 @@ export class PaymentsService {
 
     if (locationId) {
       paymentQuery.locationId = locationId;
-      // Note: Refund model might also need location filtering if they are location-specific
+      refundQuery.locationId = locationId;
     }
 
     const [payments, refunds] = await Promise.all([
       Payment.find(paymentQuery)
         .populate("uid")
+        .populate("locationId")
         .populate({
           path: "scid",
           populate: [
@@ -118,9 +120,13 @@ export class PaymentsService {
             { path: "locationId" },
           ],
         })
-        .populate("pkgId"),
+        .populate({
+          path: "pkgId",
+          populate: { path: "locationId" },
+        }),
       Refund.find(refundQuery)
         .populate("memberId", "name phoneNumber email")
+        .populate("locationId")
         .sort({ createdAt: -1 }),
     ]);
 

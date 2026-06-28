@@ -227,6 +227,7 @@ export const listRefunds = asyncHandler(
     const refunds = await Refund.find(filter)
       .sort({ createdAt: -1 })
       .populate("recordedBy", "name")
+      .populate("locationId")
       .populate({
         path: "paymentId",
         select: "purpose amount paymentTime pkgId scid",
@@ -275,6 +276,7 @@ export const listCashOuts = asyncHandler(
     const cashouts = await Refund.find(filter)
       .sort({ createdAt: -1 })
       .populate("recordedBy", "name")
+      .populate("locationId")
       .populate({
         path: "paymentId",
         select: "purpose amount paymentTime pkgId scid",
