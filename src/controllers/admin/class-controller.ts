@@ -12,6 +12,7 @@ import {
 import { SuccessResponse } from "../../core/ApiResponse";
 import asyncHandler from "../../utils/asyncHandler";
 import { BookingsService } from "../../services/bookings-service";
+import { SchedulerService } from "../../services/scheduler-service";
 import { INonUserBooking } from "../../models/nonUserBookings";
 import { Types } from "mongoose";
 import { runInTransaction } from "../../utils/transaction";
@@ -20,6 +21,18 @@ import logger from "../../config/logger";
 
 /** Escapes special regex characters so user-supplied strings are treated as literals. */
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const getRestrictToLocationId = (req: Request): string | null => {
+  const userRole = (req as any).user?.role;
+  if (userRole === "branch_admin" || userRole === "fd") {
+    return (req as any).user?.locationId?.toString() ?? null;
+  }
+  return null;
+};
+
+const assertSessionAccess = async (req: Request, scid: string) => {
+  await SchedulerService.assertSessionAtLocation(scid, getRestrictToLocationId(req));
+};
 
 const processLocations = async (locationsRaw: any) => {
   if (locationsRaw === undefined || locationsRaw === null || locationsRaw === "") return undefined;
@@ -53,7 +66,21 @@ export const addClass = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const { title, category, price, locations, location, points, allowDropIn } = req.body;
     const finalLocationsRaw = locations !== undefined ? locations : location;
-    const finalLocations = await processLocations(finalLocationsRaw) || [];
+    if (
+      finalLocationsRaw === undefined ||
+      finalLocationsRaw === null ||
+      finalLocationsRaw === ""
+    )
+      throw new BadRequestError(
+        "LOCATION_REQUIRED",
+        "At least one location is required",
+      );
+    const finalLocations = await processLocations(finalLocationsRaw);
+    if (!finalLocations || finalLocations.length === 0)
+      throw new BadRequestError(
+        "LOCATION_REQUIRED",
+        "At least one location is required",
+      );
     const cls = new Class({ title, category, price, locations: finalLocations, points, allowDropIn });
     await cls.save();
     new SuccessResponse("Class Added!", cls).send(res);
@@ -65,6 +92,17 @@ export const getClass = asyncHandler(async function (
   res: Response
 ): Promise<void> {
   const { cid, title, category } = req.query;
+  const userRole = (req as any).user.role;
+  const userLocationId = (req as any).user.locationId;
+  const queryLocationId = req.query.locationId as string;
+
+  let targetLocationId: string | null = null;
+  if (userRole === "branch_admin" || userRole === "fd") {
+    targetLocationId = userLocationId?.toString() ?? null;
+  } else if (userRole === "management" && queryLocationId) {
+    targetLocationId = queryLocationId;
+  }
+
   const query: any = {};
   if (cid) {
     query._id = cid;
@@ -75,15 +113,23 @@ export const getClass = asyncHandler(async function (
   if (category) {
     query.category = category;
   }
+  if (targetLocationId && Types.ObjectId.isValid(targetLocationId)) {
+    query.locations = new Types.ObjectId(targetLocationId);
+  }
+
   const classes = await Class.find(query).populate("locations");
   if (!classes || classes.length === 0)
     throw new NotFoundError("CLASSES_NOT_FOUND", "Classes not found", {
       query,
     });
-  
+
   const mappedClasses = classes.map((cls) => {
     const clsObj = cls.toObject() as any;
-    const locs = clsObj.locations as any[];
+    let locs = clsObj.locations as any[];
+    if (targetLocationId && locs?.length) {
+      locs = locs.filter((l) => l._id?.toString() === targetLocationId);
+    }
+    clsObj.locations = locs;
     if (locs && locs.length > 0) {
       clsObj.location = locs[0].branchName || locs[0].location;
     }
@@ -176,6 +222,7 @@ export const bookClass = asyncHandler(async function (
   res: Response
 ): Promise<void> {
   const { uid, scid } = req.body;
+  await assertSessionAccess(req, scid);
   await BookingsService.addBooking(uid, scid);
   new SuccessResponse("Class Booked!").send(res);
 });
@@ -188,6 +235,7 @@ export const bookDropIn = asyncHandler(async function (
   if (!uid || !scid || !paymentMethod) {
     throw new BadRequestError("INVALID_REQUEST", "uid, scid, and paymentMethod are required");
   }
+  await assertSessionAccess(req, scid);
   const userLocationId = (req as any).user?.locationId?.toString();
   await BookingsService.bookAdminDropIn(uid, scid, paymentMethod, userLocationId);
   new SuccessResponse("Drop-in Booked!").send(res);
@@ -198,6 +246,7 @@ export const cancelBooking = asyncHandler(async function (
   res: Response
 ): Promise<void> {
   const { uid, scid } = req.body;
+  await assertSessionAccess(req, scid);
   await BookingsService.cancelBooking(uid, scid);
   new SuccessResponse("Class cancelled").send(res);
 });
@@ -230,6 +279,7 @@ export const bookNonUser = asyncHandler(async function (
   const { name, phoneNumber, scid } = req.body;
   if (!name || !phoneNumber || !scid)
     throw new BadRequestError("INVALID_REQUEST", "Invalid request");
+  await assertSessionAccess(req, scid);
   const booking = await BookingsService.addNonUserBooking(
     name,
     phoneNumber,
@@ -280,6 +330,7 @@ export const addWalkIn = asyncHandler(async function (
   const { name, phoneNumber, scid, paymentMethod, amount, paymentDate } = req.body;
   if (!name || !phoneNumber || !scid)
     throw new BadRequestError("INVALID_REQUEST", "Invalid request");
+  await assertSessionAccess(req, scid);
   const userLocationId = (req as any).user?.locationId?.toString();
   let finalBooking;
   await runInTransaction(async (session: ClientSession) => {
@@ -329,6 +380,7 @@ export const manualRecordMemberAttendance = asyncHandler(async function (
   const { uid, scid } = req.body;
   if (!uid || !scid)
     throw new BadRequestError("INVALID_REQUEST", "uid and scid are required");
+  await assertSessionAccess(req, scid);
   const io = req.app.get("io");
   await BookingsService.manualRecordClassAttendance(uid, scid, io);
   new SuccessResponse("Class attended (manual)").send(res);
@@ -341,6 +393,7 @@ export const manualRemoveMemberAttendance = asyncHandler(async function (
   const { uid, scid } = req.body;
   if (!uid || !scid)
     throw new BadRequestError("INVALID_REQUEST", "uid and scid are required");
+  await assertSessionAccess(req, scid);
   await BookingsService.manualRemoveClassAttendance(uid, scid);
   new SuccessResponse("Attendance removed").send(res);
 });
@@ -352,6 +405,7 @@ export const promoteFromWaitlist = asyncHandler(async function (
   const { uid, scid } = req.body;
   if (!uid || !scid)
     throw new BadRequestError("INVALID_REQUEST", "uid and scid are required");
+  await assertSessionAccess(req, scid);
   await BookingsService.adminPromoteFromWaitlist(uid, scid);
   new SuccessResponse("Member promoted from waitlist to booking").send(res);
 });
@@ -363,6 +417,7 @@ export const overrideAddToWaitlist = asyncHandler(async function (
   const { uid, scid } = req.body;
   if (!uid || !scid)
     throw new BadRequestError("INVALID_REQUEST", "uid and scid are required");
+  await assertSessionAccess(req, scid);
   await BookingsService.adminAddToWaitlist(uid, scid);
   new SuccessResponse("Member added to waitlist").send(res);
 });
@@ -374,6 +429,7 @@ export const overrideRemoveFromWaitlist = asyncHandler(async function (
   const { uid, scid } = req.body;
   if (!uid || !scid)
     throw new BadRequestError("INVALID_REQUEST", "uid and scid are required");
+  await assertSessionAccess(req, scid);
   await BookingsService.adminRemoveFromWaitlist(uid, scid);
   new SuccessResponse("Member removed from waitlist").send(res);
 });
@@ -385,6 +441,7 @@ export const getWaitlistedMembers = asyncHandler(async function (
   const scid = req.query.scid as string;
   if (!scid)
     throw new BadRequestError("INVALID_REQUEST", "scid is required");
+  await assertSessionAccess(req, scid);
   const waitlist = await BookingsService.getWaitlistedMembers(scid);
   new SuccessResponse("Waitlist fetched", waitlist).send(res);
 });

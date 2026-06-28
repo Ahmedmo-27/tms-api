@@ -5,6 +5,14 @@ import { SuccessResponse } from "../../core/ApiResponse";
 import asyncHandler from "../../utils/asyncHandler";
 import { SchedulerService } from "../../services/scheduler-service";
 
+const getRestrictToLocationId = (req: Request): string | null => {
+  const userRole = (req as any).user.role;
+  if (userRole === "branch_admin" || userRole === "fd") {
+    return (req as any).user.locationId?.toString() ?? null;
+  }
+  return null;
+};
+
 export const getScheduledClasses = asyncHandler(async function (
   req: Request,
   res: Response
@@ -76,7 +84,7 @@ export const scheduleClass = asyncHandler(async function (
     endTime,
     availableSlots,
     coachId,
-    targetLocationId
+    targetLocationId,
   );
   new SuccessResponse("Class Scheduled!", scheduledClass).send(res);
 });
@@ -86,7 +94,7 @@ export const cancelClass = asyncHandler(async function (
   res: Response
 ): Promise<void> {
   const scid = req.params.scid;
-  await SchedulerService.cancelClass(scid);
+  await SchedulerService.cancelClass(scid, getRestrictToLocationId(req));
   new SuccessResponse("Class Canceled!").send(res);
 });
 
@@ -95,7 +103,11 @@ export const editClass = asyncHandler(async function (
   res: Response
 ): Promise<void> {
   const scid = req.params.scid;
-  const updatedClass = await SchedulerService.editClass(req.body, scid);
+  const updatedClass = await SchedulerService.editClass(
+    req.body,
+    scid,
+    getRestrictToLocationId(req),
+  );
   new SuccessResponse("Class Updated!", updatedClass).send(res);
 });
 

@@ -113,7 +113,10 @@ export class PaymentsService {
         .populate("uid")
         .populate({
           path: "scid",
-          populate: { path: "cid", populate: { path: "locations" } },
+          populate: [
+            { path: "cid", populate: { path: "locations" } },
+            { path: "locationId" },
+          ],
         })
         .populate("pkgId"),
       Refund.find(refundQuery)
@@ -178,7 +181,10 @@ export class PaymentsService {
       const extraPayments = await Payment.find({ _id: { $in: missingPaymentIds } })
         .populate({
           path: "scid",
-          populate: { path: "cid", populate: { path: "locations" } },
+          populate: [
+            { path: "cid", populate: { path: "locations" } },
+            { path: "locationId" },
+          ],
         })
         .populate("pkgId");
 

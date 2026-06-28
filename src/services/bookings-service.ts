@@ -32,7 +32,7 @@ export class BookingsService {
     const scheduledClass = await ScheduledClass.findById(scid).populate({
       path: "cid",
       populate: { path: "locations" },
-    });
+    }).populate({ path: "locationId" });
     if (!scheduledClass)
       throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
 
@@ -85,7 +85,16 @@ export class BookingsService {
     }
 
     // get location and class specific data
-    const location = (scheduledClass as any).cid.locations[0].branchName;
+    const scheduledLocation = (scheduledClass as any).locationId;
+    const location =
+      scheduledLocation?.branchName ??
+      scheduledLocation?.location ??
+      (scheduledClass as any).cid.locations[0]?.branchName;
+    if (!location)
+      throw new BadRequestError(
+        "LOCATION_REQUIRED",
+        "Scheduled class has no location assigned",
+      );
     const isFree = (scheduledClass.cid as any).price === 0;
     const isWorkSpace = (scheduledClass.cid as any).category === "WORKSPACE";
 
@@ -669,7 +678,12 @@ export class BookingsService {
     if (scid) query.scid = scid;
     
     if (locationId) {
-      const scheduledClasses = await ScheduledClass.find({ locationId }).select("_id");
+      const locationObjectId = Types.ObjectId.isValid(locationId)
+        ? new Types.ObjectId(locationId)
+        : locationId;
+      const scheduledClasses = await ScheduledClass.find({
+        locationId: locationObjectId,
+      }).select("_id");
       const validScids = scheduledClasses.map(sc => (sc as any)._id.toString());
       if (scid) {
         if (!validScids.includes(scid)) return [];

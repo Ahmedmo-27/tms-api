@@ -19,13 +19,9 @@ interface IWaitlistedMember {
   addedAt: Date;
 }
 
-interface IWaitlistedMember {
-  uid: Types.ObjectId;
-  addedAt: Date;
-}
-
 export interface IScheduledClass extends Document {
   cid: Types.ObjectId;
+  locationId: Types.ObjectId;
   startTime: Date;
   endTime: Date;
   availableSlots: number;
@@ -34,7 +30,6 @@ export interface IScheduledClass extends Document {
   scans: IMemberScan[];
   waitlistedMembers: IWaitlistedMember[];
   waitingList: string[];
-  locationId: Types.ObjectId;
 }
 
 export interface IScheduledClassMethods {
@@ -119,6 +114,11 @@ const ScheduledClassSchema = new Schema<
     ref: "Class",
     required: true,
   },
+  locationId: {
+    type: Schema.Types.ObjectId,
+    ref: "Location",
+    required: true,
+  },
   startTime: {
     type: Date,
     required: true,
@@ -161,11 +161,6 @@ const ScheduledClassSchema = new Schema<
       },
     ],
     default: [],
-  },
-  locationId: {
-    type: Schema.Types.ObjectId,
-    ref: "Location",
-    required: true,
   },
 });
 
