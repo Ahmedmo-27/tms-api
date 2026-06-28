@@ -24,6 +24,9 @@ export interface ITicket extends Document {
   // Staff member who last actioned the ticket.
   handledBy?: Types.ObjectId;
   locationId?: Types.ObjectId;
+  createdBy?: Types.ObjectId;
+  creatorRole?: string;
+  creatorName?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -45,6 +48,9 @@ const TicketSchema: Schema<ITicket> = new Schema(
     adminNotes: { type: String, trim: true },
     handledBy: { type: Schema.Types.ObjectId, ref: "User" },
     locationId: { type: Schema.Types.ObjectId, ref: "Location", default: null, index: true },
+    createdBy: { type: Schema.Types.ObjectId, ref: "User", default: null, index: true },
+    creatorRole: { type: String, trim: true },
+    creatorName: { type: String, trim: true },
   },
   { timestamps: true }
 );

@@ -80,6 +80,7 @@ import {
 } from "../controllers/admin/orders-controller";
 import {
   getTickets,
+  submitTicket,
   updateTicketStatus,
   getTicketCategories,
   addTicketCategory,
@@ -578,6 +579,12 @@ adminRoutes.get(
   authorizeUser(["management", "branch_admin"]),
   getTickets
 );
+adminRoutes.post(
+  "/tickets",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  submitTicket
+);
 adminRoutes.patch(
   "/tickets/:id",
   authenticateUser,
@@ -614,21 +621,21 @@ adminRoutes.delete(
 adminRoutes.post(
   "/mail/send",
   authenticateUser,
-  authorizeUser(["management", "branch_admin"]),
+  authorizeUser(["management"]),
   sendMail
 );
 
 adminRoutes.get(
   "/mail/logs",
   authenticateUser,
-  authorizeUser(["management", "branch_admin"]),
+  authorizeUser(["management"]),
   getLogs
 );
 
 adminRoutes.get(
   "/mail/inbox",
   authenticateUser,
-  authorizeUser(["management", "branch_admin"]),
+  authorizeUser(["management"]),
   getInbox
 );
 
