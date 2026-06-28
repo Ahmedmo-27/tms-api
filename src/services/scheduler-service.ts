@@ -21,10 +21,19 @@ import { WaitlistService } from "./waitlist-service";
 
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+/** Mobile clients sometimes send coachId as {"0":"..."} instead of an array. */
+const normalizeCoachIds = (
+  coachId: string | string[] | Record<string, string> | undefined,
+): string[] => {
+  if (!coachId) return [];
+  if (Array.isArray(coachId)) return coachId.map(String);
+  if (typeof coachId === "object") return Object.values(coachId).map(String);
+  return [String(coachId)];
+};
+
 export class SchedulerService {
   private static async resolveLocationId(
     locationRaw: string | undefined,
-    classLocationIds: Types.ObjectId[],
   ): Promise<Types.ObjectId> {
     if (!locationRaw)
       throw new BadRequestError("LOCATION_REQUIRED", "Location is required");
@@ -54,16 +63,73 @@ export class SchedulerService {
         locationId: resolvedId,
       });
 
-    if (
-      classLocationIds.length > 0 &&
-      !classLocationIds.some((id) => id.equals(resolvedId))
-    )
-      throw new BadRequestError(
-        "INVALID_LOCATION",
-        "Class is not offered at this location",
-      );
-
     return resolvedId;
+  }
+
+  private static shapeLocationId(
+    loc: unknown,
+  ): { branchName?: string; location?: string } {
+    if (!loc) return {};
+    const obj =
+      typeof (loc as { toObject?: () => Record<string, unknown> }).toObject ===
+      "function"
+        ? (loc as { toObject: () => Record<string, unknown> }).toObject()
+        : (loc as Record<string, unknown>);
+    const branchName =
+      typeof obj.branchName === "string" ? obj.branchName.trim() : "";
+    const location =
+      typeof obj.location === "string" ? obj.location.trim() : "";
+    if (!branchName && !location) return {};
+    return {
+      ...(branchName && { branchName }),
+      ...(location && { location }),
+    };
+  }
+
+  /** Prefer session locationId; fall back only when the class has one unambiguous branch. */
+  private static resolveSessionLocation(cls: any) {
+    if (cls.locationId) return cls.locationId;
+    const classLocations = cls.cid?.locations;
+    if (Array.isArray(classLocations) && classLocations.length === 1) {
+      return classLocations[0];
+    }
+    return null;
+  }
+
+  /**
+   * Mobile app reads locationId on each scheduled session (not cid.locations[]).
+   * Shape the response with this session's branch and keep cid.locations scoped to it.
+   */
+  private static shapeSessionForLegacyClients(cls: any) {
+    const doc = typeof cls.toObject === "function" ? cls.toObject() : { ...cls };
+    const sessionLocation = this.resolveSessionLocation(cls);
+    const locationId = this.shapeLocationId(sessionLocation);
+
+    if (!sessionLocation) {
+      return {
+        ...doc,
+        locationId,
+        locations: doc.cid?.locations ?? [],
+      };
+    }
+
+    const sessionLocObj =
+      typeof sessionLocation.toObject === "function"
+        ? sessionLocation.toObject()
+        : sessionLocation;
+    const sessionLocations = [sessionLocObj];
+    const cid = doc.cid
+      ? { ...doc.cid, locations: sessionLocations }
+      : doc.cid;
+
+    return {
+      ...doc,
+      cid,
+      locationId,
+      locations: sessionLocations,
+      sessionBranchName: sessionLocObj.branchName,
+      sessionLocationCity: sessionLocObj.location,
+    };
   }
 
   static async getSchedule(date: string): Promise<IScheduledClass[]> {
@@ -79,18 +145,13 @@ export class SchedulerService {
     })
       .populate({ path: "scans.uid" })
       .populate({ path: "cid", populate: { path: "locations" } })
-      .populate({ path: "locationId" })
+      .populate({ path: "locationId", select: "branchName location" })
       .populate({ path: "coachId" })
       .populate({ path: "bookedMembers.uid", select: "name phoneNumber" })
       .sort({ startTime: 1 });
-    let output: any = [];
-    scheduledClasses.forEach((cls: any) => {
-      output.push({
-        ...cls._doc,
-        locations: cls.cid.locations,
-      });
-    });
-    return output;
+    return scheduledClasses.map((cls) =>
+      this.shapeSessionForLegacyClients(cls),
+    );
   }
 
   static async getNextSchedule() {
@@ -133,17 +194,14 @@ export class SchedulerService {
     startTime: string,
     endTime: string,
     availableSlots: string,
-    coachId: string | string[],
+    coachId: string | string[] | Record<string, string>,
     locationRaw?: string,
   ): Promise<IScheduledClass> {
     const cls = await Class.findById(cid);
     if (!cls)
       throw new NotFoundError("CLASS_NOT_FOUND", "Class not found", { cid });
 
-    const locationId = await this.resolveLocationId(
-      locationRaw,
-      cls.locations,
-    );
+    const locationId = await this.resolveLocationId(locationRaw);
 
     if (
       await ScheduledClass.findOne({ cid, startTime, locationId })
@@ -165,7 +223,7 @@ export class SchedulerService {
       startTime,
       endTime,
       availableSlots,
-      coachId: Array.isArray(coachId) ? coachId.map(id => new Types.ObjectId(id)) : (coachId ? [new Types.ObjectId(coachId)] : []),
+      coachId: normalizeCoachIds(coachId).map((id) => new Types.ObjectId(id)),
     });
     await scheduledClass.save();
     await Schedule.scheduleClass(scheduledClass._id as string);
@@ -262,14 +320,8 @@ export class SchedulerService {
       let resolvedLocationId: Types.ObjectId | undefined;
       const locationInput = locationIdRaw ?? locationName;
       if (locationInput !== undefined) {
-        const cls = await Class.findById(scheduledClass.cid);
-        if (!cls)
-          throw new NotFoundError("CLASS_NOT_FOUND", "Class not found", {
-            cid: scheduledClass.cid,
-          });
         resolvedLocationId = await this.resolveLocationId(
           String(locationInput),
-          cls.locations,
         );
         if (
           (startTime || scheduledClass.startTime) &&
@@ -319,9 +371,9 @@ export class SchedulerService {
           ...(availableSlots !== undefined && { availableSlots }),
           ...(resolvedLocationId !== undefined && { locationId: resolvedLocationId }),
           ...(coachId !== undefined && {
-            coachId: Array.isArray(coachId)
-              ? coachId.map((id) => new Types.ObjectId(id as string))
-              : [new Types.ObjectId(coachId as string)],
+            coachId: normalizeCoachIds(coachId).map(
+              (id) => new Types.ObjectId(id),
+            ),
           }),
         },
         { new: true },
