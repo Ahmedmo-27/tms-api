@@ -259,21 +259,21 @@ adminRoutes.post(
 adminRoutes.get(
   "/openGym/dropInPrice",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   getOpenGymDropInPrice
 );
 
 adminRoutes.post(
   "/openGym/memberDropIn",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   recordOpenGymMemberDropIn
 );
 
 adminRoutes.post(
   "/openGym/guestDropIn",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   recordOpenGymGuestDropIn
 );
 
