@@ -118,6 +118,10 @@ export const loginUser = asyncHandler(
       name: user.name,
     };
 
+    if ((user as any).locationId) {
+      responseData.locationId = (user as any).locationId.toString();
+    }
+
     if (user.role === "coach") {
       let hasPtSessions = false;
       let hasScheduledClasses = false;

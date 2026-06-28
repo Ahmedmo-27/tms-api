@@ -98,19 +98,19 @@ const adminRoutes = express.Router();
 adminRoutes.get(
   "/member",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   getMember
 );
 adminRoutes.post(
   "/member/:id",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   addMember
 );
 adminRoutes.get(
   "/pending-members",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   getPendingMembers
 );
 
@@ -118,43 +118,43 @@ adminRoutes.get(
 adminRoutes.get(
   "/schedule",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   getScheduledClasses
 );
 adminRoutes.get(
   "/next-schedule",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   getNextScheduledClasses
 );
 adminRoutes.post(
   "/schedule",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   scheduleClass
 );
 adminRoutes.delete(
   "/schedule/:scid",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   cancelClass
 );
 adminRoutes.patch(
   "/schedule/:scid",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   editClass
 );
 adminRoutes.get(
   "/daily-attendance",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   getDailyAttendnace
 );
 adminRoutes.get(
   "/attendance",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   getAttendanceHistory
 );
 
@@ -162,13 +162,13 @@ adminRoutes.get(
 adminRoutes.get(
   "/class",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   getClass
 );
 adminRoutes.post(
   "/class",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   addClass
 );
 adminRoutes.patch(
@@ -188,124 +188,124 @@ adminRoutes.delete(
 adminRoutes.get(
   "/bookings",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   getMemberBookings
 );
 adminRoutes.post(
   "/book",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   bookClass
 );
 adminRoutes.delete(
   "/cancel",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   cancelBooking
 );
 
 adminRoutes.get(
   "/bookings/waitlist",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   getWaitlistedMembers
 );
 
 adminRoutes.post(
   "/bookings/waitlist",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   overrideAddToWaitlist
 );
 
 adminRoutes.delete(
   "/bookings/waitlist",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   overrideRemoveFromWaitlist
 );
 
 adminRoutes.post(
   "/bookings/waitlist/promote",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   promoteFromWaitlist
 );
 
 adminRoutes.post(
   "/attendance/manual",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   manualRecordMemberAttendance
 );
 
 adminRoutes.delete(
   "/attendance/manual",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   manualRemoveMemberAttendance
 );
 
 adminRoutes.post(
   "/bookDropIn",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   bookDropIn
 );
 
 adminRoutes.get(
   "/nonUserBooking",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   getNonUserBookings
 )
 
 adminRoutes.post(
   "/nonUserBooking",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   bookNonUser
 )
 
 adminRoutes.post(
   "/nonUserBooking/attend",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   recordNonUserAttendance
 )
 
 adminRoutes.post(
   "/nonUserBooking/pay",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   saveNonUserPayment
 )
 
 adminRoutes.post(
   "/nonUserBooking/cancel/:bookingId",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   cancelNonUserBooking
 )
 
 adminRoutes.post(
   "/nonUserBooking/walk-in",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   addWalkIn
 )
 
 adminRoutes.post(
   "/nonUserPackage",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   addNonUserPackage
 )
 
 adminRoutes.get(
   "/nonUserPackage",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   getNonUserPackages
 )
 
@@ -313,13 +313,13 @@ adminRoutes.get(
 adminRoutes.get(
   "/packages",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   getPackage
 );
 adminRoutes.post(
   "/packages",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   addPackage
 );
 adminRoutes.delete(
@@ -357,7 +357,7 @@ adminRoutes.patch(
 adminRoutes.patch(
   "/member-packages/adjust",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   adjustMemberPackageClasses
 );
 
@@ -365,7 +365,7 @@ adminRoutes.patch(
 adminRoutes.post(
   "/send-message",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   sendCustomNotification
 );
 
@@ -399,7 +399,7 @@ adminRoutes.delete(
 adminRoutes.get(
   "/locations",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   getLocation
 );
 adminRoutes.post(
@@ -470,7 +470,7 @@ adminRoutes.get(
 adminRoutes.get(
   "/members/search",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   searchMembers
 );
 adminRoutes.get(
@@ -535,13 +535,13 @@ adminRoutes.delete(
 adminRoutes.get(
   "/tickets",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   getTickets
 );
 adminRoutes.patch(
   "/tickets/:id",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   updateTicketStatus
 );
 
@@ -549,7 +549,7 @@ adminRoutes.patch(
 adminRoutes.get(
   "/ticket-categories",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "fd"]),
+  authorizeUser(["management", "branch_admin"]),
   getTicketCategories
 );
 adminRoutes.post(

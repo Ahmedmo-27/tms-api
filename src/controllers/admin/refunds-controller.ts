@@ -21,6 +21,7 @@ import logger from "../../config/logger";
 import { IRefund } from "../../models/refund";
 import { IPayment } from "../../models/payment";
 import { startOfDateCairo, endOfDateCairo } from "../../utils/timezone";
+import { resolveLocationFilter, resolveLocationIdForWrite } from "../../utils/location-scope";
 
 async function syncRefundToErp(
   refund: IRefund,
@@ -182,6 +183,8 @@ export const createCashOut = asyncHandler(
       throw new BadRequestError("INVALID_AMOUNT", "Amount must be greater than 0");
     }
 
+    const branchLocationId = resolveLocationIdForWrite(req);
+
     const refund = await Refund.create({
       type: "CASHOUT",
       reason: reason.trim(),
@@ -190,7 +193,7 @@ export const createCashOut = asyncHandler(
       memberId: null,
       paymentId: null,
       recordedBy: authReq.user._id,
-      locationId: (authReq.user as any).locationId ?? null,
+      locationId: branchLocationId,
       createdAt: new Date(),
     });
 
@@ -206,15 +209,9 @@ export const listRefunds = asyncHandler(
 
     const filter: Record<string, unknown> = { type: "REFUND" };
 
-    const userRole = (req as any).user.role;
-    const userLocationId = (req as any).user.locationId;
-    if ((userRole === "branch_admin" || userRole === "fd") && userLocationId) {
-      filter.locationId = userLocationId;
-    } else {
-      const queryLocationId = req.query.locationId as string;
-      if (userRole === "management" && queryLocationId) {
-        filter.locationId = queryLocationId;
-      }
+    const targetLocationId = resolveLocationFilter(req);
+    if (targetLocationId) {
+      filter.locationId = targetLocationId;
     }
 
     if (date) {
@@ -260,15 +257,9 @@ export const listCashOuts = asyncHandler(
 
     const filter: Record<string, unknown> = { type: "CASHOUT" };
 
-    const userRole = (req as any).user.role;
-    const userLocationId = (req as any).user.locationId;
-    if ((userRole === "branch_admin" || userRole === "fd") && userLocationId) {
-      filter.locationId = userLocationId;
-    } else {
-      const queryLocationId = req.query.locationId as string;
-      if (userRole === "management" && queryLocationId) {
-        filter.locationId = queryLocationId;
-      }
+    const targetLocationId = resolveLocationFilter(req);
+    if (targetLocationId) {
+      filter.locationId = targetLocationId;
     }
 
     if (date) {

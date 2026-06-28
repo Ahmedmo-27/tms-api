@@ -4,13 +4,10 @@ import { NotFoundError } from "../../core/ApiError";
 import { SuccessResponse } from "../../core/ApiResponse";
 import asyncHandler from "../../utils/asyncHandler";
 import { SchedulerService } from "../../services/scheduler-service";
+import { resolveLocationFilter, resolveLocationIdForWrite } from "../../utils/location-scope";
 
 const getRestrictToLocationId = (req: Request): string | null => {
-  const userRole = (req as any).user.role;
-  if (userRole === "branch_admin" || userRole === "fd") {
-    return (req as any).user.locationId?.toString() ?? null;
-  }
-  return null;
+  return resolveLocationFilter(req);
 };
 
 export const getScheduledClasses = asyncHandler(async function (
@@ -18,16 +15,7 @@ export const getScheduledClasses = asyncHandler(async function (
   res: Response
 ): Promise<void> {
   const date = req.query.date;
-  const userRole = (req as any).user.role;
-  const userLocationId = (req as any).user.locationId;
-  const queryLocationId = req.query.locationId as string;
-  
-  let targetLocationId = null;
-  if (userRole === "branch_admin" || userRole === "fd") {
-    targetLocationId = userLocationId;
-  } else if (userRole === "management" && queryLocationId) {
-    targetLocationId = queryLocationId;
-  }
+  const targetLocationId = resolveLocationFilter(req) ?? undefined;
 
   let scheduleData;
   if (date) {
@@ -43,16 +31,7 @@ export const getNextScheduledClasses = asyncHandler(async function (
   req: Request,
   res: Response
 ): Promise<void> {
-  const userRole = (req as any).user.role;
-  const userLocationId = (req as any).user.locationId;
-  const queryLocationId = req.query.locationId as string;
-  
-  let targetLocationId = null;
-  if (userRole === "branch_admin" || userRole === "fd") {
-    targetLocationId = userLocationId;
-  } else if (userRole === "management" && queryLocationId) {
-    targetLocationId = queryLocationId;
-  }
+  const targetLocationId = resolveLocationFilter(req) ?? undefined;
 
   const scheduledClasses = await SchedulerService.getNextSchedule(targetLocationId);
   if (!scheduledClasses || scheduledClasses.length === 0)
@@ -64,19 +43,8 @@ export const scheduleClass = asyncHandler(async function (
   req: Request,
   res: Response
 ): Promise<void> {
-  const { cid, startTime, endTime, availableSlots, coachId, locationId } = req.body;
-  const userRole = (req as any).user.role;
-  const userLocationId = (req as any).user.locationId;
-  
-  let targetLocationId = locationId;
-  if (userRole === "branch_admin" || userRole === "fd") {
-    targetLocationId = userLocationId;
-  }
-
-  if (!targetLocationId) {
-    res.status(400).json({ message: "locationId is required" });
-    return;
-  }
+  const { cid, startTime, endTime, availableSlots, coachId } = req.body;
+  const targetLocationId = resolveLocationIdForWrite(req);
 
   const scheduledClass = await SchedulerService.scheduleClass(
     cid,
@@ -116,7 +84,21 @@ export const getDailyAttendnace = asyncHandler(async function (
   res: Response
 ): Promise<void> {
   const { nowInCairo } = await import("../../utils/timezone");
-  const date = req.query.date as string || nowInCairo().toISOString()
-  const record = await SchedulerService.getDayAttendance(date);
+  const date = (req.query.date as string) || nowInCairo().toISOString();
+  const targetLocationId = resolveLocationFilter(req);
+  let record = await SchedulerService.getDayAttendance(date);
+
+  if (targetLocationId && Array.isArray(record)) {
+    record = record.map((doc: any) => {
+      const plain = typeof doc.toObject === "function" ? doc.toObject() : { ...doc };
+      const matchesLocation = (entry: { locationId?: { toString(): string } }) =>
+        !entry.locationId || entry.locationId.toString() === targetLocationId;
+
+      plain.ptAttendance = (plain.ptAttendance || []).filter(matchesLocation);
+      plain.openGymAttendance = (plain.openGymAttendance || []).filter(matchesLocation);
+      return plain;
+    });
+  }
+
   new SuccessResponse("Attendnace Fetched!", record).send(res);
 });

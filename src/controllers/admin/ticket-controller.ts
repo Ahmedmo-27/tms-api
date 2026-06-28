@@ -8,6 +8,7 @@ import { AuthRequest } from "../../middlewares/auth.middleware";
 import User from "../../models/user";
 import { sendTicketConfirmationEmail } from "../../services/email-service";
 import logger from "../../config/logger";
+import { resolveLocationFilter } from "../../utils/location-scope";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const asTrimmed = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
@@ -95,15 +96,9 @@ export const getTickets = asyncHandler(
       ];
     }
     
-    const userRole = (req as any).user.role;
-    const userLocationId = (req as any).user.locationId;
-    if ((userRole === "branch_admin" || userRole === "fd") && userLocationId) {
-      query.locationId = userLocationId;
-    } else {
-      const queryLocationId = req.query.locationId as string;
-      if (userRole === "management" && queryLocationId) {
-        query.locationId = queryLocationId;
-      }
+    const targetLocationId = resolveLocationFilter(req);
+    if (targetLocationId) {
+      query.locationId = targetLocationId;
     }
 
     const pageNum = parseInt(page as string) || 1;

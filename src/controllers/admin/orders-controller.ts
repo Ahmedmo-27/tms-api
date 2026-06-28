@@ -4,6 +4,7 @@ import { SuccessResponse } from "../../core/ApiResponse";
 import { Request, Response } from "express";
 import { OrdersService } from "../../services/orders-service";
 import { BadRequestError } from "../../core/ApiError";
+import { resolveLocationFilter, resolveLocationIdForWrite } from "../../utils/location-scope";
 
 export const getOrders = asyncHandler(async function (
   req: Request,
@@ -14,30 +15,20 @@ export const getOrders = asyncHandler(async function (
   if (memberId) {
     query.memberId = memberId;
   }
-  const userRole = (req as any).user.role;
-  const userLocationId = (req as any).user.locationId;
-  if ((userRole === "branch_admin" || userRole === "fd") && userLocationId) {
-    query.locationId = userLocationId;
-  } else {
-    const queryLocationId = req.query.locationId as string;
-    if (userRole === "management" && queryLocationId) {
-      query.locationId = queryLocationId;
-    }
+  const targetLocationId = resolveLocationFilter(req);
+  if (targetLocationId) {
+    query.locationId = targetLocationId;
   }
   const orders = await Order.find(query).sort({ createdAt: -1 });
   new SuccessResponse("Orders Found!", orders).send(res);
 });
 
 export const createOrder = asyncHandler(async (req: Request, res: Response): Promise<void> => {
-  const { memberId, memberName, items, totalAmount, paymentMethod, note, locationId } = req.body;
+  const { memberId, memberName, items, totalAmount, paymentMethod, note } = req.body;
   if (!items || items.length === 0) {
     throw new BadRequestError("INVALID_REQUEST", "Items are required");
   }
-  const userRole = (req as any).user.role;
-  let targetLocationId = locationId;
-  if (userRole === "branch_admin" || userRole === "fd") {
-    targetLocationId = (req as any).user.locationId?.toString();
-  }
+  const targetLocationId = resolveLocationIdForWrite(req);
   const order = new Order({ memberId, memberName, items, totalAmount, paymentMethod, note, locationId: targetLocationId });
   await order.save();
   new SuccessResponse("Order Created!", order).send(res);

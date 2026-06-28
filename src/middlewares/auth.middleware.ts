@@ -24,7 +24,7 @@ export interface AuthResponse extends Response {
   deviceType: "web" | "mobile";
 }
 
-type UserRole = "member" | "user" | "admin" | "management" | "branch_admin" | "fd" | "coach";
+type UserRole = "member" | "user" | "admin" | "management" | "branch_admin" | "coach";
 
 // CHANGE ERROR CODES AFTER UPDATE
 export const authenticateUser = asyncHandler(
@@ -82,7 +82,12 @@ export const authorizeUser = (allowedRoles: UserRole[]): RequestHandler => {
       if (!authReq.user.role) {
         throw new AuthFailureError("AUTH_FAILURE", "Authentication required");
       }
-      if (!allowedRoles.includes(authReq.user.role as UserRole))
+      const userRole = authReq.user.role as UserRole;
+      const normalizedRole = userRole === "admin" ? "management" : userRole;
+      const hasAccess = allowedRoles.some(
+        (role) => (role === "admin" ? "management" : role) === normalizedRole
+      );
+      if (!hasAccess)
         throw new ForbiddenError("INSUFFICIENT_PERMISSIONS", "Access denied - Insufficient permissions");
       next();
     }

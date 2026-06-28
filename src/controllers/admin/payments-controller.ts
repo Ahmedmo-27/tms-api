@@ -4,23 +4,14 @@ import { SuccessResponse } from "../../core/ApiResponse";
 import { PaymentsService } from "../../services/payments-service";
 import logger from "../../config/logger";
 import { ForbiddenError } from "../../core/ApiError";
+import { resolveLocationFilter } from "../../utils/location-scope";
 
 export const getPayments = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const date = req.query.date;
     const month = req.query.month;
     const year = req.query.year;
-    
-    const userRole = (req as any).user.role;
-    const userLocationId = (req as any).user.locationId;
-    const queryLocationId = req.query.locationId as string;
-    
-    let targetLocationId = null;
-    if (userRole === "branch_admin" || userRole === "fd") {
-      targetLocationId = userLocationId;
-    } else if (userRole === "management" && queryLocationId) {
-      targetLocationId = queryLocationId;
-    }
+    const targetLocationId = resolveLocationFilter(req);
 
     const payments = await PaymentsService.getPayments(
       date as string,

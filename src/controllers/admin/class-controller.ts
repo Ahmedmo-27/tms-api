@@ -18,16 +18,13 @@ import { Types } from "mongoose";
 import { runInTransaction } from "../../utils/transaction";
 import { ClientSession } from "mongoose";
 import logger from "../../config/logger";
+import { resolveLocationFilter, resolveLocationIdForWrite } from "../../utils/location-scope";
 
 /** Escapes special regex characters so user-supplied strings are treated as literals. */
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const getRestrictToLocationId = (req: Request): string | null => {
-  const userRole = (req as any).user?.role;
-  if (userRole === "branch_admin" || userRole === "fd") {
-    return (req as any).user?.locationId?.toString() ?? null;
-  }
-  return null;
+  return resolveLocationFilter(req);
 };
 
 const assertSessionAccess = async (req: Request, scid: string) => {
@@ -92,16 +89,7 @@ export const getClass = asyncHandler(async function (
   res: Response
 ): Promise<void> {
   const { cid, title, category } = req.query;
-  const userRole = (req as any).user.role;
-  const userLocationId = (req as any).user.locationId;
-  const queryLocationId = req.query.locationId as string;
-
-  let targetLocationId: string | null = null;
-  if (userRole === "branch_admin" || userRole === "fd") {
-    targetLocationId = userLocationId?.toString() ?? null;
-  } else if (userRole === "management" && queryLocationId) {
-    targetLocationId = queryLocationId;
-  }
+  const targetLocationId = resolveLocationFilter(req);
 
   const query: any = {};
   if (cid) {
@@ -236,8 +224,8 @@ export const bookDropIn = asyncHandler(async function (
     throw new BadRequestError("INVALID_REQUEST", "uid, scid, and paymentMethod are required");
   }
   await assertSessionAccess(req, scid);
-  const userLocationId = (req as any).user?.locationId?.toString();
-  await BookingsService.bookAdminDropIn(uid, scid, paymentMethod, userLocationId);
+  const branchLocationId = resolveLocationIdForWrite(req);
+  await BookingsService.bookAdminDropIn(uid, scid, paymentMethod, branchLocationId);
   new SuccessResponse("Drop-in Booked!").send(res);
 });
 
@@ -256,14 +244,10 @@ export const getNonUserBookings = asyncHandler(async function (
   req: Request,
   res: Response
 ): Promise<void> {
-  const { startDate, endDate, scid } = req.body;
-  const userRole = (req as any).user?.role;
-  let targetLocationId = undefined;
-  if (userRole === "branch_admin" || userRole === "fd") {
-    targetLocationId = (req as any).user?.locationId?.toString();
-  } else {
-    targetLocationId = req.body.locationId;
-  }
+  const startDate = req.query.startDate || req.body?.startDate;
+  const endDate = req.query.endDate || req.body?.endDate;
+  const scid = req.query.scid || req.body?.scid;
+  const targetLocationId = resolveLocationFilter(req) ?? undefined;
   const bookings = await BookingsService.getNonUserBookings(
     startDate,
     endDate,
@@ -311,14 +295,14 @@ export const saveNonUserPayment = asyncHandler(async function (
   const paymentDate = req.body.paymentDate;
   if (!bookingId || bookingId === "")
     throw new BadRequestError("INVALID_BOOKING_ID", "Booking Id is invalid");
-  const userLocationId = (req as any).user?.locationId?.toString();
+  const branchLocationId = resolveLocationIdForWrite(req);
   const booking = await BookingsService.recordNonUserPayment(
     bookingId,
     paymentMethod,
     amount,
     paymentDate,
     undefined,
-    userLocationId
+    branchLocationId
   );
   new SuccessResponse("Class Attended!").send(res);
 });
@@ -331,7 +315,7 @@ export const addWalkIn = asyncHandler(async function (
   if (!name || !phoneNumber || !scid)
     throw new BadRequestError("INVALID_REQUEST", "Invalid request");
   await assertSessionAccess(req, scid);
-  const userLocationId = (req as any).user?.locationId?.toString();
+  const branchLocationId = resolveLocationIdForWrite(req);
   let finalBooking;
   await runInTransaction(async (session: ClientSession) => {
     const booking: INonUserBooking = await BookingsService.addNonUserBooking(
@@ -354,7 +338,7 @@ export const addWalkIn = asyncHandler(async function (
         amount,
         paymentDate,
         session,
-        userLocationId
+        branchLocationId
       );
     }
   });

@@ -46,6 +46,7 @@ export const getMember = asyncHandler(async function (
   req: Request,
   res: Response
 ): Promise<void> {
+  // Our Members is intentionally global — all staff roles see members across branches.
   const { uid, limit = "10", page = "1", name, phone } = req.query;
 
   const userQuery: any = {};

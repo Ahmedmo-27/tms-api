@@ -9,6 +9,7 @@ import { logoutUser } from "../auth/auth-controller";
 import NonUserPackage from "../../models/nonUserPackage";
 import { runInTransaction } from "../../utils/transaction";
 import { ClientSession } from "mongoose";
+import { resolveLocationIdForWrite } from "../../utils/location-scope";
 
 export const getPackage = asyncHandler(async function (
   req: Request,
@@ -102,14 +103,9 @@ export const subMemberToPackage = asyncHandler(async function (
   req: Request,
   res: Response
 ): Promise<void> {
-  const { uid, pkgId, pkgStartDate, paymentMethod, paymentDate, amount, note, locationId } =
+  const { uid, pkgId, pkgStartDate, paymentMethod, paymentDate, amount, note } =
     req.body;
-  const userRole = (req as any).user.role;
-  const userLocationId = (req as any).user.locationId;
-  let targetLocationId = locationId;
-  if (userRole === "branch_admin" || userRole === "fd") {
-    targetLocationId = userLocationId?.toString();
-  }
+  const targetLocationId = resolveLocationIdForWrite(req);
   const io = req.app.get("io");
   await SubscriptionsService.frontDeskSubscribeToPackage(
     uid,
@@ -239,12 +235,7 @@ export const addNonUserPackage = asyncHandler(async function (
     locationId,
   } = req.body;
   
-  const userRole = (req as any).user.role;
-  const userLocationId = (req as any).user.locationId;
-  let targetLocationId = locationId;
-  if (userRole === "branch_admin" || userRole === "fd") {
-    targetLocationId = userLocationId?.toString();
-  }
+  const targetLocationId = resolveLocationIdForWrite(req);
 
   await SubscriptionsService.addNonUserPackage(
     name,

@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import Member from "../../models/member";
 import { SuccessResponse } from "../../core/ApiResponse";
 import asyncHandler from "../../utils/asyncHandler";
+import { resolveLocationFilter } from "../../utils/location-scope";
 
 type AttendanceRow = {
   memberId: string;
@@ -27,13 +28,7 @@ export const getAttendanceHistory = asyncHandler(async function (
     memberName,
   } = req.query;
 
-  const userRole = (req as any).user?.role;
-  let targetLocationId: string | null = null;
-  if (userRole === "branch_admin" || userRole === "fd") {
-    targetLocationId = (req as any).user?.locationId?.toString() || null;
-  } else if (userRole === "management" && req.query.locationId) {
-    targetLocationId = req.query.locationId as string;
-  }
+  const targetLocationId = resolveLocationFilter(req);
 
   const pageNumber = Math.max(1, parseInt(page as string, 10) || 1);
   const limitNumber = Math.max(1, parseInt(limit as string, 10) || 25);

@@ -1,11 +1,13 @@
 import { Router } from "express";
 import { getClients, getMemberPackages, deductSession, getSchedule, getScans, getPtAttendance } from "../controllers/coach/dashboard-controller";
+import { coachLogin } from "../controllers/coach/auth-controller";
 import { verifyToken } from "../controllers/auth/auth-controller";
 import { authenticateUser, authorizeUser } from "../middlewares/auth.middleware";
 import { coachGuard } from "../middlewares/coach.middleware";
 
 const router = Router();
 
+router.post("/auth/login", coachLogin);
 router.get("/auth/verifyToken", authenticateUser, authorizeUser(["coach"]), verifyToken);
 
 // Protected — require valid coach JWT
