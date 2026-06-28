@@ -3,7 +3,7 @@ import Package, { getPackageEndDate } from "../models/package";
 import PromoCode from "../models/promoCode";
 import { Types } from "mongoose";
 import { PaymentsService } from "./payments-service";
-import { NotFoundError } from "../core/ApiError";
+import { NotFoundError, BadRequestError } from "../core/ApiError";
 import { runInTransaction } from "../utils/transaction";
 import { ClientSession } from "mongoose";
 import logger from "../config/logger";
@@ -36,6 +36,17 @@ export class SubscriptionsService {
       throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found", {
         pkgId,
       });
+    if (
+      pkg.category === "OPEN_GYM" &&
+      pkg.locationId &&
+      locationId &&
+      pkg.locationId.toString() !== locationId
+    ) {
+      throw new BadRequestError(
+        "PACKAGE_BRANCH_MISMATCH",
+        "This open gym package is not available at the selected branch",
+      );
+    }
     startDate = new Date(startDate).toISOString();
     if (paymentDate) {
       paymentDate = new Date(paymentDate).toISOString();

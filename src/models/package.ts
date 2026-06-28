@@ -68,6 +68,7 @@ export interface IPackage {
   price: number;
   expiryPeriod: number;
   renewalPeriod?: OpenGymRenewalPeriod;
+  locationId?: Types.ObjectId;
   coachId?: string;
   hidden?: boolean;
   classRestrictions?: IClassRestriction[];
@@ -133,6 +134,12 @@ const PackageSchema = new Schema<IPackage, IPackageModel, IPackageMethods>({
   opensClasses: {
     type: [Schema.Types.ObjectId],
     ref: "Class",
+  },
+  locationId: {
+    type: Schema.Types.ObjectId,
+    ref: "Location",
+    required: false,
+    default: null,
   },
   hidden: {
     type: Boolean,

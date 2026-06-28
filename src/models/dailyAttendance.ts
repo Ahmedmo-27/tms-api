@@ -49,10 +49,17 @@ type DailyAttendanceModel = Model<IDailyAttendance> & {
     method: string,
     session: ClientSession,
     status: "SUCCESS" | "FAILED",
-    io: Server
+    io: Server,
+    locationId?: string
   ): Promise<void>;
   hasSuccessfulOpenGymToday(
     uid: string,
+    locationId?: string,
+    session?: ClientSession
+  ): Promise<boolean>;
+  hasSuccessfulOpenGymGuestToday(
+    guestPhone: string,
+    locationId?: string,
     session?: ClientSession
   ): Promise<boolean>;
 };
@@ -152,6 +159,7 @@ DailyAttendanceSchema.static(
   "hasSuccessfulOpenGymToday",
   async function (
     uid: string,
+    locationId?: string,
     session?: ClientSession
   ): Promise<boolean> {
     const startOfDay = new Date();
@@ -159,15 +167,49 @@ DailyAttendanceSchema.static(
     const endOfDay = new Date();
     endOfDay.setUTCHours(23, 59, 59, 999);
 
+    const elemMatch: Record<string, unknown> = {
+      uid: new mongoose.Types.ObjectId(uid),
+      status: "SUCCESS",
+    };
+    if (locationId) {
+      elemMatch.locationId = new mongoose.Types.ObjectId(locationId);
+    }
+
     const count = await this.countDocuments(
       {
         date: { $gte: startOfDay, $lte: endOfDay },
-        openGymAttendance: {
-          $elemMatch: {
-            uid: new mongoose.Types.ObjectId(uid),
-            status: "SUCCESS",
-          },
-        },
+        openGymAttendance: { $elemMatch: elemMatch },
+      },
+      { session },
+    );
+    return count > 0;
+  }
+);
+
+DailyAttendanceSchema.static(
+  "hasSuccessfulOpenGymGuestToday",
+  async function (
+    guestPhone: string,
+    locationId?: string,
+    session?: ClientSession
+  ): Promise<boolean> {
+    const startOfDay = new Date();
+    startOfDay.setUTCHours(0, 0, 0, 0);
+    const endOfDay = new Date();
+    endOfDay.setUTCHours(23, 59, 59, 999);
+
+    const elemMatch: Record<string, unknown> = {
+      guestPhone,
+      status: "SUCCESS",
+    };
+    if (locationId) {
+      elemMatch.locationId = new mongoose.Types.ObjectId(locationId);
+    }
+
+    const count = await this.countDocuments(
+      {
+        date: { $gte: startOfDay, $lte: endOfDay },
+        openGymAttendance: { $elemMatch: elemMatch },
       },
       { session },
     );
@@ -204,7 +246,9 @@ DailyAttendanceSchema.static(
     if (status === "SUCCESS") {
       const alreadyRecorded = day.openGymAttendance.some(
         (entry) =>
-          entry.uid?.toString() === uid && entry.status === "SUCCESS"
+          entry.uid?.toString() === uid &&
+          entry.status === "SUCCESS" &&
+          (!locationId || entry.locationId?.toString() === locationId)
       );
       if (alreadyRecorded) {
         io.emit("FAILED-SCAN", {
@@ -259,7 +303,8 @@ DailyAttendanceSchema.static(
     method: string,
     session: ClientSession,
     status: "SUCCESS" | "FAILED",
-    io: Server
+    io: Server,
+    locationId?: string
   ): Promise<void> {
     const startOfDay = new Date();
     startOfDay.setUTCHours(0, 0, 0, 0);
@@ -280,7 +325,9 @@ DailyAttendanceSchema.static(
     if (status === "SUCCESS") {
       const alreadyRecorded = day.openGymAttendance.some(
         (entry) =>
-          entry.guestPhone === guestPhone && entry.status === "SUCCESS",
+          entry.guestPhone === guestPhone &&
+          entry.status === "SUCCESS" &&
+          (!locationId || entry.locationId?.toString() === locationId)
       );
       if (alreadyRecorded) {
         io.emit("FAILED-SCAN", {
@@ -305,6 +352,7 @@ DailyAttendanceSchema.static(
             method,
             time: new Date(),
             status,
+            locationId: locationId ? new mongoose.Types.ObjectId(locationId) : null,
           },
         },
       },

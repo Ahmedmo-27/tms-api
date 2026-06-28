@@ -15,6 +15,7 @@ import {
 import { runInTransaction } from "../utils/transaction";
 import { Server } from "http";
 import DailyAttendance from "../models/dailyAttendance";
+import Location from "../models/location";
 import logger from "../config/logger";
 import NonUserBooking, { INonUserBooking } from "../models/nonUserBookings";
 import { sendPaymentToRentalSystem } from "./egygap-erp-service";
@@ -590,21 +591,91 @@ export class BookingsService {
     });
   }
 
-  static async resolveOpenGymDropInPrice(): Promise<number> {
-    const workspaceClass = await Class.findOne({ category: "WORKSPACE" });
+  static async resolveOpenGymDropInPrice(locationId: string): Promise<number> {
+    const workspaceClass = await Class.findOne({
+      category: "WORKSPACE",
+      locations: new Types.ObjectId(locationId),
+    });
     if (!workspaceClass) {
       throw new NotFoundError(
         "OPEN_GYM_PRICE_NOT_CONFIGURED",
-        "Add a WORKSPACE class in Catalog to set the open gym drop-in price",
+        "No open gym drop-in price configured for this branch",
       );
     }
     return workspaceClass.price;
+  }
+
+  static async setOpenGymDropInPrice(
+    locationId: string,
+    price: number,
+  ): Promise<{ locationId: string; branchName: string; price: number }> {
+    if (price < 0) {
+      throw new BadRequestError("INVALID_PRICE", "Price must be zero or greater");
+    }
+    const location = await Location.findById(locationId);
+    if (!location) {
+      throw new NotFoundError("LOCATION_NOT_FOUND", "Location not found", {
+        locationId,
+      });
+    }
+
+    let workspaceClass = await Class.findOne({
+      category: "WORKSPACE",
+      locations: new Types.ObjectId(locationId),
+    });
+
+    if (workspaceClass) {
+      workspaceClass.price = price;
+      await workspaceClass.save();
+    } else {
+      workspaceClass = await Class.create({
+        title: `Open Gym Drop-In — ${location.branchName}`,
+        category: "WORKSPACE",
+        price,
+        locations: [new Types.ObjectId(locationId)],
+        allowDropIn: true,
+      });
+    }
+
+    return {
+      locationId,
+      branchName: location.branchName,
+      price: workspaceClass.price,
+    };
+  }
+
+  static async listOpenGymDropInPrices(): Promise<
+    Array<{
+      locationId: string;
+      branchName: string;
+      location: string;
+      price: number | null;
+    }>
+  > {
+    const [locations, workspaceClasses] = await Promise.all([
+      Location.find({}),
+      Class.find({ category: "WORKSPACE" }),
+    ]);
+
+    return locations.map((loc) => {
+      const locId = (loc._id as Types.ObjectId).toString();
+      const workspaceClass = workspaceClasses.find((cls) =>
+        cls.locations.some((branchId) => branchId.toString() === locId),
+      );
+      return {
+        locationId: locId,
+        branchName: loc.branchName,
+        location: loc.location,
+        price: workspaceClass?.price ?? null,
+      };
+    });
   }
 
   static async recordAdminOpenGymMemberDropIn(
     uid: string,
     paymentMethod: string,
     io: Server,
+    locationId: string,
     amount?: number,
     paymentDate?: string,
   ) {
@@ -612,14 +683,14 @@ export class BookingsService {
     if (!member)
       throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
 
-    if (await DailyAttendance.hasSuccessfulOpenGymToday(uid)) {
+    if (await DailyAttendance.hasSuccessfulOpenGymToday(uid, locationId)) {
       throw new ConflictError(
         "ATTENDANCE_ALREADY_RECORDED",
-        "Open gym attendance already recorded today",
+        "Open gym attendance already recorded today at this branch",
       );
     }
 
-    const price = amount ?? (await this.resolveOpenGymDropInPrice());
+    const price = amount ?? (await this.resolveOpenGymDropInPrice(locationId));
     const parsedPaymentDate = paymentDate
       ? new Date(paymentDate).toISOString()
       : undefined;
@@ -637,6 +708,9 @@ export class BookingsService {
         undefined,
         parsedPaymentDate,
         "Open gym drop-in",
+        undefined,
+        undefined,
+        locationId,
       );
       await DailyAttendance.recordOpenGymAttendance(
         uid,
@@ -644,6 +718,7 @@ export class BookingsService {
         session,
         "SUCCESS",
         io,
+        locationId,
       );
       io.emit("SUCCESS-SCAN", {
         code: "OPEN_GYM_DROP_IN",
@@ -658,6 +733,7 @@ export class BookingsService {
     phoneNumber: string,
     paymentMethod: string,
     io: Server,
+    locationId: string,
     amount?: number,
     paymentDate?: string,
   ) {
@@ -669,7 +745,14 @@ export class BookingsService {
       );
     }
 
-    const price = amount ?? (await this.resolveOpenGymDropInPrice());
+    if (await DailyAttendance.hasSuccessfulOpenGymGuestToday(phoneNumber, locationId)) {
+      throw new ConflictError(
+        "ATTENDANCE_ALREADY_RECORDED",
+        "Open gym attendance already recorded today for this guest at this branch",
+      );
+    }
+
+    const price = amount ?? (await this.resolveOpenGymDropInPrice(locationId));
     const parsedPaymentDate = paymentDate
       ? new Date(paymentDate).toISOString()
       : undefined;
@@ -689,6 +772,7 @@ export class BookingsService {
         "Open gym guest drop-in",
         name,
         phoneNumber,
+        locationId,
       );
       await DailyAttendance.recordOpenGymGuestAttendance(
         name,
@@ -697,6 +781,7 @@ export class BookingsService {
         session,
         "SUCCESS",
         io,
+        locationId,
       );
       io.emit("SUCCESS-SCAN", {
         code: "OPEN_GYM_DROP_IN",

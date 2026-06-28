@@ -230,11 +230,36 @@ export const bookDropIn = asyncHandler(async function (
 });
 
 export const getOpenGymDropInPrice = asyncHandler(async function (
+  req: Request,
+  res: Response
+): Promise<void> {
+  const locationId = resolveLocationIdForWrite(req);
+  const price = await BookingsService.resolveOpenGymDropInPrice(locationId);
+  new SuccessResponse("Open gym drop-in price", { locationId, price }).send(res);
+});
+
+export const listOpenGymDropInPrices = asyncHandler(async function (
   _req: Request,
   res: Response
 ): Promise<void> {
-  const price = await BookingsService.resolveOpenGymDropInPrice();
-  new SuccessResponse("Open gym drop-in price", { price }).send(res);
+  const prices = await BookingsService.listOpenGymDropInPrices();
+  new SuccessResponse("Open gym drop-in prices", prices).send(res);
+});
+
+export const setOpenGymDropInPrice = asyncHandler(async function (
+  req: Request,
+  res: Response
+): Promise<void> {
+  const { price } = req.body;
+  const locationId = resolveLocationIdForWrite(req);
+  if (price === undefined || price === null || Number.isNaN(Number(price))) {
+    throw new BadRequestError("INVALID_PRICE", "price is required");
+  }
+  const result = await BookingsService.setOpenGymDropInPrice(
+    locationId,
+    Number(price),
+  );
+  new SuccessResponse("Open gym drop-in price updated", result).send(res);
 });
 
 export const recordOpenGymMemberDropIn = asyncHandler(async function (
@@ -248,11 +273,13 @@ export const recordOpenGymMemberDropIn = asyncHandler(async function (
       "uid and paymentMethod are required",
     );
   }
+  const locationId = resolveLocationIdForWrite(req);
   const io = req.app.get("io");
   await BookingsService.recordAdminOpenGymMemberDropIn(
     uid,
     paymentMethod,
     io,
+    locationId,
     amount,
     paymentDate,
   );
@@ -270,12 +297,14 @@ export const recordOpenGymGuestDropIn = asyncHandler(async function (
       "name, phoneNumber, and paymentMethod are required",
     );
   }
+  const locationId = resolveLocationIdForWrite(req);
   const io = req.app.get("io");
   await BookingsService.recordAdminOpenGymGuestDropIn(
     name,
     phoneNumber,
     paymentMethod,
     io,
+    locationId,
     amount,
     paymentDate,
   );

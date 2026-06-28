@@ -13,7 +13,8 @@ import { logoutUser } from "../auth/auth-controller";
 import NonUserPackage from "../../models/nonUserPackage";
 import { runInTransaction } from "../../utils/transaction";
 import { ClientSession } from "mongoose";
-import { resolveLocationIdForWrite } from "../../utils/location-scope";
+import { resolveLocationFilter, resolveLocationIdForWrite } from "../../utils/location-scope";
+import { Types } from "mongoose";
 
 export const getPackage = asyncHandler(async function (
   req: Request,
@@ -30,8 +31,17 @@ export const getPackage = asyncHandler(async function (
   if (coachId) {
     query.coachId = coachId;
   }
+  const targetLocationId = resolveLocationFilter(req);
+  if (targetLocationId) {
+    query.$or = [
+      { locationId: { $exists: false } },
+      { locationId: null },
+      { locationId: new Types.ObjectId(targetLocationId) },
+    ];
+  }
   let packages = await Package.find(query)
     .populate({ path: "coachId" })
+    .populate({ path: "locationId", select: "_id branchName location" })
     .populate({ path: "opensClasses", select: "_id title" });
   if (!packages || packages.length === 0)
     throw new NotFoundError("PACKAGES_NOT_FOUND", "Packages not found");
@@ -93,9 +103,18 @@ export const addPackage = asyncHandler(
       expiryPeriod,
       renewalPeriod,
       numberOfSessions,
+      locationId,
     } = req.body;
     if (!name || !category || !price)
       throw new BadRequestError("INVALID_REQUEST", "Invalid request");
+    if (category === "OPEN_GYM") {
+      if (!locationId || !Types.ObjectId.isValid(locationId)) {
+        throw new BadRequestError(
+          "LOCATION_REQUIRED",
+          "Open gym packages require a branch locationId",
+        );
+      }
+    }
 
     const normalized = normalizeOpenGymPackageFields({
       category,
@@ -114,6 +133,9 @@ export const addPackage = asyncHandler(
       coachId,
       opensClasses,
       classRestrictions,
+      ...(locationId
+        ? { locationId: new Types.ObjectId(locationId) }
+        : {}),
     });
     await pkg.save();
     new SuccessResponse("Package Added!", pkg).send(res);
@@ -143,6 +165,7 @@ export const updatePackage = asyncHandler(
       "opensClasses",
       "hidden",
       "classRestrictions",
+      "locationId",
     ];
     const updates = Object.keys(req.body);
     const isValidUpdate = updates.every((update) =>

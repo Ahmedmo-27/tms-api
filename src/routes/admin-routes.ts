@@ -21,6 +21,8 @@ import {
   cancelBooking,
   bookDropIn,
   getOpenGymDropInPrice,
+  listOpenGymDropInPrices,
+  setOpenGymDropInPrice,
   recordOpenGymMemberDropIn,
   recordOpenGymGuestDropIn,
   bookNonUser,
@@ -261,6 +263,20 @@ adminRoutes.get(
   authenticateUser,
   authorizeUser(["management", "branch_admin"]),
   getOpenGymDropInPrice
+);
+
+adminRoutes.get(
+  "/openGym/dropInPrices",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  listOpenGymDropInPrices
+);
+
+adminRoutes.patch(
+  "/openGym/dropInPrice",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  setOpenGymDropInPrice
 );
 
 adminRoutes.post(
