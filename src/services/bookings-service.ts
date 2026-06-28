@@ -273,6 +273,7 @@ export class BookingsService {
         scheduledClass.cid._id.toString(),
         monthString,
         "MEMBER_CANCELLATION",
+        (scheduledClass.cid as any).title,
       );
       const waitingList = await ScheduledClass.removeBookedMember(
         scid,
@@ -477,35 +478,61 @@ export class BookingsService {
     const member = await Member.findOne({ uid }).populate({ path: "uid" });
     if (!member)
       throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
-    const pkg = await Package.findOne({ category: "OPEN_GYM" });
-    if (!pkg)
+
+    const pkgIds = await Package.getSpaceWalkPackageIds();
+    if (!pkgIds.length)
       throw new NotFoundError(
         "PACKAGE_NOT_FOUND",
-        "Open gym Package not found",
+        "No eligible space walk packages found",
       );
-    if (pkg.category !== "OPEN_GYM")
-      throw new BadRequestError(
-        "INVALID_PACKAGE",
-        "Package is not an Open Gym package",
-      );
-    const ultimatePkgs = await Package.find({
-      category: "ULTIMATE_MINDSPACER",
-    });
-    let pkgIds = ultimatePkgs.map((pkg) => pkg._id.toString());
-    pkgIds.push(pkg._id.toString());
-    await runInTransaction(async (session: ClientSession) => {
-      const memberDoc = await Member.findOne({ uid })
-        .populate({ path: "uid" })
-        .session(session);
-      if (!memberDoc)
-        throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
-      await memberDoc.recordOpenGymAttendance(pkgIds, session, io);
-    });
 
-    io.emit("SUCCESS-SCAN", {
-      code: "OPEN_GYM_CLASS_ATTENDED",
-      message: "Success",
-      member: (member.uid as any).name,
+    if (await DailyAttendance.hasSuccessfulOpenGymToday(uid)) {
+      io.emit("FAILED-SCAN", {
+        code: "ATTENDANCE_ALREADY_RECORDED",
+        message: "Attendance was already recorded",
+        member: (member.uid as any).name,
+      });
+      throw new ConflictError(
+        "ATTENDANCE_ALREADY_RECORDED",
+        "Open gym attendance already recorded today",
+      );
+    }
+
+    await runInTransaction(async (session: ClientSession) => {
+      const pid = await Member.recordSpaceWalkAttendance(
+        uid,
+        pkgIds,
+        session,
+        io,
+      );
+      if (!pid) {
+        await DailyAttendance.recordOpenGymAttendance(
+          uid,
+          "No Active Package",
+          session,
+          "FAILED",
+          io,
+        );
+        throw new ForbiddenError(
+          "NO_ACTIVE_PACKAGE_FOUND",
+          "No active packages found",
+        );
+      }
+      const pkg = await Package.findById(pid);
+      if (!pkg)
+        throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found");
+      await DailyAttendance.recordOpenGymAttendance(
+        uid,
+        pkg.name,
+        session,
+        "SUCCESS",
+        io,
+      );
+      io.emit("SUCCESS-SCAN", {
+        code: "OPEN_GYM_CLASS_ATTENDED",
+        message: "Success",
+        member: (member.uid as any).name,
+      });
     });
   }
 
@@ -524,7 +551,13 @@ export class BookingsService {
       throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
     if ((scheduledClass.cid as any).allowDropIn === false)
       throw new ConflictError("DROP_IN_DISABLED", "Drop-ins are not allowed for this class");
-    
+
+    const isWorkSpace = (scheduledClass.cid as any).category === "WORKSPACE";
+    if (
+      !isWorkSpace &&
+      new Date() > new Date(scheduledClass.startTime.getTime() + 30 * 60 * 1000)
+    )
+      throw new ConflictError("CLASS_ALREADY_STARTED", "Class already started");
     let price = scheduledClass.cid.price;
     const scId = new Types.ObjectId(scid);
     await runInTransaction(async (session: ClientSession) => {
@@ -566,8 +599,14 @@ export class BookingsService {
     });
     if (!scheduledClass)
       throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
+    if ((scheduledClass.cid as any).category === "WORKSPACE")
+      throw new ConflictError(
+        "DROP_IN_ADMIN_ONLY",
+        "Open gym drop-ins can only be booked by staff",
+      );
     if ((scheduledClass.cid as any).allowDropIn === false)
       throw new ConflictError("DROP_IN_DISABLED", "Drop-ins are not allowed for this class");
+
     if (
       new Date() > new Date(scheduledClass.startTime.getTime() + 30 * 60 * 1000)
     )
@@ -585,37 +624,40 @@ export class BookingsService {
     }
 
     // Enforce Waitlist Reservations
-    const activeReservationsCount = await Reservation.countDocuments({
-      sessionId: scheduledClass._id,
-      status: "ACTIVE"
-    });
-    const userHasReservation = await Reservation.findOne({
-      sessionId: scheduledClass._id,
-      userId: new Types.ObjectId(uid),
-      status: "ACTIVE"
-    });
-    
-    const publicSlots = scheduledClass.availableSlots - activeReservationsCount;
-    if (publicSlots <= 0 && !userHasReservation) {
-      const expiredReservation = await Reservation.findOne({
+    let userHasReservation = null;
+    {
+      const activeReservationsCount = await Reservation.countDocuments({
+        sessionId: scheduledClass._id,
+        status: "ACTIVE"
+      });
+      userHasReservation = await Reservation.findOne({
         sessionId: scheduledClass._id,
         userId: new Types.ObjectId(uid),
-        status: "EXPIRED"
+        status: "ACTIVE"
       });
-      if (expiredReservation) {
-        throw new ForbiddenError("RESERVATION_EXPIRED", "Your reservation window has expired. The spot has been passed to the next person.");
-      }
+      
+      const publicSlots = scheduledClass.availableSlots - activeReservationsCount;
+      if (publicSlots <= 0 && !userHasReservation) {
+        const expiredReservation = await Reservation.findOne({
+          sessionId: scheduledClass._id,
+          userId: new Types.ObjectId(uid),
+          status: "EXPIRED"
+        });
+        if (expiredReservation) {
+          throw new ForbiddenError("RESERVATION_EXPIRED", "Your reservation window has expired. The spot has been passed to the next person.");
+        }
 
-      const waitingEntry = await WaitlistEntry.findOne({
-        sessionId: scheduledClass._id,
-        userId: new Types.ObjectId(uid),
-        status: "WAITING"
-      });
-      if (waitingEntry) {
-        throw new ForbiddenError("STILL_WAITING", "You are currently on the waitlist. We will notify you when it is your turn.");
-      }
+        const waitingEntry = await WaitlistEntry.findOne({
+          sessionId: scheduledClass._id,
+          userId: new Types.ObjectId(uid),
+          status: "WAITING"
+        });
+        if (waitingEntry) {
+          throw new ForbiddenError("STILL_WAITING", "You are currently on the waitlist. We will notify you when it is your turn.");
+        }
 
-      throw new ForbiddenError("SPOT_RESERVED", "Available spots are currently reserved for waitlisted members. Please join the waitlist.");
+        throw new ForbiddenError("SPOT_RESERVED", "Available spots are currently reserved for waitlisted members. Please join the waitlist.");
+      }
     }
 
     const orderId = await PaymentsService.checkPayment(
