@@ -391,7 +391,7 @@ export const getMemberRecentPayments = asyncHandler(
     })
       .sort({ paymentTime: -1 })
       .limit(15)
-      .populate("pkgId", "name")
+      .populate("pkgId", "name category renewalPeriod")
       .populate({
         path: "scid",
         populate: { path: "cid", select: "title" },

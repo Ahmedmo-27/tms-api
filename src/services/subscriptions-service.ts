@@ -13,6 +13,7 @@ import { IClassRestrictionRecord } from "../models/member";
 import { ChallengeService } from "./challenge-service";
 import User from "../models/user";
 import { Server as SocketIOServer } from "socket.io";
+import { resolveOpenGymPaymentNote } from "../utils/open-gym-payment-purpose";
 
 export class SubscriptionsService {
   static async frontDeskSubscribeToPackage(
@@ -66,6 +67,10 @@ export class SubscriptionsService {
       });
     }
 
+    const resolvedNote =
+      note ??
+      resolveOpenGymPaymentNote(pkg.category, pkg.renewalPeriod);
+
     await runInTransaction(async (session: ClientSession) => {
       const payment = await PaymentsService.savePayment(
         uid,
@@ -78,7 +83,7 @@ export class SubscriptionsService {
         undefined,
         packageId,
         paymentDate,
-        note,
+        resolvedNote,
         undefined,
         undefined,
         locationId

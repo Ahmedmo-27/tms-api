@@ -7,6 +7,7 @@ import { IPayment } from "../models/payment";
 import logger from "../config/logger";
 import { refundPaymentToRentalSystem } from "./egygap-erp-service";
 import { startOfDay, endOfDay, startOfMonth, endOfMonth } from "date-fns";
+import { resolveOpenGymPaymentPurposeLabel } from "../utils/open-gym-payment-purpose";
 
 export type PaymentListEntry = IPayment & {
   entryType?: "REFUND" | "CASHOUT";
@@ -122,6 +123,7 @@ export class PaymentsService {
         })
         .populate({
           path: "pkgId",
+          select: "name category renewalPeriod locationId",
           populate: { path: "locationId" },
         }),
       Refund.find(refundQuery)
@@ -140,11 +142,13 @@ export class PaymentsService {
     };
 
     function buildPaymentLabel(p: IPayment): string {
-      let itemName: string = purposeLabels[p.purpose] ?? p.purpose;
-      if (p.purpose === "PACKAGE" && p.pkgId) {
+      const openGymPurpose = resolveOpenGymPaymentPurposeLabel(p);
+      let itemName: string =
+        openGymPurpose ?? purposeLabels[p.purpose] ?? p.purpose;
+      if (!openGymPurpose && p.purpose === "PACKAGE" && p.pkgId) {
         const pkg = p.pkgId as unknown as { name: string };
         itemName = pkg.name;
-      } else if (p.scid) {
+      } else if (!openGymPurpose && p.scid) {
         const sc = p.scid as unknown as { cid?: { title?: string } };
         if (sc.cid?.title) itemName = sc.cid.title;
       }
