@@ -119,6 +119,62 @@ async function fetchTickets(queryParams: {
   return { tickets, total, page: pageNum, limit: limitNum };
 }
 
+interface HandlerMetadata {
+  userId: Types.ObjectId;
+  name: string;
+  role: string;
+}
+
+async function getHandlerMetadata(userId: Types.ObjectId): Promise<HandlerMetadata> {
+  const userDoc = await User.findById(userId).select("name role");
+  if (!userDoc) {
+    return { userId, name: "Unknown", role: "unknown" };
+  }
+  return {
+    userId: userDoc._id as Types.ObjectId,
+    name: userDoc.name,
+    role: normalizeCreatorRole(userDoc.role),
+  };
+}
+
+async function applyTicketUpdate(
+  existing: {
+    status: string;
+    adminNotes?: string;
+  },
+  userId: Types.ObjectId,
+  status: string,
+  adminNotes?: unknown
+) {
+  const handler = await getHandlerMetadata(userId);
+  const update: Record<string, unknown> = {
+    status,
+    handledBy: handler.userId,
+    handledByName: handler.name,
+    handledByRole: handler.role,
+  };
+
+  if (status !== existing.status) {
+    update.statusUpdatedBy = handler.userId;
+    update.statusUpdatedByName = handler.name;
+    update.statusUpdatedByRole = handler.role;
+    update.statusUpdatedAt = new Date();
+  }
+
+  if (typeof adminNotes === "string") {
+    const trimmedNotes = adminNotes.trim();
+    update.adminNotes = trimmedNotes;
+    if (trimmedNotes !== (existing.adminNotes ?? "").trim()) {
+      update.notesUpdatedBy = handler.userId;
+      update.notesUpdatedByName = handler.name;
+      update.notesUpdatedByRole = handler.role;
+      update.notesUpdatedAt = new Date();
+    }
+  }
+
+  return update;
+}
+
 /* ──────────────────────────── PUBLIC (mobile app) ──────────────────────────── */
 
 export const getActiveTicketCategories = asyncHandler(
@@ -176,11 +232,9 @@ export const updateTicketStatus = asyncHandler(
     const existing = await Ticket.findById(id);
     if (!existing) throw new NotFoundError("TICKET_NOT_FOUND", "Ticket not found", { id });
 
-    const update: Record<string, unknown> = {
-      status,
-      handledBy: (req as AuthRequest).user?._id,
-    };
-    if (typeof adminNotes === "string") update.adminNotes = adminNotes.trim();
+    const authReq = req as AuthRequest;
+    const userId = authReq.user?._id as Types.ObjectId;
+    const update = await applyTicketUpdate(existing, userId, status, adminNotes);
 
     const ticket = await Ticket.findByIdAndUpdate(id, update, { new: true });
     if (!ticket) throw new NotFoundError("TICKET_NOT_FOUND", "Ticket not found", { id });
@@ -233,11 +287,12 @@ export const updateCoachTicketStatus = asyncHandler(
     const existing = await Ticket.findById(id);
     if (!existing) throw new NotFoundError("TICKET_NOT_FOUND", "Ticket not found", { id });
 
-    const update: Record<string, unknown> = {
+    const update = await applyTicketUpdate(
+      existing,
+      coachReq.coachId,
       status,
-      handledBy: coachReq.coachId,
-    };
-    if (typeof adminNotes === "string") update.adminNotes = adminNotes.trim();
+      adminNotes
+    );
 
     const ticket = await Ticket.findByIdAndUpdate(id, update, { new: true });
     if (!ticket) throw new NotFoundError("TICKET_NOT_FOUND", "Ticket not found", { id });

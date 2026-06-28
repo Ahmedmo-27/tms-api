@@ -23,6 +23,16 @@ export interface ITicket extends Document {
   adminNotes?: string;
   // Staff member who last actioned the ticket.
   handledBy?: Types.ObjectId;
+  handledByName?: string;
+  handledByRole?: string;
+  statusUpdatedBy?: Types.ObjectId;
+  statusUpdatedByName?: string;
+  statusUpdatedByRole?: string;
+  statusUpdatedAt?: Date;
+  notesUpdatedBy?: Types.ObjectId;
+  notesUpdatedByName?: string;
+  notesUpdatedByRole?: string;
+  notesUpdatedAt?: Date;
   locationId?: Types.ObjectId;
   createdBy?: Types.ObjectId;
   creatorRole?: string;
@@ -47,6 +57,16 @@ const TicketSchema: Schema<ITicket> = new Schema(
     },
     adminNotes: { type: String, trim: true },
     handledBy: { type: Schema.Types.ObjectId, ref: "User" },
+    handledByName: { type: String, trim: true },
+    handledByRole: { type: String, trim: true },
+    statusUpdatedBy: { type: Schema.Types.ObjectId, ref: "User" },
+    statusUpdatedByName: { type: String, trim: true },
+    statusUpdatedByRole: { type: String, trim: true },
+    statusUpdatedAt: { type: Date },
+    notesUpdatedBy: { type: Schema.Types.ObjectId, ref: "User" },
+    notesUpdatedByName: { type: String, trim: true },
+    notesUpdatedByRole: { type: String, trim: true },
+    notesUpdatedAt: { type: Date },
     locationId: { type: Schema.Types.ObjectId, ref: "Location", default: null, index: true },
     createdBy: { type: Schema.Types.ObjectId, ref: "User", default: null, index: true },
     creatorRole: { type: String, trim: true },
