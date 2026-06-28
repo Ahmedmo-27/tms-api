@@ -10,6 +10,7 @@ export interface IDailyAttendance extends Document {
       time: Date;
       method: string;
       status: "SUCCESS" | "FAILED";
+      locationId?: mongoose.Types.ObjectId;
     }
   ];
   openGymAttendance: [
@@ -18,6 +19,7 @@ export interface IDailyAttendance extends Document {
       time: Date;
       method: string;
       status: "SUCCESS" | "FAILED";
+      locationId?: mongoose.Types.ObjectId;
     }
   ];
 }
@@ -28,14 +30,16 @@ type DailyAttendanceModel = Model<IDailyAttendance> & {
     method: string,
     session: ClientSession,
     status: "SUCCESS" | "FAILED",
-    io: Server
+    io: Server,
+    locationId?: string
   ): Promise<void>;
   recordOpenGymAttendance(
     uid: string,
     method: string,
     session: ClientSession,
     status: "SUCCESS" | "FAILED",
-    io: Server
+    io: Server,
+    locationId?: string
   ): Promise<void>;
 };
 
@@ -51,6 +55,7 @@ const DailyAttendanceSchema: Schema<IDailyAttendance, DailyAttendanceModel> =
         time: { type: Date, required: true },
         method: { type: String, required: true },
         status: { type: String, enum: ["SUCCESS", "FAILED"], default: "SUCCESS" },
+        locationId: { type: Schema.Types.ObjectId, ref: "Location", default: null },
       },
     ],
     openGymAttendance: [
@@ -59,6 +64,7 @@ const DailyAttendanceSchema: Schema<IDailyAttendance, DailyAttendanceModel> =
         time: { type: Date, required: true },
         method: { type: String, required: true },
         status: { type: String, enum: ["SUCCESS", "FAILED"], default: "SUCCESS" },
+        locationId: { type: Schema.Types.ObjectId, ref: "Location", default: null },
       },
     ],
   });
@@ -70,7 +76,8 @@ DailyAttendanceSchema.static(
     method: string,
     session: ClientSession,
     status: "SUCCESS" | "FAILED",
-    io: Server
+    io: Server,
+    locationId?: string
   ): Promise<void> {
     const startOfDay = new Date();
     startOfDay.setUTCHours(0, 0, 0, 0);
@@ -101,6 +108,7 @@ DailyAttendanceSchema.static(
             method,
             time: new Date(),
             status,
+            locationId: locationId ? new mongoose.Types.ObjectId(locationId) : null,
           },
         },
       },
@@ -131,7 +139,8 @@ DailyAttendanceSchema.static(
     method: string,
     session: ClientSession,
     status: "SUCCESS" | "FAILED",
-    io: Server
+    io: Server,
+    locationId?: string
   ): Promise<void> {
     const today = new Date().setUTCHours(0, 0, 0, 0);
     const day = await this.findOne({ date: today });
@@ -156,6 +165,7 @@ DailyAttendanceSchema.static(
             method,
             time: new Date(),
             status,
+            locationId: locationId ? new mongoose.Types.ObjectId(locationId) : null,
           },
         },
       },

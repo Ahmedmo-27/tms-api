@@ -504,6 +504,7 @@ export class BookingsService {
     uid: string,
     scid: string,
     paymentMethod: string,
+    locationId?: string,
   ) {
     const member = await Member.findOne({ uid });
     if (!member)
@@ -530,6 +531,9 @@ export class BookingsService {
         scId,
         undefined,
         undefined,
+        undefined,
+        undefined,
+        locationId ?? (scheduledClass as any).locationId?.toString()
       );
       const paymentIdStr = (payment._id as Types.ObjectId).toString();
       
@@ -626,6 +630,9 @@ export class BookingsService {
         scId,
         undefined,
         undefined,
+        undefined,
+        undefined,
+        (scheduledClass as any).locationId?.toString()
       );
       await Member.saveDropIn(
         uid,
@@ -654,15 +661,23 @@ export class BookingsService {
     startTime?: Date,
     endTime?: Date,
     scid?: string,
+    locationId?: string,
   ): Promise<INonUserBooking[]> {
-    const query: {
-      startTime?: Record<string, Date>;
-      endTime?: Record<string, Date>;
-      scid?: string;
-    } = {};
+    const query: any = {};
     if (startTime) query.startTime = { $gte: startTime };
     if (endTime) query.endTime = { $lte: endTime };
     if (scid) query.scid = scid;
+    
+    if (locationId) {
+      const scheduledClasses = await ScheduledClass.find({ locationId }).select("_id");
+      const validScids = scheduledClasses.map(sc => (sc as any)._id.toString());
+      if (scid) {
+        if (!validScids.includes(scid)) return [];
+      } else {
+        query.scid = { $in: validScids };
+      }
+    }
+    
     return NonUserBooking.find(query);
   }
 
@@ -794,6 +809,7 @@ export class BookingsService {
     amount?: number,
     paymentDate?: string,
     session?: ClientSession,
+    locationId?: string,
   ): Promise<INonUserBooking> {
     const run = async (s: ClientSession) => {
       if (session) logger.info(`In session - ${session?.id?.toString()}`);
@@ -826,6 +842,7 @@ export class BookingsService {
         undefined,
         booking.name,
         booking.phoneNumber,
+        locationId ?? (scheduledClass as any).locationId?.toString()
       );
       const paidBooking = await NonUserBooking.recordPayment(
         bookingId,

@@ -60,6 +60,7 @@ export interface IMemberPackageData {
   remainingClasses: number;
   classRestrictionsRecord?: IClassRestrictionRecord[];
   adjustmentHistory?: IAdjustmentRecord[];
+  locationId?: Types.ObjectId;
 }
 
 export interface IMemberBookings {
@@ -142,7 +143,8 @@ interface IMemberstatics {
     startDate: string,
     endDate: string,
     session: ClientSession,
-    classRestrictions?: IClassRestrictionRecord[]
+    classRestrictions?: IClassRestrictionRecord[],
+    locationId?: string
   ): Promise<void>;
   removePackage(
     uid: string,
@@ -262,6 +264,11 @@ const MemberPackageSchema: Schema = new Schema({
   },
   classRestrictionsRecord: [ClassRestrictionsRecordSchema],
   adjustmentHistory: [AdjustmentRecordSchema],
+  locationId: {
+    type: Schema.Types.ObjectId,
+    ref: "Location",
+    default: null,
+  },
 });
 
 const BookingSchema = new Schema({
@@ -1081,7 +1088,8 @@ MemberSchema.static(
     startDate: string,
     endDate: string,
     session: ClientSession,
-    classRestrictions?: IClassRestrictionRecord[]
+    classRestrictions?: IClassRestrictionRecord[],
+    locationId?: string
   ): Promise<void> {
     const { startOfDateCairo } = await import("../utils/timezone");
     const pkgStartDay = startOfDateCairo(startDate);
@@ -1109,6 +1117,7 @@ MemberSchema.static(
             status: "ACTIVE",
             remainingClasses: numberOfSessions,
             classRestrictionsRecord: classRestrictions,
+            locationId: locationId ? new Types.ObjectId(locationId) : null,
           },
         },
       },

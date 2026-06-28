@@ -18,12 +18,10 @@ export const returnPublicPackages = (): RequestHandler => {
   return asyncHandler(
     async (req: Request, res: Response, next: NextFunction): Promise<void> => {
       const authReq = req as AuthRequest;
-      const uid = authReq.user._id as string;
+      const role = authReq.user.role;
 
-      const member = await Member.findOne({ uid });
-
-      // ✅ If member NOT found → return packages directly
-      if (!member) {
+      // ✅ If user is not a member → return packages directly
+      if (role === "user") {
         const ramadanPkgs = await Package.find({
           name: { $in: RAMADAN_PACKAGE_NAMES },
         });

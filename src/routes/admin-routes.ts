@@ -98,19 +98,19 @@ const adminRoutes = express.Router();
 adminRoutes.get(
   "/member",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   getMember
 );
 adminRoutes.post(
   "/member/:id",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   addMember
 );
 adminRoutes.get(
   "/pending-members",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   getPendingMembers
 );
 
@@ -118,43 +118,43 @@ adminRoutes.get(
 adminRoutes.get(
   "/schedule",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   getScheduledClasses
 );
 adminRoutes.get(
   "/next-schedule",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   getNextScheduledClasses
 );
 adminRoutes.post(
   "/schedule",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   scheduleClass
 );
 adminRoutes.delete(
   "/schedule/:scid",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   cancelClass
 );
 adminRoutes.patch(
   "/schedule/:scid",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   editClass
 );
 adminRoutes.get(
   "/daily-attendance",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   getDailyAttendnace
 );
 adminRoutes.get(
   "/attendance",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   getAttendanceHistory
 );
 
@@ -162,25 +162,25 @@ adminRoutes.get(
 adminRoutes.get(
   "/class",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   getClass
 );
 adminRoutes.post(
   "/class",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   addClass
 );
 adminRoutes.patch(
   "/class/:cid",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management", "branch_admin"]),
   updateClass
 );
 adminRoutes.delete(
   "/class/:cid",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management", "branch_admin"]),
   deleteClass
 );
 
@@ -188,124 +188,124 @@ adminRoutes.delete(
 adminRoutes.get(
   "/bookings",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   getMemberBookings
 );
 adminRoutes.post(
   "/book",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   bookClass
 );
 adminRoutes.delete(
   "/cancel",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   cancelBooking
 );
 
 adminRoutes.get(
   "/bookings/waitlist",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   getWaitlistedMembers
 );
 
 adminRoutes.post(
   "/bookings/waitlist",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   overrideAddToWaitlist
 );
 
 adminRoutes.delete(
   "/bookings/waitlist",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   overrideRemoveFromWaitlist
 );
 
 adminRoutes.post(
   "/bookings/waitlist/promote",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   promoteFromWaitlist
 );
 
 adminRoutes.post(
   "/attendance/manual",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   manualRecordMemberAttendance
 );
 
 adminRoutes.delete(
   "/attendance/manual",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   manualRemoveMemberAttendance
 );
 
 adminRoutes.post(
   "/bookDropIn",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   bookDropIn
 );
 
 adminRoutes.get(
   "/nonUserBooking",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   getNonUserBookings
 )
 
 adminRoutes.post(
   "/nonUserBooking",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   bookNonUser
 )
 
 adminRoutes.post(
   "/nonUserBooking/attend",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   recordNonUserAttendance
 )
 
 adminRoutes.post(
   "/nonUserBooking/pay",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   saveNonUserPayment
 )
 
 adminRoutes.post(
   "/nonUserBooking/cancel/:bookingId",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   cancelNonUserBooking
 )
 
 adminRoutes.post(
   "/nonUserBooking/walk-in",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   addWalkIn
 )
 
 adminRoutes.post(
   "/nonUserPackage",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   addNonUserPackage
 )
 
 adminRoutes.get(
   "/nonUserPackage",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   getNonUserPackages
 )
 
@@ -313,25 +313,25 @@ adminRoutes.get(
 adminRoutes.get(
   "/packages",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   getPackage
 );
 adminRoutes.post(
   "/packages",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   addPackage
 );
 adminRoutes.delete(
   "/packages/:id",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management", "branch_admin"]),
   deletePackage
 );
 adminRoutes.patch(
   "/packages/:id",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management", "branch_admin"]),
   updatePackage
 );
 
@@ -339,25 +339,25 @@ adminRoutes.patch(
 adminRoutes.post(
   "/member-packages",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management", "branch_admin"]),
   subMemberToPackage
 );
 adminRoutes.delete(
   "/member-packages",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management", "branch_admin"]),
   unsubMemberFromPackage
 );
 adminRoutes.patch(
   "/member-packages/edit",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management", "branch_admin"]),
   editMemberPackage
 );
 adminRoutes.patch(
   "/member-packages/adjust",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   adjustMemberPackageClasses
 );
 
@@ -365,7 +365,7 @@ adminRoutes.patch(
 adminRoutes.post(
   "/send-message",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   sendCustomNotification
 );
 
@@ -373,25 +373,25 @@ adminRoutes.post(
 adminRoutes.get(
   "/coaches",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management", "branch_admin"]),
   getCoaches
 );
 adminRoutes.post(
   "/coaches",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management", "branch_admin"]),
   addCoach
 );
 adminRoutes.patch(
   "/coaches/:id",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management", "branch_admin"]),
   updateCoach
 );
 adminRoutes.delete(
   "/coaches/:id",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management", "branch_admin"]),
   deleteCoach
 );
 
@@ -399,32 +399,32 @@ adminRoutes.delete(
 adminRoutes.get(
   "/locations",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   getLocation
 );
 adminRoutes.post(
   "/locations",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management"]),
   addLocation
 );
 adminRoutes.patch(
   "/locations/:id",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management"]),
   updateLocation
 );
 adminRoutes.delete(
   "/locations/:id",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management"]),
   deleteLocation
 );
 
 adminRoutes.get(
   "/payments",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management", "branch_admin"]),
   getPayments
 );
 
@@ -432,37 +432,37 @@ adminRoutes.get(
 adminRoutes.post(
   "/refunds/member",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management", "branch_admin"]),
   createMemberRefund
 );
 adminRoutes.post(
   "/refunds/cashout",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management", "branch_admin"]),
   createCashOut
 );
 adminRoutes.get(
   "/refunds",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management", "branch_admin"]),
   getRefundByPaymentId
 );
 adminRoutes.get(
   "/refunds/list",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management", "branch_admin"]),
   listRefunds
 );
 adminRoutes.get(
   "/refunds/cashouts",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management", "branch_admin"]),
   listCashOuts
 );
 adminRoutes.get(
   "/refunds/cashout",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management", "branch_admin"]),
   listCashOuts
 );
 
@@ -470,13 +470,13 @@ adminRoutes.get(
 adminRoutes.get(
   "/members/search",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   searchMembers
 );
 adminRoutes.get(
   "/members/:memberId/recent-payments",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management", "branch_admin"]),
   getMemberRecentPayments
 );
 
@@ -484,28 +484,28 @@ adminRoutes.get(
 adminRoutes.get(
   "/products",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management", "branch_admin"]),
   getProducts
 );
 
 adminRoutes.post(
   "/product",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management", "branch_admin"]),
   addProduct
 );
 
 adminRoutes.patch(
   "/products/:barcode",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management", "branch_admin"]),
   editProduct
 );
 
 adminRoutes.delete(
   "/product/:barcode",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management", "branch_admin"]),
   deleteProduct
 );
 
@@ -513,21 +513,21 @@ adminRoutes.delete(
 adminRoutes.get(
   "/orders",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management", "branch_admin"]),
   getOrders
 );
 
 adminRoutes.post(
   "/orders",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management", "branch_admin"]),
   createOrder
 );
 
 adminRoutes.delete(
   "/orders/:barcode",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management", "branch_admin"]),
   deleteOrder
 );
 
@@ -535,13 +535,13 @@ adminRoutes.delete(
 adminRoutes.get(
   "/tickets",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   getTickets
 );
 adminRoutes.patch(
   "/tickets/:id",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   updateTicketStatus
 );
 
@@ -549,46 +549,46 @@ adminRoutes.patch(
 adminRoutes.get(
   "/ticket-categories",
   authenticateUser,
-  authorizeUser(["admin", "fd"]),
+  authorizeUser(["management", "branch_admin", "fd"]),
   getTicketCategories
 );
 adminRoutes.post(
   "/ticket-categories",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management"]),
   addTicketCategory
 );
 adminRoutes.patch(
   "/ticket-categories/:id",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management"]),
   updateTicketCategory
 );
 adminRoutes.delete(
   "/ticket-categories/:id",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management"]),
   deleteTicketCategory
 );
 // Mail System Routes
 adminRoutes.post(
   "/mail/send",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management", "branch_admin"]),
   sendMail
 );
 
 adminRoutes.get(
   "/mail/logs",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management", "branch_admin"]),
   getLogs
 );
 
 adminRoutes.get(
   "/mail/inbox",
   authenticateUser,
-  authorizeUser(["admin"]),
+  authorizeUser(["management", "branch_admin"]),
   getInbox
 );
 

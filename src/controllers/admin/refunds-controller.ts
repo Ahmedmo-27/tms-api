@@ -63,6 +63,17 @@ export const createMemberRefund = asyncHandler(
 
     let linkedPayment: IPayment | null = null;
 
+    // Resolve locationId: prefer the linked payment's location so that
+    // management users (who have no locationId of their own) get the
+    // correct branch stamped on the refund.
+    let resolvedLocationId = (authReq.user as any).locationId ?? null;
+    if (paymentId) {
+      const sourcePayment = await Payment.findById(paymentId).select("locationId");
+      if (sourcePayment && (sourcePayment as any).locationId) {
+        resolvedLocationId = (sourcePayment as any).locationId;
+      }
+    }
+
     const refund = await runInTransaction(async (session: ClientSession) => {
       const [created] = await Refund.create(
         [
@@ -74,6 +85,7 @@ export const createMemberRefund = asyncHandler(
             memberId: memberId ? new Types.ObjectId(memberId) : null,
             paymentId: paymentId ? new Types.ObjectId(paymentId) : null,
             recordedBy: authReq.user._id,
+            locationId: resolvedLocationId,
             createdAt: new Date(),
           },
         ],
@@ -178,6 +190,7 @@ export const createCashOut = asyncHandler(
       memberId: null,
       paymentId: null,
       recordedBy: authReq.user._id,
+      locationId: (authReq.user as any).locationId ?? null,
       createdAt: new Date(),
     });
 
@@ -192,6 +205,17 @@ export const listRefunds = asyncHandler(
     const { date } = req.query;
 
     const filter: Record<string, unknown> = { type: "REFUND" };
+
+    const userRole = (req as any).user.role;
+    const userLocationId = (req as any).user.locationId;
+    if ((userRole === "branch_admin" || userRole === "fd") && userLocationId) {
+      filter.locationId = userLocationId;
+    } else {
+      const queryLocationId = req.query.locationId as string;
+      if (userRole === "management" && queryLocationId) {
+        filter.locationId = queryLocationId;
+      }
+    }
 
     if (date) {
       const parsed = new Date(date as string);
@@ -235,6 +259,17 @@ export const listCashOuts = asyncHandler(
     const { date } = req.query;
 
     const filter: Record<string, unknown> = { type: "CASHOUT" };
+
+    const userRole = (req as any).user.role;
+    const userLocationId = (req as any).user.locationId;
+    if ((userRole === "branch_admin" || userRole === "fd") && userLocationId) {
+      filter.locationId = userLocationId;
+    } else {
+      const queryLocationId = req.query.locationId as string;
+      if (userRole === "management" && queryLocationId) {
+        filter.locationId = queryLocationId;
+      }
+    }
 
     if (date) {
       const parsed = new Date(date as string);

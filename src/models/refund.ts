@@ -8,6 +8,7 @@ export interface IRefund extends Document {
   memberId: Types.ObjectId | null;
   paymentId: Types.ObjectId | null;
   recordedBy: Types.ObjectId;
+  locationId: Types.ObjectId | null;
   createdAt: Date;
 }
 
@@ -47,6 +48,11 @@ const RefundSchema = new Schema<IRefund>({
     ref: "User",
     required: true,
   },
+  locationId: {
+    type: Schema.Types.ObjectId,
+    ref: "Location",
+    default: null,
+  },
   createdAt: {
     type: Date,
     default: Date.now,
@@ -57,6 +63,7 @@ const RefundSchema = new Schema<IRefund>({
 RefundSchema.index({ paymentId: 1 });
 RefundSchema.index({ type: 1 });
 RefundSchema.index({ createdAt: -1 });
+RefundSchema.index({ locationId: 1 });
 
 const Refund = mongoose.model<IRefund>("Refund", RefundSchema);
 

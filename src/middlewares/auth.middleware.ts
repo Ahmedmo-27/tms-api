@@ -24,7 +24,7 @@ export interface AuthResponse extends Response {
   deviceType: "web" | "mobile";
 }
 
-type UserRole = "member" | "user" | "admin" | "fd" | "coach";
+type UserRole = "member" | "user" | "admin" | "management" | "branch_admin" | "fd" | "coach";
 
 // CHANGE ERROR CODES AFTER UPDATE
 export const authenticateUser = asyncHandler(

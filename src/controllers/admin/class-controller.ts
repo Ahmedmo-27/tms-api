@@ -188,7 +188,8 @@ export const bookDropIn = asyncHandler(async function (
   if (!uid || !scid || !paymentMethod) {
     throw new BadRequestError("INVALID_REQUEST", "uid, scid, and paymentMethod are required");
   }
-  await BookingsService.bookAdminDropIn(uid, scid, paymentMethod);
+  const userLocationId = (req as any).user?.locationId?.toString();
+  await BookingsService.bookAdminDropIn(uid, scid, paymentMethod, userLocationId);
   new SuccessResponse("Drop-in Booked!").send(res);
 });
 
@@ -207,10 +208,18 @@ export const getNonUserBookings = asyncHandler(async function (
   res: Response
 ): Promise<void> {
   const { startDate, endDate, scid } = req.body;
+  const userRole = (req as any).user?.role;
+  let targetLocationId = undefined;
+  if (userRole === "branch_admin" || userRole === "fd") {
+    targetLocationId = (req as any).user?.locationId?.toString();
+  } else {
+    targetLocationId = req.body.locationId;
+  }
   const bookings = await BookingsService.getNonUserBookings(
     startDate,
     endDate,
-    scid
+    scid,
+    targetLocationId
   );
   new SuccessResponse("Fetched Bookings", bookings).send(res);
 });
@@ -252,11 +261,14 @@ export const saveNonUserPayment = asyncHandler(async function (
   const paymentDate = req.body.paymentDate;
   if (!bookingId || bookingId === "")
     throw new BadRequestError("INVALID_BOOKING_ID", "Booking Id is invalid");
+  const userLocationId = (req as any).user?.locationId?.toString();
   const booking = await BookingsService.recordNonUserPayment(
     bookingId,
     paymentMethod,
     amount,
-    paymentDate
+    paymentDate,
+    undefined,
+    userLocationId
   );
   new SuccessResponse("Class Attended!").send(res);
 });
@@ -268,6 +280,7 @@ export const addWalkIn = asyncHandler(async function (
   const { name, phoneNumber, scid, paymentMethod, amount, paymentDate } = req.body;
   if (!name || !phoneNumber || !scid)
     throw new BadRequestError("INVALID_REQUEST", "Invalid request");
+  const userLocationId = (req as any).user?.locationId?.toString();
   let finalBooking;
   await runInTransaction(async (session: ClientSession) => {
     const booking: INonUserBooking = await BookingsService.addNonUserBooking(
@@ -289,7 +302,8 @@ export const addWalkIn = asyncHandler(async function (
         paymentMethod,
         amount,
         paymentDate,
-        session
+        session,
+        userLocationId
       );
     }
   });

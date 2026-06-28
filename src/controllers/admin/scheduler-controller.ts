@@ -10,11 +10,22 @@ export const getScheduledClasses = asyncHandler(async function (
   res: Response
 ): Promise<void> {
   const date = req.query.date;
+  const userRole = (req as any).user.role;
+  const userLocationId = (req as any).user.locationId;
+  const queryLocationId = req.query.locationId as string;
+  
+  let targetLocationId = null;
+  if (userRole === "branch_admin" || userRole === "fd") {
+    targetLocationId = userLocationId;
+  } else if (userRole === "management" && queryLocationId) {
+    targetLocationId = queryLocationId;
+  }
+
   let scheduleData;
   if (date) {
-    scheduleData = await SchedulerService.getSchedule(date as string);
+    scheduleData = await SchedulerService.getSchedule(date as string, targetLocationId);
   } else {
-    scheduleData = await SchedulerService.getAllScheduledClasses();
+    scheduleData = await SchedulerService.getAllScheduledClasses(targetLocationId);
   }
 
   new SuccessResponse("Scheduled Classes Found!", scheduleData).send(res);
@@ -24,7 +35,18 @@ export const getNextScheduledClasses = asyncHandler(async function (
   req: Request,
   res: Response
 ): Promise<void> {
-  const scheduledClasses = await SchedulerService.getNextSchedule();
+  const userRole = (req as any).user.role;
+  const userLocationId = (req as any).user.locationId;
+  const queryLocationId = req.query.locationId as string;
+  
+  let targetLocationId = null;
+  if (userRole === "branch_admin" || userRole === "fd") {
+    targetLocationId = userLocationId;
+  } else if (userRole === "management" && queryLocationId) {
+    targetLocationId = queryLocationId;
+  }
+
+  const scheduledClasses = await SchedulerService.getNextSchedule(targetLocationId);
   if (!scheduledClasses || scheduledClasses.length === 0)
     throw new NotFoundError("CLASSES_NOT_FOUND", "No classes scheduled");
   new SuccessResponse("Scheduled Classes Found!", scheduledClasses).send(res);
@@ -34,13 +56,27 @@ export const scheduleClass = asyncHandler(async function (
   req: Request,
   res: Response
 ): Promise<void> {
-  const { cid, startTime, endTime, availableSlots, coachId } = req.body;
+  const { cid, startTime, endTime, availableSlots, coachId, locationId } = req.body;
+  const userRole = (req as any).user.role;
+  const userLocationId = (req as any).user.locationId;
+  
+  let targetLocationId = locationId;
+  if (userRole === "branch_admin" || userRole === "fd") {
+    targetLocationId = userLocationId;
+  }
+
+  if (!targetLocationId) {
+    res.status(400).json({ message: "locationId is required" });
+    return;
+  }
+
   const scheduledClass = await SchedulerService.scheduleClass(
     cid,
     startTime,
     endTime,
     availableSlots,
-    coachId
+    coachId,
+    targetLocationId
   );
   new SuccessResponse("Class Scheduled!", scheduledClass).send(res);
 });

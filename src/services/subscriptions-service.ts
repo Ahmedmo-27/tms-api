@@ -24,6 +24,7 @@ export class SubscriptionsService {
     amount?: number,
     note?: string,
     io?: SocketIOServer,
+    locationId?: string,
   ) {
     const member = await Member.findOne({ uid });
     if (!member)
@@ -69,6 +70,9 @@ export class SubscriptionsService {
         packageId,
         paymentDate,
         note,
+        undefined,
+        undefined,
+        locationId
       );
       await Member.addPackage(
         uid,
@@ -79,6 +83,7 @@ export class SubscriptionsService {
         endDate,
         session,
         restrictions,
+        locationId
       );
       if (io && pkg.coachId) {
         const user = await User.findOne({ _id: new Types.ObjectId(uid) }).session(session);
@@ -176,6 +181,7 @@ export class SubscriptionsService {
         endDate,
         session,
         restrictions,
+        undefined
       );
       if (pkg.category !== "PERSONAL_TRAINING") {
         await sendPaymentToRentalSystem(payment);
@@ -228,6 +234,7 @@ export class SubscriptionsService {
         endDate,
         session,
         restrictions,
+        undefined
       );
       logger.info("Added pkg");
     });
@@ -257,6 +264,7 @@ export class SubscriptionsService {
     pendingDeduction: boolean,
     paymentDate?: string,
     amount?: string,
+    locationId?: string,
   ) {
     const pkg = await Package.findById(pkgId);
     if (!pkg)
@@ -284,6 +292,7 @@ export class SubscriptionsService {
         undefined,
         name,
         phoneNumber,
+        locationId
       );
       logger.info("Payment Created: ", {
         paymentId: payment._id,

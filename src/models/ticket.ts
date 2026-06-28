@@ -23,6 +23,7 @@ export interface ITicket extends Document {
   adminNotes?: string;
   // Staff member who last actioned the ticket.
   handledBy?: Types.ObjectId;
+  locationId?: Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -43,6 +44,7 @@ const TicketSchema: Schema<ITicket> = new Schema(
     },
     adminNotes: { type: String, trim: true },
     handledBy: { type: Schema.Types.ObjectId, ref: "User" },
+    locationId: { type: Schema.Types.ObjectId, ref: "Location", default: null, index: true },
   },
   { timestamps: true }
 );

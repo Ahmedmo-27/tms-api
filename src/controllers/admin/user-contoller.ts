@@ -19,7 +19,10 @@ export const getUser = asyncHandler(
       query.email = email;
     }
     const users = await User.find(query);
-    if (!users || users.length === 0) throw new NotFoundError("USERS_NOT_FOUND", "User not found", { query });
+    if (!users || users.length === 0) {
+      new SuccessResponse("No users found", []).send(res);
+      return;
+    }
     new SuccessResponse("Users Found!", users).send(res);
   }
 );
@@ -39,7 +42,10 @@ export const getPendingMembers = asyncHandler(
     const skip = ((page as any) - 1) * (limit as any);
     const total = (await User.find(query)).length;
     const users = await User.find(query).sort({createdAt: -1}).limit((limit as any) || 10).skip((skip as any) || 0);
-    if (!users || users.length === 0) throw new NotFoundError("REQUESTS_NOT_FOUND", "No pending members found");
+    if (!users || users.length === 0) {
+      new SuccessResponse("No pending members found", {users: [], total: 0}).send(res);
+      return;
+    }
     new SuccessResponse("Pending Members Found!", {users, total}).send(res);
   }
 );

@@ -34,6 +34,7 @@ export interface IScheduledClass extends Document {
   scans: IMemberScan[];
   waitlistedMembers: IWaitlistedMember[];
   waitingList: string[];
+  locationId: Types.ObjectId;
 }
 
 export interface IScheduledClassMethods {
@@ -160,6 +161,11 @@ const ScheduledClassSchema = new Schema<
       },
     ],
     default: [],
+  },
+  locationId: {
+    type: Schema.Types.ObjectId,
+    ref: "Location",
+    required: true,
   },
 });
 

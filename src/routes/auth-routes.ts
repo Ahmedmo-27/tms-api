@@ -19,11 +19,11 @@ import {loginLimiter, resetPasswordGlobalLimiter, resetPasswordLimiter} from "..
 
 const authRoutes = express.Router();
 
-authRoutes.get("/", authenticateUser, authorizeUser(["admin", "fd"]), getUser);
+authRoutes.get("/", authenticateUser, authorizeUser(["management", "branch_admin", "fd"]), getUser);
 authRoutes.delete(
   "/",
   authenticateUser,
-  authorizeUser(["admin", "member"]),
+  authorizeUser(["management", "branch_admin", "member"]),
   deactivateAccount
 );
 authRoutes.post("/register", registerUser);

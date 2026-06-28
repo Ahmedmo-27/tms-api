@@ -10,10 +10,23 @@ export const getPayments = asyncHandler(
     const date = req.query.date;
     const month = req.query.month;
     const year = req.query.year;
+    
+    const userRole = (req as any).user.role;
+    const userLocationId = (req as any).user.locationId;
+    const queryLocationId = req.query.locationId as string;
+    
+    let targetLocationId = null;
+    if (userRole === "branch_admin" || userRole === "fd") {
+      targetLocationId = userLocationId;
+    } else if (userRole === "management" && queryLocationId) {
+      targetLocationId = queryLocationId;
+    }
+
     const payments = await PaymentsService.getPayments(
       date as string,
       month ? Number(month) : undefined,
-      year ? Number(year) : undefined
+      year ? Number(year) : undefined,
+      targetLocationId
     );
     new SuccessResponse("Fetched Payments!", payments).send(res);
   }

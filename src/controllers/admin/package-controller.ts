@@ -102,8 +102,14 @@ export const subMemberToPackage = asyncHandler(async function (
   req: Request,
   res: Response
 ): Promise<void> {
-  const { uid, pkgId, pkgStartDate, paymentMethod, paymentDate, amount, note } =
+  const { uid, pkgId, pkgStartDate, paymentMethod, paymentDate, amount, note, locationId } =
     req.body;
+  const userRole = (req as any).user.role;
+  const userLocationId = (req as any).user.locationId;
+  let targetLocationId = locationId;
+  if (userRole === "branch_admin" || userRole === "fd") {
+    targetLocationId = userLocationId?.toString();
+  }
   const io = req.app.get("io");
   await SubscriptionsService.frontDeskSubscribeToPackage(
     uid,
@@ -113,7 +119,8 @@ export const subMemberToPackage = asyncHandler(async function (
     paymentDate,
     amount,
     note,
-    io
+    io,
+    targetLocationId
   );
   new SuccessResponse("Package Added!").send(res);
 });
@@ -229,7 +236,16 @@ export const addNonUserPackage = asyncHandler(async function (
     paymentMethod,
     paymentDate,
     amount,
+    locationId,
   } = req.body;
+  
+  const userRole = (req as any).user.role;
+  const userLocationId = (req as any).user.locationId;
+  let targetLocationId = locationId;
+  if (userRole === "branch_admin" || userRole === "fd") {
+    targetLocationId = userLocationId?.toString();
+  }
+
   await SubscriptionsService.addNonUserPackage(
     name,
     phoneNumber,
@@ -238,7 +254,8 @@ export const addNonUserPackage = asyncHandler(async function (
     paymentMethod,
     pendingDeduction,
     paymentDate,
-    amount
+    amount,
+    targetLocationId
   );
   new SuccessResponse("Package Added!").send(res);
 });

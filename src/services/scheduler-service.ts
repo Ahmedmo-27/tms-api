@@ -19,7 +19,7 @@ import { NotificationsService } from "./notifications-service";
 import { WaitlistService } from "./waitlist-service";
 
 export class SchedulerService {
-  static async getSchedule(date: string): Promise<IScheduledClass[]> {
+  static async getSchedule(date: string, locationId?: string): Promise<IScheduledClass[]> {
     const scheduledClassesIds = await Schedule.getClasses(date as string);
     if (!scheduledClassesIds || scheduledClassesIds.length === 0)
       throw new NotFoundError(
@@ -27,25 +27,20 @@ export class SchedulerService {
         "No classes scheduled for this day",
         { date },
       );
-    const scheduledClasses = await ScheduledClass.find({
-      _id: { $in: scheduledClassesIds },
-    })
+    const query: any = { _id: { $in: scheduledClassesIds } };
+    if (locationId) query.locationId = locationId;
+    
+    const scheduledClasses = await ScheduledClass.find(query)
       .populate({ path: "scans.uid" })
       .populate({ path: "cid", populate: { path: "locations" } })
+      .populate({ path: "locationId", select: "branchName location locationUrl" })
       .populate({ path: "coachId" })
       .populate({ path: "bookedMembers.uid", select: "name phoneNumber" })
       .sort({ startTime: 1 });
-    let output: any = [];
-    scheduledClasses.forEach((cls: any) => {
-      output.push({
-        ...cls._doc,
-        locations: cls.cid.locations,
-      });
-    });
-    return output;
+    return scheduledClasses.map((cls) => cls.toObject());
   }
 
-  static async getNextSchedule() {
+  static async getNextSchedule(locationId?: string) {
     const scheduledClassesIds = await Schedule.getNextClasses();
     if (!scheduledClassesIds || scheduledClassesIds.length === 0)
       throw new NotFoundError(
@@ -53,29 +48,33 @@ export class SchedulerService {
         "No classes scheduled for this week",
       );
     const objectIds = scheduledClassesIds.map((id) => new Types.ObjectId(id));
-    const scheduledClasses = await ScheduledClass.find({
-      _id: { $in: objectIds },
-    })
+    const query: any = { _id: { $in: objectIds } };
+    if (locationId) query.locationId = locationId;
+
+    const scheduledClasses = await ScheduledClass.find(query)
       .populate({ path: "cid", populate: { path: "locations" } })
+      .populate({ path: "locationId", select: "branchName location locationUrl" })
       .populate({ path: "coachId" })
       .populate({ path: "scans.uid" })
       .populate({ path: "bookedMembers.uid", select: "name phoneNumber" });
 
-    return scheduledClasses;
+    return scheduledClasses.map((cls) => cls.toObject());
   }
 
-  static async getAllScheduledClasses(): Promise<IScheduledClass[]> {
+  static async getAllScheduledClasses(locationId?: string): Promise<IScheduledClass[]> {
     const scheduledClassesIds = await Schedule.getAllClasses();
     const objectIds = scheduledClassesIds.map((id) => new Types.ObjectId(id));
-    const scheduledClasses = await ScheduledClass.find({
-      _id: { $in: objectIds },
-    })
+    const query: any = { _id: { $in: objectIds } };
+    if (locationId) query.locationId = locationId;
+    
+    const scheduledClasses = await ScheduledClass.find(query)
       .populate({ path: "cid", populate: { path: "locations" } })
+      .populate({ path: "locationId", select: "branchName location locationUrl" })
       .populate({ path: "coachId" })
       .populate({ path: "scans.uid" })
       .populate({ path: "bookedMembers.uid", select: "name phoneNumber" });
 
-    return scheduledClasses;
+    return scheduledClasses.map((cls) => cls.toObject());
   }
 
   static async scheduleClass(
@@ -84,14 +83,15 @@ export class SchedulerService {
     endTime: string,
     availableSlots: string,
     coachId: string | string[],
+    locationId: string
   ): Promise<IScheduledClass> {
     const cls = await Class.findById(cid);
     if (!cls)
       throw new NotFoundError("CLASS_NOT_FOUND", "Class not found", { cid });
-    if (await ScheduledClass.findOne({ cid, startTime }))
+    if (await ScheduledClass.findOne({ cid, startTime, locationId }))
       throw new ConflictError(
         "CLASS_ALREADY_SCHEDULED",
-        "Class already scheduled for this time",
+        "Class already scheduled for this time at this location",
         {
           cid,
           startTime,
@@ -104,6 +104,7 @@ export class SchedulerService {
       startTime,
       endTime,
       availableSlots,
+      locationId,
       coachId: Array.isArray(coachId) ? coachId.map(id => new Types.ObjectId(id)) : (coachId ? [new Types.ObjectId(coachId)] : []),
     });
     await scheduledClass.save();

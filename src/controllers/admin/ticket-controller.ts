@@ -57,6 +57,7 @@ export const submitTicket = asyncHandler(
       category,
       otherDetails: isOther ? otherDetails : undefined,
       description,
+      locationId: (userDoc as any).locationId,
     });
 
     // Best-effort confirmation email; never blocks or fails the submission.
@@ -92,6 +93,17 @@ export const getTickets = asyncHandler(
         { email: rx },
         { category: rx },
       ];
+    }
+    
+    const userRole = (req as any).user.role;
+    const userLocationId = (req as any).user.locationId;
+    if ((userRole === "branch_admin" || userRole === "fd") && userLocationId) {
+      query.locationId = userLocationId;
+    } else {
+      const queryLocationId = req.query.locationId as string;
+      if (userRole === "management" && queryLocationId) {
+        query.locationId = queryLocationId;
+      }
     }
 
     const pageNum = parseInt(page as string) || 1;

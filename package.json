@@ -16,6 +16,7 @@
     "test": "jest --runInBand --changedSince=master",
     "coverage": "jest --runInBand --coverage",
     "seed": "npx ts-node ./src/seed/seed.ts",
+    "seed:tickets": "npx ts-node -r dotenv/config ./src/seeders/seed-ticket-categories.ts dotenv_config_path=./dev.env",
     "dev": "nodemon",
     "build": "tsc",
     "start": "node dist/index.js",
