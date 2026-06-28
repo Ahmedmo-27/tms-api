@@ -2,6 +2,7 @@ import { ClientSession, Types } from "mongoose";
 import User from "../models/user";
 import Member from "../models/member";
 import ScheduledClass from "../models/scheduledClass";
+import Class from "../models/class";
 import Package from "../models/package";
 import PromoCode from "../models/promoCode";
 import { PaymentsService } from "./payments-service";
@@ -586,6 +587,122 @@ export class BookingsService {
         session,
       );
       await ScheduledClass.bookMember(scid, uid, "Drop In", session);
+    });
+  }
+
+  static async resolveOpenGymDropInPrice(): Promise<number> {
+    const workspaceClass = await Class.findOne({ category: "WORKSPACE" });
+    if (!workspaceClass) {
+      throw new NotFoundError(
+        "OPEN_GYM_PRICE_NOT_CONFIGURED",
+        "Add a WORKSPACE class in Catalog to set the open gym drop-in price",
+      );
+    }
+    return workspaceClass.price;
+  }
+
+  static async recordAdminOpenGymMemberDropIn(
+    uid: string,
+    paymentMethod: string,
+    io: Server,
+    amount?: number,
+    paymentDate?: string,
+  ) {
+    const member = await Member.findOne({ uid }).populate({ path: "uid" });
+    if (!member)
+      throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
+
+    if (await DailyAttendance.hasSuccessfulOpenGymToday(uid)) {
+      throw new ConflictError(
+        "ATTENDANCE_ALREADY_RECORDED",
+        "Open gym attendance already recorded today",
+      );
+    }
+
+    const price = amount ?? (await this.resolveOpenGymDropInPrice());
+    const parsedPaymentDate = paymentDate
+      ? new Date(paymentDate).toISOString()
+      : undefined;
+
+    await runInTransaction(async (session: ClientSession) => {
+      await PaymentsService.savePayment(
+        uid,
+        price,
+        paymentMethod,
+        "DROPIN",
+        session,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        parsedPaymentDate,
+        "Open gym drop-in",
+      );
+      await DailyAttendance.recordOpenGymAttendance(
+        uid,
+        "Drop In",
+        session,
+        "SUCCESS",
+        io,
+      );
+      io.emit("SUCCESS-SCAN", {
+        code: "OPEN_GYM_DROP_IN",
+        message: "Success",
+        member: (member.uid as any).name,
+      });
+    });
+  }
+
+  static async recordAdminOpenGymGuestDropIn(
+    name: string,
+    phoneNumber: string,
+    paymentMethod: string,
+    io: Server,
+    amount?: number,
+    paymentDate?: string,
+  ) {
+    const existingUser = await User.findOne({ phoneNumber });
+    if (existingUser) {
+      throw new ConflictError(
+        "MEMBER_ALREADY_EXISTS",
+        (existingUser._id as Types.ObjectId).toString(),
+      );
+    }
+
+    const price = amount ?? (await this.resolveOpenGymDropInPrice());
+    const parsedPaymentDate = paymentDate
+      ? new Date(paymentDate).toISOString()
+      : undefined;
+
+    await runInTransaction(async (session: ClientSession) => {
+      await PaymentsService.savePayment(
+        undefined,
+        price,
+        paymentMethod,
+        "DROPIN",
+        session,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        parsedPaymentDate,
+        "Open gym guest drop-in",
+        name,
+        phoneNumber,
+      );
+      await DailyAttendance.recordOpenGymGuestAttendance(
+        name,
+        phoneNumber,
+        "Drop In",
+        session,
+        "SUCCESS",
+        io,
+      );
+      io.emit("SUCCESS-SCAN", {
+        code: "OPEN_GYM_DROP_IN",
+        message: "Success",
+        member: name,
+      });
     });
   }
 
