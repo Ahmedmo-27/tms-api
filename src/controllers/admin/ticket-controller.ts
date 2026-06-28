@@ -107,6 +107,7 @@ export const getTickets = asyncHandler(
 
     const total = await Ticket.countDocuments(query);
     const tickets = await Ticket.find(query)
+      .populate("locationId", "branchName location")
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limitNum);

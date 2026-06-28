@@ -19,7 +19,9 @@ export const getOrders = asyncHandler(async function (
   if (targetLocationId) {
     query.locationId = targetLocationId;
   }
-  const orders = await Order.find(query).sort({ createdAt: -1 });
+  const orders = await Order.find(query)
+    .populate("locationId", "branchName location")
+    .sort({ createdAt: -1 });
   new SuccessResponse("Orders Found!", orders).send(res);
 });
 

@@ -487,7 +487,9 @@ export class SchedulerService {
       date: { $gte: startOfDay, $lte: endOfDay },
     })
       .populate({ path: "ptAttendance.uid" })
-      .populate({ path: "openGymAttendance.uid" });
+      .populate({ path: "openGymAttendance.uid" })
+      .populate({ path: "ptAttendance.locationId", select: "branchName location" })
+      .populate({ path: "openGymAttendance.locationId", select: "branchName location" });
     return dailyAttendance;
   }
 }
