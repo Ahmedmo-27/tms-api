@@ -306,6 +306,9 @@ export class SchedulerService {
     const isDeducted =
       (scheduledClass.cid as any).category !== "WORKSPACE" &&
       (scheduledClass.cid as any).price != 0;
+    const classTitle =
+      (scheduledClass as { className?: string }).className ??
+      (scheduledClass.cid as { title?: string }).title;
     await runInTransaction(async (session: ClientSession) => {
       for (const bookedMember of scheduledClass.bookedMembers) {
         const member = await Member.findOne({ uid: bookedMember.uid }).session(
@@ -325,11 +328,11 @@ export class SchedulerService {
           undefined,
           undefined,
           "FRONTDESK_CANCELLATION",
+          classTitle,
         );
       }
       await Schedule.cancelClass(scid, session);
       await ScheduledClass.deleteOne({ _id: scid }, { session });
-      const classTitle = (scheduledClass as { className?: string }).className;
       const refundReason = classTitle
         ? `Scheduled class cancelled: ${classTitle}`
         : "Scheduled class cancelled";

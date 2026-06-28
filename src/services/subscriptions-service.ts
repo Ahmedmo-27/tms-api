@@ -1,5 +1,5 @@
 import Member from "../models/member";
-import Package from "../models/package";
+import Package, { getPackageEndDate } from "../models/package";
 import PromoCode from "../models/promoCode";
 import { Types } from "mongoose";
 import { PaymentsService } from "./payments-service";
@@ -41,9 +41,7 @@ export class SubscriptionsService {
       paymentDate = new Date(paymentDate).toISOString();
     }
     const packageId = new Types.ObjectId(pkgId);
-    const endDate = new Date(
-      new Date(startDate).getTime() + pkg.expiryPeriod * 24 * 60 * 60 * 1000,
-    ).toISOString();
+    const endDate = getPackageEndDate(startDate, pkg).toISOString();
 
     let restrictions: IClassRestrictionRecord[];
 
@@ -125,9 +123,7 @@ export class SubscriptionsService {
 
     startDate = new Date(startDate).toISOString();
     const packageId = new Types.ObjectId(pkgId);
-    const endDate = new Date(
-      new Date(startDate).getTime() + pkg.expiryPeriod * 24 * 60 * 60 * 1000,
-    ).toISOString();
+    const endDate = getPackageEndDate(startDate, pkg).toISOString();
 
     let restrictions: IClassRestrictionRecord[];
     if (pkg.classRestrictions) {
@@ -209,9 +205,7 @@ export class SubscriptionsService {
     startDate = new Date(startDate).toISOString();
     const endDate = savedEndDate
       ? savedEndDate
-      : new Date(
-          new Date(startDate).getTime() + pkg.expiryPeriod * 24 * 60 * 60 * 1000,
-        ).toISOString();
+      : getPackageEndDate(startDate, pkg).toISOString();
 
     let restrictions: IClassRestrictionRecord[];
     if (pkg.classRestrictions) {
@@ -273,10 +267,7 @@ export class SubscriptionsService {
     if (paymentDate) {
       paymentDate = new Date(paymentDate).toISOString();
     }
-    const endDate = new Date(
-      new Date(pkgStartDate).getTime() +
-        (pkg as any).expiryPeriod * 24 * 60 * 60 * 1000,
-    ).toISOString();
+    const endDate = getPackageEndDate(pkgStartDate, pkg).toISOString();
     await runInTransaction(async (session: ClientSession) => {
       const payment = await PaymentsService.savePayment(
         undefined,
