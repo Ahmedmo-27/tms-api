@@ -15,12 +15,33 @@ import { SuccessResponse } from "../../core/ApiResponse";
 import asyncHandler from "../../utils/asyncHandler";
 import Package from "../../models/package";
 import ScheduledClass from "../../models/scheduledClass";
+import Location from "../../models/location";
 import { Types } from "mongoose";
+
+async function enrichUserWithBranch(user: any) {
+  const plain = user.toObject ? user.toObject() : { ...user };
+  delete plain.password;
+  delete plain.tokens;
+  delete plain.resetCode;
+  delete plain.fcmTokens;
+
+  if (plain.locationId) {
+    plain.locationId = plain.locationId.toString();
+    const location = await Location.findById(plain.locationId);
+    if (location) {
+      plain.branchName = location.branchName;
+      plain.branchLocation = location.location;
+    }
+  }
+
+  return plain;
+}
 
 export const verifyToken = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
+    const user = await enrichUserWithBranch((req as AuthRequest).user);
     new SuccessResponse("Token Verified", {
-      user: (req as AuthRequest).user,
+      user,
     }).send(res);
   }
 );
@@ -120,6 +141,11 @@ export const loginUser = asyncHandler(
 
     if ((user as any).locationId) {
       responseData.locationId = (user as any).locationId.toString();
+      const location = await Location.findById((user as any).locationId);
+      if (location) {
+        responseData.branchName = location.branchName;
+        responseData.branchLocation = location.location;
+      }
     }
 
     if (user.role === "coach") {
