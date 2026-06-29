@@ -2,6 +2,7 @@ import { ClientSession, Types } from "mongoose";
 import User from "../models/user";
 import Member from "../models/member";
 import ScheduledClass from "../models/scheduledClass";
+import Class from "../models/class";
 import Package from "../models/package";
 import PromoCode from "../models/promoCode";
 import { PaymentsService } from "./payments-service";
@@ -14,6 +15,7 @@ import {
 import { runInTransaction } from "../utils/transaction";
 import { Server } from "http";
 import DailyAttendance from "../models/dailyAttendance";
+import Location from "../models/location";
 import logger from "../config/logger";
 import NonUserBooking, { INonUserBooking } from "../models/nonUserBookings";
 import { sendPaymentToRentalSystem } from "./egygap-erp-service";
@@ -273,6 +275,7 @@ export class BookingsService {
         scheduledClass.cid._id.toString(),
         monthString,
         "MEMBER_CANCELLATION",
+        (scheduledClass.cid as any).title,
       );
       const waitingList = await ScheduledClass.removeBookedMember(
         scid,
@@ -477,35 +480,61 @@ export class BookingsService {
     const member = await Member.findOne({ uid }).populate({ path: "uid" });
     if (!member)
       throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
-    const pkg = await Package.findOne({ category: "OPEN_GYM" });
-    if (!pkg)
+
+    const pkgIds = await Package.getSpaceWalkPackageIds();
+    if (!pkgIds.length)
       throw new NotFoundError(
         "PACKAGE_NOT_FOUND",
-        "Open gym Package not found",
+        "No eligible space walk packages found",
       );
-    if (pkg.category !== "OPEN_GYM")
-      throw new BadRequestError(
-        "INVALID_PACKAGE",
-        "Package is not an Open Gym package",
-      );
-    const ultimatePkgs = await Package.find({
-      category: "ULTIMATE_MINDSPACER",
-    });
-    let pkgIds = ultimatePkgs.map((pkg) => pkg._id.toString());
-    pkgIds.push(pkg._id.toString());
-    await runInTransaction(async (session: ClientSession) => {
-      const memberDoc = await Member.findOne({ uid })
-        .populate({ path: "uid" })
-        .session(session);
-      if (!memberDoc)
-        throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
-      await memberDoc.recordOpenGymAttendance(pkgIds, session, io);
-    });
 
-    io.emit("SUCCESS-SCAN", {
-      code: "OPEN_GYM_CLASS_ATTENDED",
-      message: "Success",
-      member: (member.uid as any).name,
+    if (await DailyAttendance.hasSuccessfulOpenGymToday(uid)) {
+      io.emit("FAILED-SCAN", {
+        code: "ATTENDANCE_ALREADY_RECORDED",
+        message: "Attendance was already recorded",
+        member: (member.uid as any).name,
+      });
+      throw new ConflictError(
+        "ATTENDANCE_ALREADY_RECORDED",
+        "Open gym attendance already recorded today",
+      );
+    }
+
+    await runInTransaction(async (session: ClientSession) => {
+      const pid = await Member.recordSpaceWalkAttendance(
+        uid,
+        pkgIds,
+        session,
+        io,
+      );
+      if (!pid) {
+        await DailyAttendance.recordOpenGymAttendance(
+          uid,
+          "No Active Package",
+          session,
+          "FAILED",
+          io,
+        );
+        throw new ForbiddenError(
+          "NO_ACTIVE_PACKAGE_FOUND",
+          "No active packages found",
+        );
+      }
+      const pkg = await Package.findById(pid);
+      if (!pkg)
+        throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found");
+      await DailyAttendance.recordOpenGymAttendance(
+        uid,
+        pkg.name,
+        session,
+        "SUCCESS",
+        io,
+      );
+      io.emit("SUCCESS-SCAN", {
+        code: "OPEN_GYM_CLASS_ATTENDED",
+        message: "Success",
+        member: (member.uid as any).name,
+      });
     });
   }
 
@@ -513,6 +542,7 @@ export class BookingsService {
     uid: string,
     scid: string,
     paymentMethod: string,
+    locationId?: string,
   ) {
     const member = await Member.findOne({ uid });
     if (!member)
@@ -524,7 +554,13 @@ export class BookingsService {
       throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
     if ((scheduledClass.cid as any).allowDropIn === false)
       throw new ConflictError("DROP_IN_DISABLED", "Drop-ins are not allowed for this class");
-    
+
+    const isWorkSpace = (scheduledClass.cid as any).category === "WORKSPACE";
+    if (
+      !isWorkSpace &&
+      new Date() > new Date(scheduledClass.startTime.getTime() + 30 * 60 * 1000)
+    )
+      throw new ConflictError("CLASS_ALREADY_STARTED", "Class already started");
     let price = scheduledClass.cid.price;
     const scId = new Types.ObjectId(scid);
     await runInTransaction(async (session: ClientSession) => {
@@ -539,6 +575,9 @@ export class BookingsService {
         scId,
         undefined,
         undefined,
+        undefined,
+        undefined,
+        locationId ?? (scheduledClass as any).locationId?.toString()
       );
       const paymentIdStr = (payment._id as Types.ObjectId).toString();
       
@@ -549,6 +588,206 @@ export class BookingsService {
         session,
       );
       await ScheduledClass.bookMember(scid, uid, "Drop In", session);
+    });
+  }
+
+  static async resolveOpenGymDropInPrice(locationId: string): Promise<number> {
+    const workspaceClass = await Class.findOne({
+      category: "WORKSPACE",
+      locations: new Types.ObjectId(locationId),
+    });
+    if (!workspaceClass) {
+      throw new NotFoundError(
+        "OPEN_GYM_PRICE_NOT_CONFIGURED",
+        "No open gym drop-in price configured for this branch",
+      );
+    }
+    return workspaceClass.price;
+  }
+
+  static async setOpenGymDropInPrice(
+    locationId: string,
+    price: number,
+  ): Promise<{ locationId: string; branchName: string; price: number }> {
+    if (price < 0) {
+      throw new BadRequestError("INVALID_PRICE", "Price must be zero or greater");
+    }
+    const location = await Location.findById(locationId);
+    if (!location) {
+      throw new NotFoundError("LOCATION_NOT_FOUND", "Location not found", {
+        locationId,
+      });
+    }
+
+    let workspaceClass = await Class.findOne({
+      category: "WORKSPACE",
+      locations: new Types.ObjectId(locationId),
+    });
+
+    if (workspaceClass) {
+      workspaceClass.price = price;
+      await workspaceClass.save();
+    } else {
+      workspaceClass = await Class.create({
+        title: `Open Gym Drop-In — ${location.branchName}`,
+        category: "WORKSPACE",
+        price,
+        locations: [new Types.ObjectId(locationId)],
+        allowDropIn: true,
+      });
+    }
+
+    return {
+      locationId,
+      branchName: location.branchName,
+      price: workspaceClass.price,
+    };
+  }
+
+  static async listOpenGymDropInPrices(): Promise<
+    Array<{
+      locationId: string;
+      branchName: string;
+      location: string;
+      price: number | null;
+    }>
+  > {
+    const [locations, workspaceClasses] = await Promise.all([
+      Location.find({}),
+      Class.find({ category: "WORKSPACE" }),
+    ]);
+
+    return locations.map((loc) => {
+      const locId = (loc._id as Types.ObjectId).toString();
+      const workspaceClass = workspaceClasses.find((cls) =>
+        cls.locations.some((branchId) => branchId.toString() === locId),
+      );
+      return {
+        locationId: locId,
+        branchName: loc.branchName,
+        location: loc.location,
+        price: workspaceClass?.price ?? null,
+      };
+    });
+  }
+
+  static async recordAdminOpenGymMemberDropIn(
+    uid: string,
+    paymentMethod: string,
+    io: Server,
+    locationId: string,
+    amount?: number,
+    paymentDate?: string,
+  ) {
+    const member = await Member.findOne({ uid }).populate({ path: "uid" });
+    if (!member)
+      throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
+
+    if (await DailyAttendance.hasSuccessfulOpenGymToday(uid, locationId)) {
+      throw new ConflictError(
+        "ATTENDANCE_ALREADY_RECORDED",
+        "Open gym attendance already recorded today at this branch",
+      );
+    }
+
+    const price = amount ?? (await this.resolveOpenGymDropInPrice(locationId));
+    const parsedPaymentDate = paymentDate
+      ? new Date(paymentDate).toISOString()
+      : undefined;
+
+    await runInTransaction(async (session: ClientSession) => {
+      await PaymentsService.savePayment(
+        uid,
+        price,
+        paymentMethod,
+        "DROPIN",
+        session,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        parsedPaymentDate,
+        "Open gym drop-in",
+        undefined,
+        undefined,
+        locationId,
+      );
+      await DailyAttendance.recordOpenGymAttendance(
+        uid,
+        "Drop In",
+        session,
+        "SUCCESS",
+        io,
+        locationId,
+      );
+      io.emit("SUCCESS-SCAN", {
+        code: "OPEN_GYM_DROP_IN",
+        message: "Success",
+        member: (member.uid as any).name,
+      });
+    });
+  }
+
+  static async recordAdminOpenGymGuestDropIn(
+    name: string,
+    phoneNumber: string,
+    paymentMethod: string,
+    io: Server,
+    locationId: string,
+    amount?: number,
+    paymentDate?: string,
+  ) {
+    const existingUser = await User.findOne({ phoneNumber });
+    if (existingUser) {
+      throw new ConflictError(
+        "MEMBER_ALREADY_EXISTS",
+        (existingUser._id as Types.ObjectId).toString(),
+      );
+    }
+
+    if (await DailyAttendance.hasSuccessfulOpenGymGuestToday(phoneNumber, locationId)) {
+      throw new ConflictError(
+        "ATTENDANCE_ALREADY_RECORDED",
+        "Open gym attendance already recorded today for this guest at this branch",
+      );
+    }
+
+    const price = amount ?? (await this.resolveOpenGymDropInPrice(locationId));
+    const parsedPaymentDate = paymentDate
+      ? new Date(paymentDate).toISOString()
+      : undefined;
+
+    await runInTransaction(async (session: ClientSession) => {
+      await PaymentsService.savePayment(
+        undefined,
+        price,
+        paymentMethod,
+        "DROPIN",
+        session,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        parsedPaymentDate,
+        "Open gym guest drop-in",
+        name,
+        phoneNumber,
+        locationId,
+      );
+      await DailyAttendance.recordOpenGymGuestAttendance(
+        name,
+        phoneNumber,
+        "Drop In",
+        session,
+        "SUCCESS",
+        io,
+        locationId,
+      );
+      io.emit("SUCCESS-SCAN", {
+        code: "OPEN_GYM_DROP_IN",
+        message: "Success",
+        member: name,
+      });
     });
   }
 
@@ -566,8 +805,14 @@ export class BookingsService {
     });
     if (!scheduledClass)
       throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
+    if ((scheduledClass.cid as any).category === "WORKSPACE")
+      throw new ConflictError(
+        "DROP_IN_ADMIN_ONLY",
+        "Open gym drop-ins can only be booked by staff",
+      );
     if ((scheduledClass.cid as any).allowDropIn === false)
       throw new ConflictError("DROP_IN_DISABLED", "Drop-ins are not allowed for this class");
+
     if (
       new Date() > new Date(scheduledClass.startTime.getTime() + 30 * 60 * 1000)
     )
@@ -585,37 +830,40 @@ export class BookingsService {
     }
 
     // Enforce Waitlist Reservations
-    const activeReservationsCount = await Reservation.countDocuments({
-      sessionId: scheduledClass._id,
-      status: "ACTIVE"
-    });
-    const userHasReservation = await Reservation.findOne({
-      sessionId: scheduledClass._id,
-      userId: new Types.ObjectId(uid),
-      status: "ACTIVE"
-    });
-    
-    const publicSlots = scheduledClass.availableSlots - activeReservationsCount;
-    if (publicSlots <= 0 && !userHasReservation) {
-      const expiredReservation = await Reservation.findOne({
+    let userHasReservation = null;
+    {
+      const activeReservationsCount = await Reservation.countDocuments({
+        sessionId: scheduledClass._id,
+        status: "ACTIVE"
+      });
+      userHasReservation = await Reservation.findOne({
         sessionId: scheduledClass._id,
         userId: new Types.ObjectId(uid),
-        status: "EXPIRED"
+        status: "ACTIVE"
       });
-      if (expiredReservation) {
-        throw new ForbiddenError("RESERVATION_EXPIRED", "Your reservation window has expired. The spot has been passed to the next person.");
-      }
+      
+      const publicSlots = scheduledClass.availableSlots - activeReservationsCount;
+      if (publicSlots <= 0 && !userHasReservation) {
+        const expiredReservation = await Reservation.findOne({
+          sessionId: scheduledClass._id,
+          userId: new Types.ObjectId(uid),
+          status: "EXPIRED"
+        });
+        if (expiredReservation) {
+          throw new ForbiddenError("RESERVATION_EXPIRED", "Your reservation window has expired. The spot has been passed to the next person.");
+        }
 
-      const waitingEntry = await WaitlistEntry.findOne({
-        sessionId: scheduledClass._id,
-        userId: new Types.ObjectId(uid),
-        status: "WAITING"
-      });
-      if (waitingEntry) {
-        throw new ForbiddenError("STILL_WAITING", "You are currently on the waitlist. We will notify you when it is your turn.");
-      }
+        const waitingEntry = await WaitlistEntry.findOne({
+          sessionId: scheduledClass._id,
+          userId: new Types.ObjectId(uid),
+          status: "WAITING"
+        });
+        if (waitingEntry) {
+          throw new ForbiddenError("STILL_WAITING", "You are currently on the waitlist. We will notify you when it is your turn.");
+        }
 
-      throw new ForbiddenError("SPOT_RESERVED", "Available spots are currently reserved for waitlisted members. Please join the waitlist.");
+        throw new ForbiddenError("SPOT_RESERVED", "Available spots are currently reserved for waitlisted members. Please join the waitlist.");
+      }
     }
 
     const orderId = await PaymentsService.checkPayment(
@@ -635,6 +883,9 @@ export class BookingsService {
         scId,
         undefined,
         undefined,
+        undefined,
+        undefined,
+        (scheduledClass as any).locationId?.toString()
       );
       await Member.saveDropIn(
         uid,
@@ -663,15 +914,28 @@ export class BookingsService {
     startTime?: Date,
     endTime?: Date,
     scid?: string,
+    locationId?: string,
   ): Promise<INonUserBooking[]> {
-    const query: {
-      startTime?: Record<string, Date>;
-      endTime?: Record<string, Date>;
-      scid?: string;
-    } = {};
+    const query: any = {};
     if (startTime) query.startTime = { $gte: startTime };
     if (endTime) query.endTime = { $lte: endTime };
     if (scid) query.scid = scid;
+    
+    if (locationId) {
+      const locationObjectId = Types.ObjectId.isValid(locationId)
+        ? new Types.ObjectId(locationId)
+        : locationId;
+      const scheduledClasses = await ScheduledClass.find({
+        locationId: locationObjectId,
+      }).select("_id");
+      const validScids = scheduledClasses.map(sc => (sc as any)._id.toString());
+      if (scid) {
+        if (!validScids.includes(scid)) return [];
+      } else {
+        query.scid = { $in: validScids };
+      }
+    }
+    
     return NonUserBooking.find(query);
   }
 
@@ -803,6 +1067,7 @@ export class BookingsService {
     amount?: number,
     paymentDate?: string,
     session?: ClientSession,
+    locationId?: string,
   ): Promise<INonUserBooking> {
     const run = async (s: ClientSession) => {
       if (session) logger.info(`In session - ${session?.id?.toString()}`);
@@ -835,6 +1100,7 @@ export class BookingsService {
         undefined,
         booking.name,
         booking.phoneNumber,
+        locationId ?? (scheduledClass as any).locationId?.toString()
       );
       const paidBooking = await NonUserBooking.recordPayment(
         bookingId,
