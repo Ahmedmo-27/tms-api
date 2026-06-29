@@ -128,8 +128,13 @@ Place this file in the root of `tms_api/`.
 | `PORT` | Server port (default: `5000`) |
 | `MONGO_URI` | MongoDB connection string |
 | `JWT_SECRET` | Secret used to sign and verify JWTs |
-| `RESEND_API_KEY` | Resend API key for transactional email |
+| `RESEND_API_KEY` | Resend API key for transactional email (password reset, tickets) |
 | `EMAIL_USER` | Verified sender email address for Resend |
+| `BREVO_API_KEY` | Brevo API key for dashboard Communications outbound email |
+| `MAIL_FROM_NAME` | Display name for Brevo sender (must match verified sender in Brevo) |
+| `MAIL_FROM_ADDRESS` | Verified sender email for Brevo outbound; also used as Reply-To |
+| `MAIL_USER` | Gmail account for IMAP inbox sync (dashboard received mail) |
+| `MAIL_APP_PASSWORD` | Gmail app password for IMAP inbox sync |
 | Firebase vars | Service account credentials for FCM push notifications |
 
 ### Commands
@@ -833,7 +838,9 @@ Tracks a member's progress across all challenge components. One document per use
 
 | Service | File | Responsibility |
 |---|---|---|
-| Email | `email-service.ts` | Sends transactional email (password reset codes) via Resend |
+| Email | `email-service.ts` | Sends transactional email (password reset codes, ticket confirmations) via Resend |
+| Brevo Mail | `brevo-mail-service.ts` | Dashboard Communications outbound email via Brevo API (`POST /admin/mail/send`) |
+| IMAP Sync | `imap-service.ts` | Polls Gmail IMAP every 2 minutes; syncs received mail into MongoDB for dashboard inbox |
 | Notifications | `notifications-service.ts` | FCM push notifications — multicast with 500-token chunking, waiting list alerts, custom messages |
 | Bookings | `bookings-service.ts` | Booking business logic shared between admin and member controllers |
 | Subscriptions | `subscriptions-service.ts` | Package subscription logic |

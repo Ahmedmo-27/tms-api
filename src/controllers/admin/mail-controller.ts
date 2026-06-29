@@ -1,27 +1,10 @@
 import { Request, Response } from "express";
-import nodemailer from "nodemailer";
 import EmailLog from "../../models/emailLog";
 import ReceivedEmail from "../../models/receivedEmail";
 import Member from "../../models/member";
 import User from "../../models/user";
 import logger from "../../config/logger";
-
-const transporter = nodemailer.createTransport({
-  pool: true,
-  maxConnections: 5,
-  maxMessages: 100,
-  service: "gmail",
-  host: process.env.MAIL_HOST || "smtp.gmail.com",
-  port: parseInt(process.env.MAIL_PORT || "587"),
-  secure: process.env.MAIL_SECURE === "true",
-  auth: {
-    user: process.env.MAIL_USER,
-    pass: process.env.MAIL_APP_PASSWORD,
-  },
-  tls: {
-    rejectUnauthorized: false,
-  },
-});
+import { sendTransactionalEmailBatch } from "../../services/brevo-mail-service";
 
 export const sendMail = async (req: Request, res: Response) => {
   const { mode, subject, body, to, attachment } = req.body;
@@ -57,43 +40,12 @@ export const sendMail = async (req: Request, res: Response) => {
       return;
     }
 
-    const mailOptions: any = {
-      from: `"${process.env.MAIL_FROM_NAME}" <${process.env.MAIL_FROM_ADDRESS}>`,
-      replyTo: process.env.MAIL_FROM_ADDRESS,
+    await sendTransactionalEmailBatch({
+      recipients,
       subject,
-      html: body,
-    };
-
-    if (attachment) {
-      mailOptions.attachments = [
-        {
-          filename: attachment.name || "attachment",
-          content: attachment.data.includes("base64,") ? attachment.data.split("base64,")[1] : attachment.data,
-          encoding: "base64",
-        },
-      ];
-    }
-
-    // Batch sending to avoid rate limits (50 per batch, 1000ms delay)
-    const BATCH_SIZE = 50;
-    const DELAY_MS = 1000;
-
-    const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-    for (let i = 0; i < recipients.length; i += BATCH_SIZE) {
-      const batch = recipients.slice(i, i + BATCH_SIZE);
-      
-      const sendPromises = batch.map((recipient) => {
-        const individualMailOptions = { ...mailOptions, to: recipient };
-        return transporter.sendMail(individualMailOptions);
-      });
-
-      await Promise.all(sendPromises);
-
-      if (i + BATCH_SIZE < recipients.length) {
-        await delay(DELAY_MS);
-      }
-    }
+      htmlContent: body,
+      attachment,
+    });
 
     const emailLog = new EmailLog({
       mode,
