@@ -207,13 +207,14 @@ export class SubscriptionsService {
     startDate: string,
     remainingClasses: number,
     savedEndDate?: string,
+    session?: ClientSession,
   ) {
-    const member = await Member.findOne({ uid });
+    const member = await Member.findOne({ uid }).session(session ?? null);
     if (!member)
       throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found", {
         uid,
       });
-    const pkg = await Package.findById(pkgId);
+    const pkg = await Package.findById(pkgId).session(session ?? null);
     if (!pkg)
       throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found", {
         pkgId,
@@ -234,7 +235,7 @@ export class SubscriptionsService {
       });
     }
 
-    await runInTransaction(async (session: ClientSession) => {
+    const addPackage = async (s: ClientSession) => {
       await Member.addPackage(
         uid,
         pkg._id.toString(),
@@ -242,12 +243,18 @@ export class SubscriptionsService {
         remainingClasses,
         startDate,
         endDate,
-        session,
+        s,
         restrictions,
         undefined
       );
       logger.info("Added pkg");
-    });
+    };
+
+    if (session) {
+      await addPackage(session);
+    } else {
+      await runInTransaction(addPackage);
+    }
   }
 
   static async unsubscribeFromPackage(
@@ -317,7 +324,7 @@ export class SubscriptionsService {
         paymentId: payment._id,
         createdAt: new Date(),
       });
-      await nonUserPackage.save({ session });
+      await nonUserPackage.save(session ? { session } : {});
       if (pkg.category !== "PERSONAL_TRAINING") {
         await sendPaymentToRentalSystem(payment);
       }

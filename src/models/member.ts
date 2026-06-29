@@ -1278,7 +1278,7 @@ MemberSchema.static(
           },
         },
       },
-      { session, new: true }
+      { ...(session ? { session } : {}), new: true }
     );
     if (!result) {
       throw new ConflictError("PACKAGE_ALREADY_ADDED", "Package already added");
