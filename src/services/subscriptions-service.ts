@@ -1,9 +1,9 @@
 import Member from "../models/member";
-import Package from "../models/package";
+import Package, { getPackageEndDate } from "../models/package";
 import PromoCode from "../models/promoCode";
 import { Types } from "mongoose";
 import { PaymentsService } from "./payments-service";
-import { NotFoundError } from "../core/ApiError";
+import { NotFoundError, BadRequestError } from "../core/ApiError";
 import { runInTransaction } from "../utils/transaction";
 import { ClientSession } from "mongoose";
 import logger from "../config/logger";
@@ -13,6 +13,7 @@ import { IClassRestrictionRecord } from "../models/member";
 import { ChallengeService } from "./challenge-service";
 import User from "../models/user";
 import { Server as SocketIOServer } from "socket.io";
+import { resolveOpenGymPaymentNote } from "../utils/open-gym-payment-purpose";
 
 export class SubscriptionsService {
   static async frontDeskSubscribeToPackage(
@@ -24,6 +25,7 @@ export class SubscriptionsService {
     amount?: number,
     note?: string,
     io?: SocketIOServer,
+    locationId?: string,
   ) {
     const member = await Member.findOne({ uid });
     if (!member)
@@ -35,14 +37,23 @@ export class SubscriptionsService {
       throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found", {
         pkgId,
       });
+    if (
+      pkg.category === "OPEN_GYM" &&
+      pkg.locationId &&
+      locationId &&
+      pkg.locationId.toString() !== locationId
+    ) {
+      throw new BadRequestError(
+        "PACKAGE_BRANCH_MISMATCH",
+        "This open gym package is not available at the selected branch",
+      );
+    }
     startDate = new Date(startDate).toISOString();
     if (paymentDate) {
       paymentDate = new Date(paymentDate).toISOString();
     }
     const packageId = new Types.ObjectId(pkgId);
-    const endDate = new Date(
-      new Date(startDate).getTime() + pkg.expiryPeriod * 24 * 60 * 60 * 1000,
-    ).toISOString();
+    const endDate = getPackageEndDate(startDate, pkg).toISOString();
 
     let restrictions: IClassRestrictionRecord[];
 
@@ -56,6 +67,10 @@ export class SubscriptionsService {
       });
     }
 
+    const resolvedNote =
+      note ??
+      resolveOpenGymPaymentNote(pkg.category, pkg.renewalPeriod);
+
     await runInTransaction(async (session: ClientSession) => {
       const payment = await PaymentsService.savePayment(
         uid,
@@ -68,7 +83,10 @@ export class SubscriptionsService {
         undefined,
         packageId,
         paymentDate,
-        note,
+        resolvedNote,
+        undefined,
+        undefined,
+        locationId
       );
       await Member.addPackage(
         uid,
@@ -79,6 +97,7 @@ export class SubscriptionsService {
         endDate,
         session,
         restrictions,
+        locationId
       );
       if (io && pkg.coachId) {
         const user = await User.findOne({ _id: new Types.ObjectId(uid) }).session(session);
@@ -120,9 +139,7 @@ export class SubscriptionsService {
 
     startDate = new Date(startDate).toISOString();
     const packageId = new Types.ObjectId(pkgId);
-    const endDate = new Date(
-      new Date(startDate).getTime() + pkg.expiryPeriod * 24 * 60 * 60 * 1000,
-    ).toISOString();
+    const endDate = getPackageEndDate(startDate, pkg).toISOString();
 
     let restrictions: IClassRestrictionRecord[];
     if (pkg.classRestrictions) {
@@ -176,6 +193,7 @@ export class SubscriptionsService {
         endDate,
         session,
         restrictions,
+        undefined
       );
       if (pkg.category !== "PERSONAL_TRAINING") {
         await sendPaymentToRentalSystem(payment);
@@ -203,9 +221,7 @@ export class SubscriptionsService {
     startDate = new Date(startDate).toISOString();
     const endDate = savedEndDate
       ? savedEndDate
-      : new Date(
-          new Date(startDate).getTime() + pkg.expiryPeriod * 24 * 60 * 60 * 1000,
-        ).toISOString();
+      : getPackageEndDate(startDate, pkg).toISOString();
 
     let restrictions: IClassRestrictionRecord[];
     if (pkg.classRestrictions) {
@@ -228,6 +244,7 @@ export class SubscriptionsService {
         endDate,
         session,
         restrictions,
+        undefined
       );
       logger.info("Added pkg");
     });
@@ -257,6 +274,7 @@ export class SubscriptionsService {
     pendingDeduction: boolean,
     paymentDate?: string,
     amount?: string,
+    locationId?: string,
   ) {
     const pkg = await Package.findById(pkgId);
     if (!pkg)
@@ -265,10 +283,7 @@ export class SubscriptionsService {
     if (paymentDate) {
       paymentDate = new Date(paymentDate).toISOString();
     }
-    const endDate = new Date(
-      new Date(pkgStartDate).getTime() +
-        (pkg as any).expiryPeriod * 24 * 60 * 60 * 1000,
-    ).toISOString();
+    const endDate = getPackageEndDate(pkgStartDate, pkg).toISOString();
     await runInTransaction(async (session: ClientSession) => {
       const payment = await PaymentsService.savePayment(
         undefined,
@@ -284,6 +299,7 @@ export class SubscriptionsService {
         undefined,
         name,
         phoneNumber,
+        locationId
       );
       logger.info("Payment Created: ", {
         paymentId: payment._id,

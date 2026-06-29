@@ -308,7 +308,8 @@ export class PaymentsService {
     paymentDate?: string,
     note?: string,
     nonMemberName?: string,
-    nonMemberPhone?: string
+    nonMemberPhone?: string,
+    locationId?: string
   ): Promise<IPayment> {
     const payment = new Payment({
       uid,
@@ -324,6 +325,7 @@ export class PaymentsService {
       isRefunded: false,
       nonMemberName,
       nonMemberPhone,
+      locationId: locationId || undefined,
     });
     await payment.save({ session });
     return payment;

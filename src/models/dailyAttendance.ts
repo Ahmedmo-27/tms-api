@@ -10,14 +10,18 @@ export interface IDailyAttendance extends Document {
       time: Date;
       method: string;
       status: "SUCCESS" | "FAILED";
+      locationId?: mongoose.Types.ObjectId;
     }
   ];
   openGymAttendance: [
     {
-      uid: mongoose.Types.ObjectId;
+      uid?: mongoose.Types.ObjectId;
+      guestName?: string;
+      guestPhone?: string;
       time: Date;
       method: string;
       status: "SUCCESS" | "FAILED";
+      locationId?: mongoose.Types.ObjectId;
     }
   ];
 }
@@ -28,15 +32,36 @@ type DailyAttendanceModel = Model<IDailyAttendance> & {
     method: string,
     session: ClientSession,
     status: "SUCCESS" | "FAILED",
-    io: Server
+    io: Server,
+    locationId?: string
   ): Promise<void>;
   recordOpenGymAttendance(
     uid: string,
     method: string,
     session: ClientSession,
     status: "SUCCESS" | "FAILED",
-    io: Server
+    io: Server,
+    locationId?: string
   ): Promise<void>;
+  recordOpenGymGuestAttendance(
+    guestName: string,
+    guestPhone: string,
+    method: string,
+    session: ClientSession,
+    status: "SUCCESS" | "FAILED",
+    io: Server,
+    locationId?: string
+  ): Promise<void>;
+  hasSuccessfulOpenGymToday(
+    uid: string,
+    locationId?: string,
+    session?: ClientSession
+  ): Promise<boolean>;
+  hasSuccessfulOpenGymGuestToday(
+    guestPhone: string,
+    locationId?: string,
+    session?: ClientSession
+  ): Promise<boolean>;
 };
 
 const DailyAttendanceSchema: Schema<IDailyAttendance, DailyAttendanceModel> =
@@ -51,14 +76,18 @@ const DailyAttendanceSchema: Schema<IDailyAttendance, DailyAttendanceModel> =
         time: { type: Date, required: true },
         method: { type: String, required: true },
         status: { type: String, enum: ["SUCCESS", "FAILED"], default: "SUCCESS" },
+        locationId: { type: Schema.Types.ObjectId, ref: "Location", default: null },
       },
     ],
     openGymAttendance: [
       {
-        uid: { type: Schema.Types.ObjectId, required: true, ref: "User" },
+        uid: { type: Schema.Types.ObjectId, ref: "User", required: false },
+        guestName: { type: String },
+        guestPhone: { type: String },
         time: { type: Date, required: true },
         method: { type: String, required: true },
         status: { type: String, enum: ["SUCCESS", "FAILED"], default: "SUCCESS" },
+        locationId: { type: Schema.Types.ObjectId, ref: "Location", default: null },
       },
     ],
   });
@@ -70,7 +99,8 @@ DailyAttendanceSchema.static(
     method: string,
     session: ClientSession,
     status: "SUCCESS" | "FAILED",
-    io: Server
+    io: Server,
+    locationId?: string
   ): Promise<void> {
     const startOfDay = new Date();
     startOfDay.setUTCHours(0, 0, 0, 0);
@@ -101,6 +131,7 @@ DailyAttendanceSchema.static(
             method,
             time: new Date(),
             status,
+            locationId: locationId ? new mongoose.Types.ObjectId(locationId) : null,
           },
         },
       },
@@ -125,30 +156,115 @@ DailyAttendanceSchema.static(
 );
 
 DailyAttendanceSchema.static(
+  "hasSuccessfulOpenGymToday",
+  async function (
+    uid: string,
+    locationId?: string,
+    session?: ClientSession
+  ): Promise<boolean> {
+    const startOfDay = new Date();
+    startOfDay.setUTCHours(0, 0, 0, 0);
+    const endOfDay = new Date();
+    endOfDay.setUTCHours(23, 59, 59, 999);
+
+    const elemMatch: Record<string, unknown> = {
+      uid: new mongoose.Types.ObjectId(uid),
+      status: "SUCCESS",
+    };
+    if (locationId) {
+      elemMatch.locationId = new mongoose.Types.ObjectId(locationId);
+    }
+
+    const count = await this.countDocuments(
+      {
+        date: { $gte: startOfDay, $lte: endOfDay },
+        openGymAttendance: { $elemMatch: elemMatch },
+      },
+      { session },
+    );
+    return count > 0;
+  }
+);
+
+DailyAttendanceSchema.static(
+  "hasSuccessfulOpenGymGuestToday",
+  async function (
+    guestPhone: string,
+    locationId?: string,
+    session?: ClientSession
+  ): Promise<boolean> {
+    const startOfDay = new Date();
+    startOfDay.setUTCHours(0, 0, 0, 0);
+    const endOfDay = new Date();
+    endOfDay.setUTCHours(23, 59, 59, 999);
+
+    const elemMatch: Record<string, unknown> = {
+      guestPhone,
+      status: "SUCCESS",
+    };
+    if (locationId) {
+      elemMatch.locationId = new mongoose.Types.ObjectId(locationId);
+    }
+
+    const count = await this.countDocuments(
+      {
+        date: { $gte: startOfDay, $lte: endOfDay },
+        openGymAttendance: { $elemMatch: elemMatch },
+      },
+      { session },
+    );
+    return count > 0;
+  }
+);
+
+DailyAttendanceSchema.static(
   "recordOpenGymAttendance",
   async function (
     uid: string,
     method: string,
     session: ClientSession,
     status: "SUCCESS" | "FAILED",
-    io: Server
+    io: Server,
+    locationId?: string
   ): Promise<void> {
-    const today = new Date().setUTCHours(0, 0, 0, 0);
-    const day = await this.findOne({ date: today });
+    const startOfDay = new Date();
+    startOfDay.setUTCHours(0, 0, 0, 0);
+
+    const endOfDay = new Date();
+    endOfDay.setUTCHours(23, 59, 59, 999);
+
+    let day = await this.findOne(
+      { date: { $gte: startOfDay, $lte: endOfDay } },
+      null,
+      { session },
+    );
     if (!day) {
-      const newDay = new DailyAttendance({ date: today });
-      await newDay.save();
+      day = new DailyAttendance({ date: startOfDay });
+      await day.save({ session });
     }
-    // add status and save attendance
+
+    if (status === "SUCCESS") {
+      const alreadyRecorded = day.openGymAttendance.some(
+        (entry) =>
+          entry.uid?.toString() === uid &&
+          entry.status === "SUCCESS" &&
+          (!locationId || entry.locationId?.toString() === locationId)
+      );
+      if (alreadyRecorded) {
+        io.emit("FAILED-SCAN", {
+          code: "ATTENDANCE_ALREADY_RECORDED",
+          message: "Attendance was already recorded",
+          member: "",
+        });
+        throw new ConflictError(
+          "ATTENDANCE_ALREADY_RECORDED",
+          "Class already in attendance record"
+        );
+      }
+    }
+
     const attendance = await this.findOneAndUpdate(
-      {
-        date: today,
-        openGymAttendance: {
-          $not: {
-            $elemMatch: { uid: new mongoose.Types.ObjectId(uid) },
-          },
-        },
-      },
+      { _id: day._id },
       {
         $push: {
           openGymAttendance: {
@@ -156,6 +272,7 @@ DailyAttendanceSchema.static(
             method,
             time: new Date(),
             status,
+            locationId: locationId ? new mongoose.Types.ObjectId(locationId) : null,
           },
         },
       },
@@ -170,12 +287,77 @@ DailyAttendanceSchema.static(
         message: "Attendance was already recorded",
         member: "",
       });
-      // send failed status
       throw new ConflictError(
         "ATTENDANCE_ALREADY_RECORDED",
         "Class already in attendance record"
       );
     }
+  }
+);
+
+DailyAttendanceSchema.static(
+  "recordOpenGymGuestAttendance",
+  async function (
+    guestName: string,
+    guestPhone: string,
+    method: string,
+    session: ClientSession,
+    status: "SUCCESS" | "FAILED",
+    io: Server,
+    locationId?: string
+  ): Promise<void> {
+    const startOfDay = new Date();
+    startOfDay.setUTCHours(0, 0, 0, 0);
+
+    const endOfDay = new Date();
+    endOfDay.setUTCHours(23, 59, 59, 999);
+
+    let day = await this.findOne(
+      { date: { $gte: startOfDay, $lte: endOfDay } },
+      null,
+      { session },
+    );
+    if (!day) {
+      day = new DailyAttendance({ date: startOfDay });
+      await day.save({ session });
+    }
+
+    if (status === "SUCCESS") {
+      const alreadyRecorded = day.openGymAttendance.some(
+        (entry) =>
+          entry.guestPhone === guestPhone &&
+          entry.status === "SUCCESS" &&
+          (!locationId || entry.locationId?.toString() === locationId)
+      );
+      if (alreadyRecorded) {
+        io.emit("FAILED-SCAN", {
+          code: "ATTENDANCE_ALREADY_RECORDED",
+          message: "Attendance was already recorded",
+          member: guestName,
+        });
+        throw new ConflictError(
+          "ATTENDANCE_ALREADY_RECORDED",
+          "Open gym attendance already recorded today for this guest",
+        );
+      }
+    }
+
+    await this.findOneAndUpdate(
+      { _id: day._id },
+      {
+        $push: {
+          openGymAttendance: {
+            guestName,
+            guestPhone,
+            method,
+            time: new Date(),
+            status,
+            locationId: locationId ? new mongoose.Types.ObjectId(locationId) : null,
+          },
+        },
+      },
+      { session, new: true },
+    );
   }
 );
 

@@ -13,6 +13,10 @@ import {
 } from "../core/ApiError";
 import logger from "../config/logger";
 import { Server } from "http";
+import Package, {
+  isUnlimitedSpaceAccess,
+  spaceAccessPriority,
+} from "./package";
 
 interface IAttendance {
   scid: Types.ObjectId;
@@ -34,6 +38,7 @@ export interface IAdjustmentRecord {
   source:
     | "BOOKING"
     | "PT_ATTENDANCE"
+    | "SPACE_WALK"
     | "ADMIN"
     | "MEMBER_CANCELLATION"
     | "FRONTDESK_CANCELLATION";
@@ -60,6 +65,7 @@ export interface IMemberPackageData {
   remainingClasses: number;
   classRestrictionsRecord?: IClassRestrictionRecord[];
   adjustmentHistory?: IAdjustmentRecord[];
+  locationId?: Types.ObjectId;
 }
 
 export interface IMemberBookings {
@@ -119,6 +125,12 @@ interface IMemberstatics {
     io: Server,
     pkgName: string
   ): Promise<string | null>;
+  recordSpaceWalkAttendance(
+    uid: string,
+    pkgIds: string[],
+    session: ClientSession,
+    io: Server
+  ): Promise<string | null>;
   removeBooking(
     uid: string,
     scid: string,
@@ -127,7 +139,8 @@ interface IMemberstatics {
     session: ClientSession,
     cid?: string,
     month?: string,
-    source?: "MEMBER_CANCELLATION" | "FRONTDESK_CANCELLATION"
+    source?: "MEMBER_CANCELLATION" | "FRONTDESK_CANCELLATION",
+    className?: string
   ): Promise<void>;
   removeDropIn(
     uid: string,
@@ -142,7 +155,8 @@ interface IMemberstatics {
     startDate: string,
     endDate: string,
     session: ClientSession,
-    classRestrictions?: IClassRestrictionRecord[]
+    classRestrictions?: IClassRestrictionRecord[],
+    locationId?: string
   ): Promise<void>;
   removePackage(
     uid: string,
@@ -171,13 +185,7 @@ interface IMemberstatics {
   ): Promise<void>;
 }
 
-interface IMemberMethods {
-  recordOpenGymAttendance(
-    pkgIds: string[],
-    session: ClientSession,
-    io: Server
-  ): Promise<string | null>;
-}
+interface IMemberMethods {}
 
 // Define Attendance Schema
 const AttendanceSchema: Schema = new Schema({
@@ -262,6 +270,11 @@ const MemberPackageSchema: Schema = new Schema({
   },
   classRestrictionsRecord: [ClassRestrictionsRecordSchema],
   adjustmentHistory: [AdjustmentRecordSchema],
+  locationId: {
+    type: Schema.Types.ObjectId,
+    ref: "Location",
+    default: null,
+  },
 });
 
 const BookingSchema = new Schema({
@@ -602,6 +615,10 @@ MemberSchema.static(
       );
 
       if (!isFree && !isWorkSpace) {
+        const deductReason =
+          Number(points) > 1
+            ? `Booked class: ${className} (${points} credits)`
+            : `Booked class: ${className}`;
         await this.pushAdjustmentRecord(
           uid,
           pkg.pkgId.toString(),
@@ -613,6 +630,7 @@ MemberSchema.static(
             amount: Number(points),
             className,
             attendanceDate,
+            reason: deductReason,
           },
           session
         );
@@ -637,7 +655,8 @@ MemberSchema.static(
     session: ClientSession,
     cid?: string,
     month?: string,
-    source: "MEMBER_CANCELLATION" | "FRONTDESK_CANCELLATION" = "MEMBER_CANCELLATION"
+    source: "MEMBER_CANCELLATION" | "FRONTDESK_CANCELLATION" = "MEMBER_CANCELLATION",
+    className?: string
   ): Promise<void> {
     logger.info("Removing booking from member", {
       uid,
@@ -718,6 +737,13 @@ MemberSchema.static(
             (p) => p.pkgId.toString() === pkgId
           );
           if (pkg) {
+            const cancellationLabel =
+              source === "FRONTDESK_CANCELLATION"
+                ? "Front-desk cancellation"
+                : "Member cancellation";
+            const refundReason = className
+              ? `${cancellationLabel}: ${className}`
+              : cancellationLabel;
             await this.pushAdjustmentRecord(
               uid,
               pkgId,
@@ -727,6 +753,8 @@ MemberSchema.static(
                 source,
                 type: "ADD",
                 amount: 1,
+                reason: refundReason,
+                className,
               },
               session
             );
@@ -1022,6 +1050,7 @@ MemberSchema.static(
           amount: 1,
           className: pkgName,
           attendanceDate: new Date(),
+          reason: `PT attendance: ${pkgName}`,
         },
         session
       );
@@ -1038,36 +1067,171 @@ MemberSchema.static(
   }
 );
 
-MemberSchema.method(
-  "recordOpenGymAttendance",
+MemberSchema.static(
+  "recordSpaceWalkAttendance",
   async function (
+    uid: string,
     pkgIds: string[],
     session: ClientSession,
     io: Server
   ): Promise<string | null> {
-    const member = this;
-    const pkg = member.packages.find((p) =>
-      pkgIds.includes(p.pkgId.toString())
+    const member = await this.findOne({ uid })
+      .populate({ path: "uid" })
+      .session(session);
+
+    if (!member)
+      throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
+
+    const memberPkgs = member.packages.filter(
+      (p) => pkgIds.includes(p.pkgId.toString()) && p.status === "ACTIVE"
     );
-    if (!pkg || pkg.status != "ACTIVE") {
+
+    if (memberPkgs.length <= 0) {
       io.emit("FAILED-SCAN", {
-        code: "PACKAGE_EXPIRED",
-        message: "Open Gym Package Expired",
+        code: "NO_ACTIVE_PACKAGE_FOUND",
+        message: "No active package found!",
         member: (member.uid as any).name,
       });
       return null;
     }
-    if (pkg.pkgEndDate < new Date()) {
-      pkg.status = "EXPIRED";
-      io.emit("FAILED-SCAN", {
-        code: "PACKAGE_EXPIRED",
-        message: "Open Gym Package Expired",
-        member: (member.uid as any).name,
-      });
-      return null;
+
+    const catalogPkgs = await Package.find({
+      _id: { $in: memberPkgs.map((p) => p.pkgId) },
+    }).session(session);
+    const categoryByPkgId = new Map(
+      catalogPkgs.map((p) => [p._id.toString(), p.category]),
+    );
+
+    memberPkgs.sort((a, b) => {
+      const catA = categoryByPkgId.get(a.pkgId.toString()) ?? "";
+      const catB = categoryByPkgId.get(b.pkgId.toString()) ?? "";
+      const priorityDiff = spaceAccessPriority(catA) - spaceAccessPriority(catB);
+      if (priorityDiff !== 0) return priorityDiff;
+      return a.pkgStartDate.getTime() - b.pkgStartDate.getTime();
+    });
+
+    for (const pkg of memberPkgs) {
+      const category = categoryByPkgId.get(pkg.pkgId.toString()) ?? "";
+      const unlimitedAccess = isUnlimitedSpaceAccess(category);
+
+      if (pkg.pkgEndDate < new Date()) {
+        await this.updateOne(
+          {
+            uid,
+            "packages.pkgId": pkg.pkgId,
+            "packages.pkgStartDate": new Date(pkg.pkgStartDate),
+          },
+          { $set: { "packages.$[pkg].status": "EXPIRED" } },
+          {
+            arrayFilters: [
+              {
+                "pkg.pkgId": new Types.ObjectId(pkg.pkgId),
+                "pkg.pkgStartDate": new Date(pkg.pkgStartDate),
+              },
+            ],
+            session,
+          }
+        );
+        continue;
+      }
+
+      if (!unlimitedAccess && pkg.remainingClasses <= 0) {
+        await this.updateOne(
+          {
+            uid,
+            "packages.pkgId": pkg.pkgId,
+            "packages.pkgStartDate": new Date(pkg.pkgStartDate),
+          },
+          { $set: { "packages.$[pkg].status": "COMPLETED" } },
+          {
+            arrayFilters: [
+              {
+                "pkg.pkgId": new Types.ObjectId(pkg.pkgId),
+                "pkg.pkgStartDate": new Date(pkg.pkgStartDate),
+              },
+            ],
+            session,
+          }
+        );
+        continue;
+      }
+
+      if (!unlimitedAccess) {
+        await this.updateOne(
+          { uid },
+          {
+            $inc: { "packages.$[pkg].remainingClasses": -1 },
+          },
+          {
+            arrayFilters: [
+              {
+                "pkg.pkgId": new Types.ObjectId(pkg.pkgId),
+                "pkg.pkgStartDate": new Date(pkg.pkgStartDate),
+                "pkg.status": "ACTIVE",
+                "pkg.remainingClasses": { $gt: 0 },
+                "pkg.pkgEndDate": { $gte: new Date() },
+              },
+            ],
+            session,
+          }
+        );
+
+        await this.updateOne(
+          {
+            uid,
+            packages: {
+              $elemMatch: {
+                pkgId: new Types.ObjectId(pkg.pkgId),
+                remainingClasses: 0,
+              },
+            },
+          },
+          {
+            $set: { "packages.$[pkg].status": "COMPLETED" },
+          },
+          {
+            arrayFilters: [
+              {
+                "pkg.pkgId": new Types.ObjectId(pkg.pkgId),
+                "pkg.remainingClasses": 0,
+              },
+            ],
+            session,
+          }
+        );
+      }
+
+      const visitReason =
+        category === "OPEN_GYM"
+          ? "Open gym visit"
+          : unlimitedAccess
+            ? "Space walk-in (unlimited)"
+            : "Space walk-in";
+
+      await this.pushAdjustmentRecord(
+        uid,
+        pkg.pkgId.toString(),
+        pkg.pkgStartDate,
+        {
+          date: new Date(),
+          source: "SPACE_WALK",
+          type: "DEDUCT",
+          amount: unlimitedAccess ? 0 : 1,
+          reason: visitReason,
+          attendanceDate: new Date(),
+        },
+        session
+      );
+
+      return pkg.pkgId.toString();
     }
-    await member.save({ session });
-    return pkg.pkgId.toString();
+
+    io.emit("FAILED-SCAN", {
+      code: "NO_ACTIVE_PACKAGE_FOUND",
+      message: "No active package found!",
+      member: (member.uid as any).name,
+    });
+    return null;
   }
 );
 
@@ -1081,7 +1245,8 @@ MemberSchema.static(
     startDate: string,
     endDate: string,
     session: ClientSession,
-    classRestrictions?: IClassRestrictionRecord[]
+    classRestrictions?: IClassRestrictionRecord[],
+    locationId?: string
   ): Promise<void> {
     const { startOfDateCairo } = await import("../utils/timezone");
     const pkgStartDay = startOfDateCairo(startDate);
@@ -1109,6 +1274,7 @@ MemberSchema.static(
             status: "ACTIVE",
             remainingClasses: numberOfSessions,
             classRestrictionsRecord: classRestrictions,
+            locationId: locationId ? new Types.ObjectId(locationId) : null,
           },
         },
       },

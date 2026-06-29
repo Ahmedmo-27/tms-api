@@ -17,6 +17,7 @@ import { Types } from "mongoose";
 import { runInTransaction } from "../../utils/transaction";
 import { ClientSession } from "mongoose";
 import logger from "../../config/logger";
+import { resolveLocationIdForWrite } from "../../utils/location-scope";
 
 /** Escapes special regex characters so user-supplied strings are treated as literals. */
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -204,6 +205,88 @@ export const bookDropIn = asyncHandler(async function (
   }
   await BookingsService.bookAdminDropIn(uid, scid, paymentMethod);
   new SuccessResponse("Drop-in Booked!").send(res);
+});
+
+export const getOpenGymDropInPrice = asyncHandler(async function (
+  req: Request,
+  res: Response
+): Promise<void> {
+  const locationId = resolveLocationIdForWrite(req);
+  const price = await BookingsService.resolveOpenGymDropInPrice(locationId);
+  new SuccessResponse("Open gym drop-in price", { locationId, price }).send(res);
+});
+
+export const listOpenGymDropInPrices = asyncHandler(async function (
+  _req: Request,
+  res: Response
+): Promise<void> {
+  const prices = await BookingsService.listOpenGymDropInPrices();
+  new SuccessResponse("Open gym drop-in prices", prices).send(res);
+});
+
+export const setOpenGymDropInPrice = asyncHandler(async function (
+  req: Request,
+  res: Response
+): Promise<void> {
+  const { price } = req.body;
+  const locationId = resolveLocationIdForWrite(req);
+  if (price === undefined || price === null || Number.isNaN(Number(price))) {
+    throw new BadRequestError("INVALID_PRICE", "price is required");
+  }
+  const result = await BookingsService.setOpenGymDropInPrice(
+    locationId,
+    Number(price),
+  );
+  new SuccessResponse("Open gym drop-in price updated", result).send(res);
+});
+
+export const recordOpenGymMemberDropIn = asyncHandler(async function (
+  req: Request,
+  res: Response
+): Promise<void> {
+  const { uid, paymentMethod, amount, paymentDate } = req.body;
+  if (!uid || !paymentMethod) {
+    throw new BadRequestError(
+      "INVALID_REQUEST",
+      "uid and paymentMethod are required",
+    );
+  }
+  const locationId = resolveLocationIdForWrite(req);
+  const io = req.app.get("io");
+  await BookingsService.recordAdminOpenGymMemberDropIn(
+    uid,
+    paymentMethod,
+    io,
+    locationId,
+    amount,
+    paymentDate,
+  );
+  new SuccessResponse("Open gym drop-in recorded").send(res);
+});
+
+export const recordOpenGymGuestDropIn = asyncHandler(async function (
+  req: Request,
+  res: Response
+): Promise<void> {
+  const { name, phoneNumber, paymentMethod, amount, paymentDate } = req.body;
+  if (!name || !phoneNumber || !paymentMethod) {
+    throw new BadRequestError(
+      "INVALID_REQUEST",
+      "name, phoneNumber, and paymentMethod are required",
+    );
+  }
+  const locationId = resolveLocationIdForWrite(req);
+  const io = req.app.get("io");
+  await BookingsService.recordAdminOpenGymGuestDropIn(
+    name,
+    phoneNumber,
+    paymentMethod,
+    io,
+    locationId,
+    amount,
+    paymentDate,
+  );
+  new SuccessResponse("Guest open gym drop-in recorded").send(res);
 });
 
 export const cancelBooking = asyncHandler(async function (
