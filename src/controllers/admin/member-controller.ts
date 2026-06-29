@@ -7,6 +7,7 @@ import asyncHandler from "../../utils/asyncHandler";
 import NonUserPackage from "../../models/nonUserPackage";
 import { SubscriptionsService } from "../../services/subscriptions-service";
 import logger from "../../config/logger";
+import { runInTransaction } from "../../utils/transaction";
 
 export const addMember = asyncHandler(async function (
   req: Request,
@@ -16,29 +17,44 @@ export const addMember = asyncHandler(async function (
   const user = await User.findById(id);
   if (!user)
     throw new NotFoundError("USER_NOT_FOUND", "User not found", { id });
-  const member = new Member({
-    uid: id,
-    packages: [],
-    bookings: [],
-    attendance: [],
+
+  await runInTransaction(async (session) => {
+    const member = new Member({
+      uid: id,
+      packages: [],
+      bookings: [],
+      attendance: [],
+    });
+    await member.save(session ? { session } : {});
+    user.role = "member";
+    await user.save(session ? { session } : {});
+    logger.info("User: ", user);
+    const pkgQuery = NonUserPackage.find({
+      phoneNumber: user.phoneNumber,
+      added: false,
+    });
+    if (session) pkgQuery.session(session);
+    const savedPkgs = await pkgQuery;
+    logger.info("Packages: ", savedPkgs);
+    for (const savedPkg of savedPkgs) {
+      logger.info("Adding package", savedPkg);
+      await SubscriptionsService.addSavedPkgToMember(
+        id,
+        savedPkg.pkgId.toString(),
+        savedPkg.pkgStartDate.toISOString(),
+        savedPkg.remainingClasses,
+        savedPkg.pkgEndDate.toISOString(),
+        session
+      );
+      await NonUserPackage.findByIdAndUpdate(
+        savedPkg._id,
+        { added: true },
+        session ? { session } : {}
+      );
+    }
   });
-  await member.save();
-  user.role = "member";
-  await user.save();
-  logger.info("User: ", user)
-  const savedPkgs = await NonUserPackage.find({ phoneNumber: user.phoneNumber, added: false });
-  logger.info("Packages: ", savedPkgs)
-  for (const savedPkg of savedPkgs) {
-    logger.info("Adding package", savedPkg)
-    await SubscriptionsService.addSavedPkgToMember(
-      id,
-      savedPkg.pkgId.toString(),
-      savedPkg.pkgStartDate.toISOString(),
-      savedPkg.remainingClasses,
-      savedPkg.pkgEndDate.toISOString(),
-    );
-    await NonUserPackage.findByIdAndUpdate(savedPkg._id, { added: true });
-  }
+
+  const member = await Member.findOne({ uid: id });
   new SuccessResponse("Member Added!", member).send(res);
 });
 
