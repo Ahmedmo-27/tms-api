@@ -94,6 +94,7 @@ sequenceDiagram
 | `category` is `SPACE_MEMBERSHIP` | Dedicated space membership products |
 | `category` is `OPEN_GYM` | Open gym packages (category enum added for this) |
 | `category` is `MIXED` **and** `name` matches `/space/i` | Spacer Mix (Studio + Space), Spacer Mix (Functional Training + Space) |
+| `opensClasses` includes a `WORKSPACE` class | Studio, FT, or other combo packages that grant open gym via linked classes |
 
 Studio-only or FT-only packages are **not** included unless they match the rules above.
 

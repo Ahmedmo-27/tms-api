@@ -1,5 +1,6 @@
 import mongoose, { Schema, Model, Types } from "mongoose";
 import logger from "../config/logger";
+import Class from "./class";
 
 const UNLIMITED_SPACE_CATEGORIES = new Set([
   "OPEN_GYM",
@@ -156,15 +157,23 @@ const PackageSchema = new Schema<IPackage, IPackageModel, IPackageMethods>({
 PackageSchema.static(
   "getSpaceWalkPackageIds",
   async function (): Promise<string[]> {
-    const pkgs = await Package.find({
-      $or: [
-        { category: "ULTIMATE_MINDSPACER" },
-        { category: "SPACE_MEMBERSHIP" },
-        { category: "OPEN_GYM" },
-        { category: "MIXED", name: /space/i },
-      ],
-    });
-    return pkgs.map((pkg) => pkg._id.toString());
+    const workspaceClasses = await Class.find({ category: "WORKSPACE" }).select(
+      "_id",
+    );
+    const workspaceClassIds = workspaceClasses.map((cls) => cls._id);
+
+    const eligibility: Record<string, unknown>[] = [
+      { category: "ULTIMATE_MINDSPACER" },
+      { category: "SPACE_MEMBERSHIP" },
+      { category: "OPEN_GYM" },
+      { category: "MIXED", name: /space/i },
+    ];
+    if (workspaceClassIds.length > 0) {
+      eligibility.push({ opensClasses: { $in: workspaceClassIds } });
+    }
+
+    const pkgs = await Package.find({ $or: eligibility });
+    return [...new Set(pkgs.map((pkg) => pkg._id.toString()))];
   }
 );
 
