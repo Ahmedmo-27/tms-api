@@ -1,8 +1,8 @@
 From 7b01315827e1de72c08f0166555ad51b5874ff02 Mon Sep 17 00:00:00 2001
 From: Cursor Agent <cursoragent@cursor.com>
 Date: Tue, 30 Jun 2026 19:51:17 +0000
-Subject: [PATCH] Support walk-in name/phone entry in scans monitor Add Package
- form
+Subject: [PATCH 1/2] Support walk-in name/phone entry in scans monitor Add
+ Package form
 
 ---
  .../package/add-non-member-package.tsx        | 88 ++++++++++++++-----
@@ -236,6 +236,509 @@ index a1323c7..63adaff 100644
  export const nonUserDataSchema = z.object({
    name: z
      .string()
+-- 
+2.43.0
+
+
+From 0fc4071d149de07201e15f8864bb39be55a48c88 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Tue, 30 Jun 2026 19:59:20 +0000
+Subject: [PATCH 2/2] Support walk-in name/phone for open gym package dialog
+
+---
+ .../open-gym/open-gym-subscribe-dialog.tsx    | 292 ++++++++++++++----
+ src/lib/actions/member-actions.ts             |   6 +-
+ src/lib/data/member.ts                        |   4 +-
+ 3 files changed, 244 insertions(+), 58 deletions(-)
+
+diff --git a/src/components/ui/dialogs/open-gym/open-gym-subscribe-dialog.tsx b/src/components/ui/dialogs/open-gym/open-gym-subscribe-dialog.tsx
+index b6a2ccb..db78d78 100644
+--- a/src/components/ui/dialogs/open-gym/open-gym-subscribe-dialog.tsx
++++ b/src/components/ui/dialogs/open-gym/open-gym-subscribe-dialog.tsx
+@@ -22,7 +22,10 @@ import {
+ import { PopoverDatePicker } from "@/components/ui/popover-date-picker";
+ import { Checkbox } from "@/components/ui/checkbox";
+ import { Package } from "@/components/ui/packages/columns";
+-import { subscribePackageAction } from "@/lib/actions/member-actions";
++import {
++  subscribeGuestPackageAction,
++  subscribePackageAction,
++} from "@/lib/actions/member-actions";
+ import {
+   formatCatalogPackageLabel,
+   getPackageEndDateFromStart,
+@@ -71,12 +74,19 @@ export function OpenGymSubscribeDialog({
+   const [open, setOpen] = useState(false);
+   const [pkg, setPkg] = useState<Package | null>(null);
+   const [selectedUid, setSelectedUid] = useState("");
+-  const [selectedMemberName, setSelectedMemberName] = useState("");
+-  const [searchQuery, setSearchQuery] = useState("");
+-  const [searchResults, setSearchResults] = useState<MemberSearchHit[]>([]);
+-  const [isSearching, setIsSearching] = useState(false);
+-  const [showSuggestions, setShowSuggestions] = useState(false);
+-  const searchRef = useRef<HTMLDivElement>(null);
++  const [selectedPendingId, setSelectedPendingId] = useState("");
++  const [name, setName] = useState("");
++  const [phoneNumber, setPhoneNumber] = useState("");
++  const [memberSearchQuery, setMemberSearchQuery] = useState("");
++  const [pendingSearchQuery, setPendingSearchQuery] = useState("");
++  const [memberSearchResults, setMemberSearchResults] = useState<MemberSearchHit[]>([]);
++  const [pendingSearchResults, setPendingSearchResults] = useState<MemberSearchHit[]>([]);
++  const [isSearchingMembers, setIsSearchingMembers] = useState(false);
++  const [isSearchingPending, setIsSearchingPending] = useState(false);
++  const [showMemberSuggestions, setShowMemberSuggestions] = useState(false);
++  const [showPendingSuggestions, setShowPendingSuggestions] = useState(false);
++  const memberSearchRef = useRef<HTMLDivElement>(null);
++  const pendingSearchRef = useRef<HTMLDivElement>(null);
+ 
+   const [selectedStartDate, setSelectedStartDate] = useState("");
+   const [selectedEndDate, setSelectedEndDate] = useState("");
+@@ -89,8 +99,13 @@ export function OpenGymSubscribeDialog({
+   const resetForm = () => {
+     setPkg(null);
+     setSelectedUid("");
+-    setSelectedMemberName("");
+-    setSearchQuery("");
++    setSelectedPendingId("");
++    setName("");
++    setPhoneNumber("");
++    setMemberSearchQuery("");
++    setPendingSearchQuery("");
++    setMemberSearchResults([]);
++    setPendingSearchResults([]);
+     setSelectedStartDate("");
+     setSelectedEndDate("");
+     setSelectedPaymentDate("");
+@@ -105,6 +120,11 @@ export function OpenGymSubscribeDialog({
+     if (!value) resetForm();
+   };
+ 
++  const clearSelections = () => {
++    setSelectedUid("");
++    setSelectedPendingId("");
++  };
++
+   useEffect(() => {
+     if (!pkg) return;
+     setSelectedAmount(pkg.price.toString());
+@@ -116,8 +136,17 @@ export function OpenGymSubscribeDialog({
+ 
+   useEffect(() => {
+     const handleMouseDown = (event: MouseEvent) => {
+-      if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
+-        setShowSuggestions(false);
++      if (
++        memberSearchRef.current &&
++        !memberSearchRef.current.contains(event.target as Node)
++      ) {
++        setShowMemberSuggestions(false);
++      }
++      if (
++        pendingSearchRef.current &&
++        !pendingSearchRef.current.contains(event.target as Node)
++      ) {
++        setShowPendingSuggestions(false);
+       }
+     };
+     document.addEventListener("mousedown", handleMouseDown);
+@@ -125,40 +154,76 @@ export function OpenGymSubscribeDialog({
+   }, []);
+ 
+   useEffect(() => {
+-    if (searchQuery.length < 2) {
+-      setSearchResults([]);
+-      setIsSearching(false);
++    if (memberSearchQuery.length < 2) {
++      setMemberSearchResults([]);
++      setIsSearchingMembers(false);
+       return;
+     }
+ 
+-    setIsSearching(true);
++    setIsSearchingMembers(true);
+     const timeout = setTimeout(async () => {
+       try {
+         const params: Record<string, string | number> = { page: 1, limit: 10 };
+-        if (/^\d+$/.test(searchQuery)) {
+-          params.phone = searchQuery;
++        if (/^\d+$/.test(memberSearchQuery)) {
++          params.phone = memberSearchQuery;
+         } else {
+-          params.name = searchQuery;
++          params.name = memberSearchQuery;
+         }
+         const response = await tms.get("/admin/member", { params });
+         const members = response.data.data.members ?? [];
+-        setSearchResults(
+-          members.map((m: any) => ({
++        setMemberSearchResults(
++          members.map((m: { uid: { _id: string; name: string; phoneNumber: string } }) => ({
+             id: m.uid._id,
+             name: m.uid.name,
+             phone: m.uid.phoneNumber,
+           }))
+         );
+-        setShowSuggestions(true);
++        setShowMemberSuggestions(true);
+       } catch {
+-        setSearchResults([]);
++        setMemberSearchResults([]);
+       } finally {
+-        setIsSearching(false);
++        setIsSearchingMembers(false);
+       }
+     }, 300);
+ 
+     return () => clearTimeout(timeout);
+-  }, [searchQuery]);
++  }, [memberSearchQuery]);
++
++  useEffect(() => {
++    if (pendingSearchQuery.length < 2) {
++      setPendingSearchResults([]);
++      setIsSearchingPending(false);
++      return;
++    }
++
++    setIsSearchingPending(true);
++    const timeout = setTimeout(async () => {
++      try {
++        const params: Record<string, string | number> = { page: 1, limit: 10 };
++        if (/^\d+$/.test(pendingSearchQuery)) {
++          params.phone = pendingSearchQuery;
++        } else {
++          params.name = pendingSearchQuery;
++        }
++        const response = await tms.get("/admin/pending-members", { params });
++        const users = response.data.data.users ?? [];
++        setPendingSearchResults(
++          users.map((u: { _id: string; name: string; phoneNumber: string }) => ({
++            id: u._id,
++            name: u.name,
++            phone: u.phoneNumber,
++          }))
++        );
++        setShowPendingSuggestions(true);
++      } catch {
++        setPendingSearchResults([]);
++      } finally {
++        setIsSearchingPending(false);
++      }
++    }, 300);
++
++    return () => clearTimeout(timeout);
++  }, [pendingSearchQuery]);
+ 
+   const handleStartDate = (date: string) => {
+     if (!pkg) return;
+@@ -166,12 +231,23 @@ export function OpenGymSubscribeDialog({
+     setSelectedEndDate(getPackageEndDateFromStart(date, pkg));
+   };
+ 
++  const hasGuestDetails = Boolean(name.trim() && phoneNumber.trim());
++  const canSubmit =
++    Boolean(pkg && selectedStartDate && effectiveLocationId) &&
++    (Boolean(selectedUid) || hasGuestDetails);
++
+   const initialState = { success: false, errors: null, data: null };
+   const [state, formAction, pending] = useActionState(
+-    async (currentState: any, formData: FormData) => {
+-      const result = await subscribePackageAction(currentState, formData);
++    async (currentState: unknown, formData: FormData) => {
++      const uid = (formData.get("uid") as string)?.trim();
++      const result = uid
++        ? await subscribePackageAction(currentState, formData)
++        : await subscribeGuestPackageAction(currentState, formData);
++
+       if (result.success) {
+-        toast.success("Open gym package added");
++        toast.success(
++          uid ? "Open gym package added to member" : "Open gym package saved for guest"
++        );
+         handleOpenChange(false);
+         router.refresh();
+         return initialState;
+@@ -190,10 +266,11 @@ export function OpenGymSubscribeDialog({
+       <Dialog open={open} onOpenChange={handleOpenChange}>
+         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+           <DialogHeader>
+-            <DialogTitle>Add open gym package to member</DialogTitle>
++            <DialogTitle>Add open gym package</DialogTitle>
+             <DialogDescription>
+-              Search for a member and subscribe them to a weekly or monthly open
+-              gym package.
++              Search an existing member or pending signup, or enter the walk-in
++              client&apos;s name and phone. Guest packages transfer when they
++              become a member.
+             </DialogDescription>
+           </DialogHeader>
+ 
+@@ -217,6 +294,8 @@ export function OpenGymSubscribeDialog({
+             <form action={formAction} className="space-y-4">
+               <input type="hidden" name="uid" value={selectedUid} />
+               <input type="hidden" name="locationId" value={effectiveLocationId ?? ""} />
++              <input type="hidden" name="name" value={name} />
++              <input type="hidden" name="phoneNumber" value={phoneNumber} />
+               <input type="hidden" name="pkgId" value={pkg?._id ?? ""} />
+               <input type="hidden" name="startDate" value={selectedStartDate} />
+               <input type="hidden" name="endDate" value={selectedEndDate} />
+@@ -224,39 +303,46 @@ export function OpenGymSubscribeDialog({
+               <input type="hidden" name="amount" value={selectedAmount} />
+               <input type="hidden" name="paymentMethod" value={selectedPaymentMethod} />
+               <input type="hidden" name="priceChanged" value={String(priceChanged)} />
++              <input type="hidden" name="pendingDeduction" value="false" />
+ 
+-              <div className="space-y-2" ref={searchRef}>
+-                <Label className="text-sm font-medium">Search member</Label>
++              <div className="space-y-2" ref={memberSearchRef}>
++                <Label className="text-sm font-medium">
++                  Search existing member (optional)
++                </Label>
+                 <div className="relative">
+                   <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                   <Input
+                     placeholder="Name or phone number"
+-                    value={searchQuery}
++                    value={memberSearchQuery}
+                     onChange={(e) => {
+-                      setSearchQuery(e.target.value);
+-                      if (selectedUid && e.target.value !== selectedMemberName) {
+-                        setSelectedUid("");
+-                        setSelectedMemberName("");
++                      setMemberSearchQuery(e.target.value);
++                      if (selectedUid && e.target.value !== name) {
++                        clearSelections();
++                        setName("");
++                        setPhoneNumber("");
+                       }
+                     }}
+                     className="pl-8"
+                   />
+                 </div>
+-                {isSearching && (
++                {isSearchingMembers && (
+                   <p className="text-xs text-muted-foreground">Searching…</p>
+                 )}
+-                {showSuggestions && searchResults.length > 0 && (
++                {showMemberSuggestions && memberSearchResults.length > 0 && (
+                   <div className="rounded-md border max-h-40 overflow-y-auto">
+-                    {searchResults.map((member) => (
++                    {memberSearchResults.map((member) => (
+                       <button
+                         key={member.id}
+                         type="button"
+                         className="w-full px-3 py-2 text-left text-sm hover:bg-muted flex flex-col"
+                         onClick={() => {
+                           setSelectedUid(member.id);
+-                          setSelectedMemberName(member.name);
+-                          setSearchQuery(member.name);
+-                          setShowSuggestions(false);
++                          setSelectedPendingId("");
++                          setName(member.name);
++                          setPhoneNumber(member.phone);
++                          setMemberSearchQuery(member.name);
++                          setPendingSearchQuery("");
++                          setShowMemberSuggestions(false);
+                         }}
+                       >
+                         <span className="font-medium">{member.name}</span>
+@@ -269,11 +355,106 @@ export function OpenGymSubscribeDialog({
+                 )}
+                 {selectedUid && (
+                   <p className="text-sm text-green-700 dark:text-green-400">
+-                    Selected: {selectedMemberName}
++                    Existing member selected
+                   </p>
+                 )}
+               </div>
+ 
++              <div className="space-y-2" ref={pendingSearchRef}>
++                <Label className="text-sm font-medium">
++                  Search pending signup (optional)
++                </Label>
++                <div className="relative">
++                  <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
++                  <Input
++                    placeholder="Name or phone number"
++                    value={pendingSearchQuery}
++                    onChange={(e) => {
++                      setPendingSearchQuery(e.target.value);
++                      if (selectedPendingId && e.target.value !== name) {
++                        clearSelections();
++                        setName("");
++                        setPhoneNumber("");
++                      }
++                    }}
++                    className="pl-8"
++                    disabled={Boolean(selectedUid)}
++                  />
++                </div>
++                {isSearchingPending && (
++                  <p className="text-xs text-muted-foreground">Searching…</p>
++                )}
++                {showPendingSuggestions && pendingSearchResults.length > 0 && (
++                  <div className="rounded-md border max-h-40 overflow-y-auto">
++                    {pendingSearchResults.map((member) => (
++                      <button
++                        key={member.id}
++                        type="button"
++                        className="w-full px-3 py-2 text-left text-sm hover:bg-muted flex flex-col"
++                        onClick={() => {
++                          setSelectedPendingId(member.id);
++                          setSelectedUid("");
++                          setName(member.name);
++                          setPhoneNumber(member.phone);
++                          setPendingSearchQuery(member.name);
++                          setMemberSearchQuery("");
++                          setShowPendingSuggestions(false);
++                        }}
++                      >
++                        <span className="font-medium">{member.name}</span>
++                        <span className="text-xs text-muted-foreground">
++                          {member.phone}
++                        </span>
++                      </button>
++                    ))}
++                  </div>
++                )}
++                {showPendingSuggestions &&
++                  pendingSearchResults.length === 0 &&
++                  !isSearchingPending &&
++                  pendingSearchQuery.length >= 2 && (
++                    <p className="text-xs text-muted-foreground">
++                      No pending signups found.
++                    </p>
++                  )}
++              </div>
++
++              <div className="grid grid-cols-2 gap-4">
++                <div className="space-y-2">
++                  <Label className="text-sm font-medium">Name</Label>
++                  <Input
++                    type="text"
++                    className="w-full"
++                    placeholder="Client name"
++                    value={name}
++                    onChange={(e) => {
++                      setName(e.target.value);
++                      if (selectedUid || selectedPendingId) {
++                        clearSelections();
++                      }
++                    }}
++                    disabled={pending || Boolean(selectedUid)}
++                  />
++                </div>
++                <div className="space-y-2">
++                  <Label className="text-sm font-medium">Phone number</Label>
++                  <Input
++                    type="tel"
++                    inputMode="numeric"
++                    className="w-full"
++                    placeholder="01xxxxxxxxx"
++                    value={phoneNumber}
++                    onChange={(e) => {
++                      setPhoneNumber(e.target.value.replace(/\s/g, ""));
++                      if (selectedUid || selectedPendingId) {
++                        clearSelections();
++                      }
++                    }}
++                    disabled={pending || Boolean(selectedUid)}
++                  />
++                </div>
++              </div>
++
+               <div className="space-y-2">
+                 <Label className="text-sm font-medium">Open gym package</Label>
+                 <Select
+@@ -386,21 +567,24 @@ export function OpenGymSubscribeDialog({
+                     {(state.errors as { message?: string }).message}
+                   </p>
+                 )}
++              {state?.errors &&
++                typeof state.errors === "object" &&
++                !("message" in state.errors) && (
++                  <div className="text-destructive text-sm space-y-1">
++                    {"name" in state.errors && (
++                      <p>{(state.errors as { name?: string }).name}</p>
++                    )}
++                    {"phoneNumber" in state.errors && (
++                      <p>{(state.errors as { phoneNumber?: string }).phoneNumber}</p>
++                    )}
++                  </div>
++                )}
+ 
+               <div className="flex justify-end gap-2">
+                 <Button type="button" variant="outline" onClick={() => handleOpenChange(false)}>
+                   Cancel
+                 </Button>
+-                <Button
+-                  type="submit"
+-                  disabled={
+-                    pending ||
+-                    !selectedUid ||
+-                    !pkg ||
+-                    !selectedStartDate ||
+-                    !effectiveLocationId
+-                  }
+-                >
++                <Button type="submit" disabled={pending || !canSubmit}>
+                   {pending ? "Saving…" : "Add package"}
+                 </Button>
+               </div>
+diff --git a/src/lib/actions/member-actions.ts b/src/lib/actions/member-actions.ts
+index c2d31e3..af7665f 100644
+--- a/src/lib/actions/member-actions.ts
++++ b/src/lib/actions/member-actions.ts
+@@ -107,8 +107,7 @@ export const subscribeGuestPackageAction = async (
+     const priceChanged = (formData.get("priceChanged") as string) === "true";
+     const pendingDeduction =
+       (formData.get("pendingDeduction") as string) === "true";
+-
+-    console.log(formData);
++    const locationId = (formData.get("locationId") as string) || undefined;
+ 
+     guestPackageDataSchema.parse({
+       name,
+@@ -123,7 +122,8 @@ export const subscribeGuestPackageAction = async (
+       paymentMethod,
+       pendingDeduction,
+       paymentDate === "" ? undefined : paymentDate,
+-      priceChanged ? amount : undefined
++      priceChanged ? amount : undefined,
++      locationId
+     );
+ 
+     revalidatePath("/dashboard/member-requests");
+diff --git a/src/lib/data/member.ts b/src/lib/data/member.ts
+index 9fb3cbe..67a56b6 100644
+--- a/src/lib/data/member.ts
++++ b/src/lib/data/member.ts
+@@ -95,6 +95,7 @@ export const subscribeGuestToPackage = async (
+   pendingDeduction: boolean,
+   paymentDate?: string,
+   amount?: string,
++  locationId?: string,
+ ) => {
+   try {
+     type RequestBody = {
+@@ -106,6 +107,7 @@ export const subscribeGuestToPackage = async (
+       paymentDate: string | undefined;
+       amount: string | undefined;
+       pendingDeduction: boolean;
++      locationId?: string;
+     };
+     const requestBody: RequestBody = {
+       name,
+@@ -116,8 +118,8 @@ export const subscribeGuestToPackage = async (
+       paymentDate,
+       amount,
+       pendingDeduction,
++      ...(locationId ? { locationId } : {}),
+     };
+-    console.log(requestBody)
+     const response = await tms.post("admin/nonUserPackage", requestBody);
+     return response.data;
+   } catch (error) {
 -- 
 2.43.0
 

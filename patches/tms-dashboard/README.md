@@ -56,6 +56,8 @@ git push -u origin cursor/guest-package-scans-monitor-cf64
 
 Changes:
 - Scans Monitor **Add Package** uses the unified non-member form
+- **Add open gym package** supports walk-ins with name + phone (same flow)
 - Staff can type name + phone for walk-ins (no pending signup required)
-- Optional search still pre-fills pending signups
+- Optional search pre-fills existing members or pending signups
 - Relaxed guest name validation; phone normalized before API call
+- Branch `locationId` forwarded for guest open gym package purchases
