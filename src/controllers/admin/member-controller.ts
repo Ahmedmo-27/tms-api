@@ -4,7 +4,6 @@ import User from "../../models/user";
 import { NotFoundError } from "../../core/ApiError";
 import { SuccessResponse } from "../../core/ApiResponse";
 import asyncHandler from "../../utils/asyncHandler";
-import NonUserPackage from "../../models/nonUserPackage";
 import { SubscriptionsService } from "../../services/subscriptions-service";
 import { runInTransaction } from "../../utils/transaction";
 
@@ -28,28 +27,11 @@ export const addMember = asyncHandler(async function (
     user.role = "member";
     await user.save(session ? { session } : {});
 
-    const pkgQuery = NonUserPackage.find({
-      phoneNumber: user.phoneNumber,
-      added: false,
-    });
-    if (session) pkgQuery.session(session);
-    const savedPkgs = await pkgQuery;
-
-    for (const savedPkg of savedPkgs) {
-      await SubscriptionsService.addSavedPkgToMember(
-        id,
-        savedPkg.pkgId.toString(),
-        savedPkg.pkgStartDate.toISOString(),
-        savedPkg.remainingClasses,
-        savedPkg.pkgEndDate.toISOString(),
-        session
-      );
-      await NonUserPackage.findByIdAndUpdate(
-        savedPkg._id,
-        { added: true },
-        session ? { session } : {}
-      );
-    }
+    await SubscriptionsService.transferStagedPackagesToMember(
+      id,
+      user.phoneNumber,
+      session
+    );
   });
 
   const member = await Member.findOne({ uid: id }).lean();

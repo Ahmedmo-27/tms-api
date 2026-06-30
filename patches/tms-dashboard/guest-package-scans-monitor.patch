@@ -1,0 +1,241 @@
+From 7b01315827e1de72c08f0166555ad51b5874ff02 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Tue, 30 Jun 2026 19:51:17 +0000
+Subject: [PATCH] Support walk-in name/phone entry in scans monitor Add Package
+ form
+
+---
+ .../package/add-non-member-package.tsx        | 88 ++++++++++++++-----
+ src/components/ui/scans/scan-container.tsx    |  9 +-
+ src/lib/actions/member-actions.ts             |  9 +-
+ src/lib/schemas/newUserSchema.ts              |  9 ++
+ 4 files changed, 89 insertions(+), 26 deletions(-)
+
+diff --git a/src/components/ui/dialogs/package/add-non-member-package.tsx b/src/components/ui/dialogs/package/add-non-member-package.tsx
+index 7049241..20ca077 100644
+--- a/src/components/ui/dialogs/package/add-non-member-package.tsx
++++ b/src/components/ui/dialogs/package/add-non-member-package.tsx
+@@ -41,7 +41,17 @@ type PendingMemberHit = {
+   phone: string;
+ };
+ 
+-export function AddNonMemberPackage({ packages }: { packages: Package[] }) {
++export function AddNonMemberPackage({
++  packages,
++  triggerLabel = "Add package to non member",
++  dialogTitle = "Add package to non member",
++  dialogDescription = "Enter the client's name and phone, or search a pending signup. The package transfers to their member account when they are approved.",
++}: {
++  packages: Package[];
++  triggerLabel?: string;
++  dialogTitle?: string;
++  dialogDescription?: string;
++}) {
+   const router = useRouter();
+   const [open, setOpen] = useState(false);
+   const [pkg, setPkg] = useState<Package | null>(null);
+@@ -172,17 +182,14 @@ export function AddNonMemberPackage({ packages }: { packages: Package[] }) {
+         size="sm"
+         onClick={() => handleOpenChange(true)}
+       >
+-        Add package to non member
++        {triggerLabel}
+       </Button>
+ 
+       <Dialog open={open} onOpenChange={handleOpenChange}>
+         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+           <DialogHeader>
+-            <DialogTitle>Add package to non member</DialogTitle>
+-            <DialogDescription>
+-              Search for a pending signup and assign a package. It will transfer
+-              to their member account when approved.
+-            </DialogDescription>
++            <DialogTitle>{dialogTitle}</DialogTitle>
++            <DialogDescription>{dialogDescription}</DialogDescription>
+           </DialogHeader>
+ 
+           <form action={formAction} className="space-y-4">
+@@ -202,7 +209,9 @@ export function AddNonMemberPackage({ packages }: { packages: Package[] }) {
+             <input type="hidden" name="priceChanged" value={String(priceChanged)} />
+ 
+             <div className="space-y-2" ref={searchRef}>
+-              <Label className="text-sm font-medium">Search non member</Label>
++              <Label className="text-sm font-medium">
++                Search pending signup (optional)
++              </Label>
+               <div className="relative">
+                 <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                 <Input
+@@ -252,18 +261,41 @@ export function AddNonMemberPackage({ packages }: { packages: Package[] }) {
+               )}
+             </div>
+ 
+-            {selectedMemberId && (
+-              <div className="grid grid-cols-2 gap-4 rounded-md border p-3 bg-muted/30">
+-                <div className="space-y-1">
+-                  <Label className="text-xs text-muted-foreground">Name</Label>
+-                  <p className="text-sm font-medium">{name}</p>
+-                </div>
+-                <div className="space-y-1">
+-                  <Label className="text-xs text-muted-foreground">Phone</Label>
+-                  <p className="text-sm font-medium">{phoneNumber}</p>
+-                </div>
++            <div className="grid grid-cols-2 gap-4">
++              <div className="space-y-2">
++                <Label className="text-sm font-medium">Name</Label>
++                <Input
++                  type="text"
++                  className="w-full"
++                  placeholder="Client name"
++                  value={name}
++                  onChange={(e) => {
++                    setName(e.target.value);
++                    if (selectedMemberId) {
++                      setSelectedMemberId("");
++                    }
++                  }}
++                  disabled={pending}
++                />
+               </div>
+-            )}
++              <div className="space-y-2">
++                <Label className="text-sm font-medium">Phone number</Label>
++                <Input
++                  type="tel"
++                  inputMode="numeric"
++                  className="w-full"
++                  placeholder="01xxxxxxxxx"
++                  value={phoneNumber}
++                  onChange={(e) => {
++                    setPhoneNumber(e.target.value.replace(/\s/g, ""));
++                    if (selectedMemberId) {
++                      setSelectedMemberId("");
++                    }
++                  }}
++                  disabled={pending}
++                />
++              </div>
++            </div>
+ 
+             <div className="space-y-2">
+               <Label className="text-sm font-medium">Package</Label>
+@@ -390,6 +422,18 @@ export function AddNonMemberPackage({ packages }: { packages: Package[] }) {
+                   {(state.errors as { message?: string }).message}
+                 </p>
+               )}
++            {state?.errors &&
++              typeof state.errors === "object" &&
++              !("message" in state.errors) && (
++                <div className="text-destructive text-sm space-y-1">
++                  {"name" in state.errors && (
++                    <p>{(state.errors as { name?: string }).name}</p>
++                  )}
++                  {"phoneNumber" in state.errors && (
++                    <p>{(state.errors as { phoneNumber?: string }).phoneNumber}</p>
++                  )}
++                </div>
++              )}
+ 
+             <div className="flex justify-end gap-2">
+               <Button
+@@ -402,7 +446,11 @@ export function AddNonMemberPackage({ packages }: { packages: Package[] }) {
+               <Button
+                 type="submit"
+                 disabled={
+-                  pending || !selectedMemberId || !pkg || !selectedStartDate
++                  pending ||
++                  !name.trim() ||
++                  !phoneNumber.trim() ||
++                  !pkg ||
++                  !selectedStartDate
+                 }
+               >
+                 {pending ? "Saving…" : "Add package"}
+diff --git a/src/components/ui/scans/scan-container.tsx b/src/components/ui/scans/scan-container.tsx
+index a706af1..34ff4fd 100644
+--- a/src/components/ui/scans/scan-container.tsx
++++ b/src/components/ui/scans/scan-container.tsx
+@@ -10,7 +10,7 @@ import { useSearchParams } from "next/navigation";
+ import { formatDate } from "date-fns";
+ import { PaymentDatePicker } from "../payments/date-picker";
+ import { AttendanceContainer } from "./attendance-container";
+-import AddGuestPackage from "../dialogs/package/add-guest-package";
++import { AddNonMemberPackage } from "../dialogs/package/add-non-member-package";
+ import { OpenGymDropInDialog } from "../dialogs/open-gym/open-gym-drop-in-dialog";
+ import { OpenGymSubscribeDialog } from "../dialogs/open-gym/open-gym-subscribe-dialog";
+ import { OpenGymPricingDialog } from "../dialogs/open-gym/open-gym-pricing-dialog";
+@@ -163,7 +163,12 @@ export function ScanContainer({
+             <OpenGymPricingDialog packages={packages} />
+             <OpenGymDropInDialog />
+             <OpenGymSubscribeDialog packages={packages} />
+-            <AddGuestPackage packages={packages} />
++            <AddNonMemberPackage
++              packages={packages}
++              triggerLabel="Add Package"
++              dialogTitle="Subscribe to a package"
++              dialogDescription="Enter the walk-in client's name and phone as you collect their details. The package and payment are saved now and transfer to their account when they become a member."
++            />
+             <PaymentDatePicker
+               selectedDate={selectedCheckInsDate}
+               onDateChange={handleCheckInsDateChange}
+diff --git a/src/lib/actions/member-actions.ts b/src/lib/actions/member-actions.ts
+index 1200b23..c2d31e3 100644
+--- a/src/lib/actions/member-actions.ts
++++ b/src/lib/actions/member-actions.ts
+@@ -10,7 +10,7 @@ import {
+ import { addMember as addMemberRequest } from "../data/users";
+ import { parseStateError } from "../utils/state-errors";
+ import { bookClass, bookDropIn, cancelBooking } from "../data/bookings";
+-import { nonUserDataSchema } from "../schemas/newUserSchema";
++import { guestPackageDataSchema } from "../schemas/newUserSchema";
+ import { ApiError } from "@/core/api-error";
+ 
+ export const acceptMemberAction = async (uid: string) => {
+@@ -110,14 +110,14 @@ export const subscribeGuestPackageAction = async (
+ 
+     console.log(formData);
+ 
+-    nonUserDataSchema.parse({
++    guestPackageDataSchema.parse({
+       name,
+       phoneNumber,
+     });
+ 
+     const response = await subscribeGuestToPackage(
+-      name,
+-      phoneNumber,
++      name.trim(),
++      phoneNumber.replace(/\s/g, ""),
+       pkgId,
+       startDate,
+       paymentMethod,
+@@ -127,6 +127,7 @@ export const subscribeGuestPackageAction = async (
+     );
+ 
+     revalidatePath("/dashboard/member-requests");
++    revalidatePath("/dashboard/scans-monitor");
+ 
+     return {
+       success: true,
+diff --git a/src/lib/schemas/newUserSchema.ts b/src/lib/schemas/newUserSchema.ts
+index a1323c7..63adaff 100644
+--- a/src/lib/schemas/newUserSchema.ts
++++ b/src/lib/schemas/newUserSchema.ts
+@@ -1,5 +1,14 @@
+ import { z } from "zod";
+ 
++export const guestPackageDataSchema = z.object({
++  name: z.string().trim().min(2, "Name must be at least 2 characters"),
++  phoneNumber: z
++    .string()
++    .trim()
++    .transform((value) => value.replace(/\s/g, ""))
++    .pipe(z.string().regex(/^[0-9]{11}$/, "Phone number must be 11 digits")),
++});
++
+ export const nonUserDataSchema = z.object({
+   name: z
+     .string()
+-- 
+2.43.0
+

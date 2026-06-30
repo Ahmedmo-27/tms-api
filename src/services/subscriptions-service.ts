@@ -14,6 +14,7 @@ import { ChallengeService } from "./challenge-service";
 import User from "../models/user";
 import { Server as SocketIOServer } from "socket.io";
 import { resolveOpenGymPaymentNote } from "../utils/open-gym-payment-purpose";
+import { normalizePhoneNumber } from "../utils/phone";
 
 export class SubscriptionsService {
   static async frontDeskSubscribeToPackage(
@@ -272,6 +273,36 @@ export class SubscriptionsService {
     });
   }
 
+  static async transferStagedPackagesToMember(
+    uid: string,
+    phoneNumber: string,
+    session?: ClientSession,
+  ) {
+    const cleanPhone = normalizePhoneNumber(phoneNumber);
+    const pkgQuery = NonUserPackage.find({
+      phoneNumber: cleanPhone,
+      added: false,
+    });
+    if (session) pkgQuery.session(session);
+    const savedPkgs = await pkgQuery;
+
+    for (const savedPkg of savedPkgs) {
+      await SubscriptionsService.addSavedPkgToMember(
+        uid,
+        savedPkg.pkgId.toString(),
+        savedPkg.pkgStartDate.toISOString(),
+        savedPkg.remainingClasses,
+        savedPkg.pkgEndDate.toISOString(),
+        session
+      );
+      await NonUserPackage.findByIdAndUpdate(
+        savedPkg._id,
+        { added: true },
+        session ? { session } : {}
+      );
+    }
+  }
+
   static async addNonUserPackage(
     name: string,
     phoneNumber: string,
@@ -283,6 +314,8 @@ export class SubscriptionsService {
     amount?: string,
     locationId?: string,
   ) {
+    name = name.trim();
+    phoneNumber = normalizePhoneNumber(phoneNumber);
     const pkg = await Package.findById(pkgId);
     if (!pkg)
       throw new NotFoundError("PACKAGE_NOT_FOUND", "The package was not found");
