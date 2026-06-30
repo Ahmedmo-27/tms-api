@@ -56,7 +56,7 @@ export const registerUserManually = asyncHandler(
       });
       await member.save(session ? { session } : {});
       await SubscriptionsService.transferStagedPackagesToMember(
-        user._id.toString(),
+        (user._id as Types.ObjectId).toString(),
         cleanPhoneNumber,
         session
       );
