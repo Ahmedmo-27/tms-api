@@ -1,0 +1,785 @@
+From 1fc20808e80ec681451f348deee90e0dece96365 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Tue, 30 Jun 2026 12:39:30 +0000
+Subject: [PATCH 1/2] Fix scan error toasts and socket connection for admin
+ dashboard
+
+- Add shared socket helper that strips /api from the API URL so Socket.io
+  connects to the server root where events are emitted
+- Fix FAILED-SCAN listener cleanup and create sockets inside useEffect
+- Show live/offline connection badge on Scans Monitor
+- Display package-over detail for failed PT/open gym rows
+- Harden daily attendance parsing when arrays are missing
+- Redirect /dashboard to /dashboard/scans-monitor after login
+- Apply the same socket fixes to coach scan monitor
+---
+ src/app/dashboard/page.tsx                    |  6 +-
+ src/components/coach/CoachDashboardShell.tsx  | 10 +--
+ src/components/coach/CoachScansMonitor.tsx    | 21 +++--
+ .../ui/scans/attendance-container.tsx         | 23 +++--
+ src/components/ui/scans/class-container.tsx   | 24 ++++--
+ src/components/ui/scans/scan-container.tsx    | 85 +++++++++++++------
+ src/lib/socket.ts                             | 33 +++++++
+ src/lib/utils/parsers/scans-parser.ts         | 48 +++++++++--
+ 8 files changed, 183 insertions(+), 67 deletions(-)
+ create mode 100644 src/lib/socket.ts
+
+diff --git a/src/app/dashboard/page.tsx b/src/app/dashboard/page.tsx
+index ee4691d..64b1a46 100644
+--- a/src/app/dashboard/page.tsx
++++ b/src/app/dashboard/page.tsx
+@@ -1,7 +1,5 @@
+-
++import { redirect } from "next/navigation";
+ 
+ export default function Page() {
+-  return (
+-    <div></div>
+-  )
++  redirect("/dashboard/scans-monitor");
+ }
+diff --git a/src/components/coach/CoachDashboardShell.tsx b/src/components/coach/CoachDashboardShell.tsx
+index 1e01629..ef57072 100644
+--- a/src/components/coach/CoachDashboardShell.tsx
++++ b/src/components/coach/CoachDashboardShell.tsx
+@@ -11,7 +11,8 @@ import {
+ } from "@/lib/store/features/coachSlice";
+ import { useCoachApi } from "@/hooks/useCoachApi";
+ import { useRouter } from "next/navigation";
+-import { io, Socket } from "socket.io-client";
++import { Socket } from "socket.io-client";
++import { createTmsSocket } from "@/lib/socket";
+ import { Button } from "@/components/ui/button";
+ import { Badge } from "@/components/ui/badge";
+ import {
+@@ -39,8 +40,6 @@ interface CoachNewPackagePayload {
+   createdAt: string;
+ }
+ 
+-const API_URL = process.env.NEXT_PUBLIC_TMS_API_URL as string;
+-
+ export function CoachDashboardShell() {
+   const dispatch = useAppDispatch();
+   const router = useRouter();
+@@ -63,10 +62,7 @@ export function CoachDashboardShell() {
+   useEffect(() => {
+     if (!coachId) return;
+ 
+-    const socket: Socket = io(API_URL, {
+-      transports: ["websocket"],
+-      withCredentials: true,
+-    });
++    const socket: Socket = createTmsSocket();
+ 
+     socket.on("connect", () => {
+       socket.emit("coach:joinRoom", coachId);
+diff --git a/src/components/coach/CoachScansMonitor.tsx b/src/components/coach/CoachScansMonitor.tsx
+index 03bda06..9ea5336 100644
+--- a/src/components/coach/CoachScansMonitor.tsx
++++ b/src/components/coach/CoachScansMonitor.tsx
+@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback } from "react";
+ import { useCoachApi } from "@/hooks/useCoachApi";
+ import { useAppSelector } from "@/lib/hooks";
+ import type { RootState } from "@/lib/store/store";
+-import { io } from "socket.io-client";
+ import { format } from "date-fns";
+ import {
+   Card,
+@@ -34,6 +33,11 @@ import {
+   Dumbbell,
+ } from "lucide-react";
+ import toast from "react-hot-toast";
++import {
++  createTmsSocket,
++  formatFailedScanToast,
++  type FailedScanPayload,
++} from "@/lib/socket";
+ 
+ // ─── Types ───────────────────────────────────────────────────────────────────
+ 
+@@ -58,9 +62,6 @@ interface CoachClassScanData {
+ 
+ // ─── Helpers ─────────────────────────────────────────────────────────────────
+ 
+-const API_URL = process.env.NEXT_PUBLIC_TMS_API_URL as string;
+-const socket = io(API_URL, { transports: ["websocket"] });
+-
+ function formatTime12h(time: string): string {
+   const [hourStr, minuteStr] = time.split(":");
+   const hour = parseInt(hourStr, 10);
+@@ -281,12 +282,20 @@ export function CoachScansMonitor() {
+ 
+   // Real-time: refresh on any scan event
+   useEffect(() => {
++    const socket = createTmsSocket();
+     const handleRefresh = () => fetchAll(selectedDate);
++    const handleFailedScan = (payload: FailedScanPayload) => {
++      toast.error(formatFailedScanToast(payload));
++      handleRefresh();
++    };
++
+     socket.on("SUCCESS-SCAN", handleRefresh);
+-    socket.on("FAILED-SCAN", handleRefresh);
++    socket.on("FAILED-SCAN", handleFailedScan);
++
+     return () => {
+       socket.off("SUCCESS-SCAN", handleRefresh);
+-      socket.off("FAILED-SCAN", handleRefresh);
++      socket.off("FAILED-SCAN", handleFailedScan);
++      socket.disconnect();
+     };
+   }, [selectedDate, fetchAll]);
+ 
+diff --git a/src/components/ui/scans/attendance-container.tsx b/src/components/ui/scans/attendance-container.tsx
+index ad8cd32..12eb079 100644
+--- a/src/components/ui/scans/attendance-container.tsx
++++ b/src/components/ui/scans/attendance-container.tsx
+@@ -92,14 +92,21 @@ export const AttendanceContainer = ({
+                         {format(new Date(scan.time), "hh:mm a")}
+                       </TableCell>
+                       <TableCell className="text-right">
+-                        <Badge
+-                          className={cn(
+-                            "font-normal",
+-                            getStatusColor(scan.status)
+-                          )}
+-                        >
+-                          {scan.status}
+-                        </Badge>
++                        <div className="flex flex-col items-end gap-1">
++                          <Badge
++                            className={cn(
++                              "font-normal",
++                              getStatusColor(scan.status)
++                            )}
++                          >
++                            {scan.status}
++                          </Badge>
++                          {scan.statusDetail ? (
++                            <span className="text-xs text-muted-foreground max-w-[160px] text-right">
++                              {scan.statusDetail}
++                            </span>
++                          ) : null}
++                        </div>
+                       </TableCell>
+                     </TableRow>
+                   ))
+diff --git a/src/components/ui/scans/class-container.tsx b/src/components/ui/scans/class-container.tsx
+index 0f37b00..716acc1 100644
+--- a/src/components/ui/scans/class-container.tsx
++++ b/src/components/ui/scans/class-container.tsx
+@@ -23,6 +23,7 @@ export interface ClassScan {
+   time: string;
+   method: string;
+   status: "SUCCESS" | "FAILED" | "WILL_PAY";
++  statusDetail?: string;
+   bookingId?: string;
+ }
+ 
+@@ -120,14 +121,21 @@ export const ClassContainer = ({
+                         {(scan.status === "WILL_PAY" && scan.bookingId) ? (
+                           <PaymentSelectorDialog bookingId={scan.bookingId} />
+                         ) : (
+-                          <Badge
+-                            className={cn(
+-                              "font-normal",
+-                              getStatusColor(scan.status)
+-                            )}
+-                          >
+-                            {scan.status}
+-                          </Badge>
++                          <div className="flex flex-col items-end gap-1">
++                            <Badge
++                              className={cn(
++                                "font-normal",
++                                getStatusColor(scan.status)
++                              )}
++                            >
++                              {scan.status}
++                            </Badge>
++                            {scan.statusDetail ? (
++                              <span className="text-xs text-muted-foreground max-w-[160px] text-right">
++                                {scan.statusDetail}
++                              </span>
++                            ) : null}
++                          </div>
+                         )}
+                       </TableCell>
+                     </TableRow>
+diff --git a/src/components/ui/scans/scan-container.tsx b/src/components/ui/scans/scan-container.tsx
+index f7b9f73..a706af1 100644
+--- a/src/components/ui/scans/scan-container.tsx
++++ b/src/components/ui/scans/scan-container.tsx
+@@ -1,5 +1,4 @@
+ "use client";
+-import { io } from "socket.io-client";
+ import {
+   ClassContainer,
+   ClassContainerProps,
+@@ -16,15 +15,29 @@ import { OpenGymDropInDialog } from "../dialogs/open-gym/open-gym-drop-in-dialog
+ import { OpenGymSubscribeDialog } from "../dialogs/open-gym/open-gym-subscribe-dialog";
+ import { OpenGymPricingDialog } from "../dialogs/open-gym/open-gym-pricing-dialog";
+ import { fetchScansMonitorData } from "@/lib/data/scans";
+-
+-const socket = io(process.env.NEXT_PUBLIC_TMS_API_URL!, {
+-  transports: ["websocket"],
+-});
++import {
++  createTmsSocket,
++  formatFailedScanToast,
++  type FailedScanPayload,
++} from "@/lib/socket";
+ 
+ function parseDateParam(value: string | null): Date {
+   return value ? new Date(value) : new Date();
+ }
+ 
++const failedScanToastStyle = {
++  duration: 5000,
++  style: {
++    border: "1px solid #f87171",
++    padding: "12px",
++    color: "#b91c1c",
++  },
++  iconTheme: {
++    primary: "#b91c1c",
++    secondary: "#ffe4e6",
++  },
++};
++
+ export function ScanContainer({
+   scans: initialScans,
+   dailyAttendance: initialDailyAttendance,
+@@ -38,6 +51,7 @@ export function ScanContainer({
+ 
+   const [scans, setScans] = useState(initialScans);
+   const [dailyAttendance, setDailyAttendance] = useState(initialDailyAttendance);
++  const [socketConnected, setSocketConnected] = useState(false);
+   const [selectedDate, setSelectedDate] = useState<Date>(() =>
+     parseDateParam(searchParams.get("date"))
+   );
+@@ -92,32 +106,35 @@ export function ScanContainer({
+ 
+   // Real-time updates on scan events
+   useEffect(() => {
+-    const handleRefresh = () => fetchAll(selectedDate, selectedCheckInsDate, true);
++    const socket = createTmsSocket();
++
++    const handleRefresh = () =>
++      fetchAll(selectedDate, selectedCheckInsDate, true);
++
++    const handleFailedScan = (payload: FailedScanPayload) => {
++      toast.error(formatFailedScanToast(payload), failedScanToastStyle);
++      handleRefresh();
++    };
++
++    const handleConnect = () => setSocketConnected(true);
++    const handleDisconnect = () => setSocketConnected(false);
+ 
++    socket.on("connect", handleConnect);
++    socket.on("disconnect", handleDisconnect);
+     socket.on("SUCCESS-SCAN", handleRefresh);
++    socket.on("FAILED-SCAN", handleFailedScan);
+ 
+-    socket.on(
+-      "FAILED-SCAN",
+-      (payload: { code: string; member: string; message: string }) => {
+-        toast.error(`❌ ${payload.member}: ${payload.message}`, {
+-          duration: 5000,
+-          style: {
+-            border: "1px solid #f87171",
+-            padding: "12px",
+-            color: "#b91c1c",
+-          },
+-          iconTheme: {
+-            primary: "#b91c1c",
+-            secondary: "#ffe4e6",
+-          },
+-        });
+-        handleRefresh();
+-      }
+-    );
++    if (socket.connected) {
++      setSocketConnected(true);
++    }
+ 
+     return () => {
++      socket.off("connect", handleConnect);
++      socket.off("disconnect", handleDisconnect);
+       socket.off("SUCCESS-SCAN", handleRefresh);
+-      socket.off("FAILED-SCAN", handleRefresh);
++      socket.off("FAILED-SCAN", handleFailedScan);
++      socket.disconnect();
++      setSocketConnected(false);
+     };
+   }, [selectedDate, selectedCheckInsDate, fetchAll]);
+ 
+@@ -125,7 +142,23 @@ export function ScanContainer({
+     <div>
+       <div className="flex flex-col">
+         <div className="flex flex-row justify-between text-2xl font-bold mx-5 py-4 border-b-2">
+-          Check Ins
++          <div className="flex items-center gap-3">
++            Check Ins
++            <span
++              className={`text-xs font-normal px-2 py-1 rounded-full ${
++                socketConnected
++                  ? "bg-green-100 text-green-800"
++                  : "bg-amber-100 text-amber-800"
++              }`}
++              title={
++                socketConnected
++                  ? "Live scan updates connected"
++                  : "Live scan updates disconnected — error toasts may not appear"
++              }
++            >
++              {socketConnected ? "Live" : "Offline"}
++            </span>
++          </div>
+           <div className="flex flex-wrap items-center gap-2">
+             <OpenGymPricingDialog packages={packages} />
+             <OpenGymDropInDialog />
+diff --git a/src/lib/socket.ts b/src/lib/socket.ts
+new file mode 100644
+index 0000000..4d8b922
+--- /dev/null
++++ b/src/lib/socket.ts
+@@ -0,0 +1,33 @@
++import { io, Socket } from "socket.io-client";
++
++export interface FailedScanPayload {
++  code: string;
++  member: string;
++  message: string;
++}
++
++/**
++ * REST clients may use NEXT_PUBLIC_TMS_API_URL with an `/api` suffix, but
++ * Socket.io is served from the HTTP server root — strip the suffix for sockets.
++ */
++export function getSocketServerUrl(): string {
++  const apiUrl = process.env.NEXT_PUBLIC_TMS_API_URL;
++  if (!apiUrl) {
++    throw new Error("NEXT_PUBLIC_TMS_API_URL environment variable is not set");
++  }
++  return apiUrl.replace(/\/api\/?$/, "");
++}
++
++export function createTmsSocket(): Socket {
++  return io(getSocketServerUrl(), {
++    transports: ["websocket", "polling"],
++    reconnection: true,
++    reconnectionAttempts: 10,
++  });
++}
++
++export function formatFailedScanToast(payload: FailedScanPayload): string {
++  const member = payload.member?.trim() || "Member";
++  const message = payload.message?.trim() || payload.code || "Scan failed";
++  return `❌ ${member}: ${message}`;
++}
+diff --git a/src/lib/utils/parsers/scans-parser.ts b/src/lib/utils/parsers/scans-parser.ts
+index a061bbd..edcacf2 100644
+--- a/src/lib/utils/parsers/scans-parser.ts
++++ b/src/lib/utils/parsers/scans-parser.ts
+@@ -1,7 +1,27 @@
+ import { ScheduledClass } from "@/components/ui/schedule/columns";
+ import { ClassScan } from "@/components/ui/scans/class-container";
+ import { ClassContainerProps } from "@/components/ui/scans/class-container";
+-import { formatDate } from "date-fns";
++
++function parseScanStatus(
++  status: boolean | string | undefined
++): ClassScan["status"] {
++  if (typeof status === "boolean") {
++    return status ? "SUCCESS" : "FAILED";
++  }
++  if (status === "SUCCESS" || status === "FAILED" || status === "WILL_PAY") {
++    return status;
++  }
++  return "FAILED";
++}
++
++function getFailedStatusDetail(
++  status: ClassScan["status"],
++  method?: string
++): string | undefined {
++  if (status !== "FAILED" || !method) return undefined;
++  if (method === "No Active Package") return "No active package found";
++  return undefined;
++}
+ 
+ export const parseScans = (scheduledClasses: ScheduledClass[], date: Date) => {
+   const output: ClassContainerProps[] = [];
+@@ -9,13 +29,14 @@ export const parseScans = (scheduledClasses: ScheduledClass[], date: Date) => {
+   scheduledClasses.forEach((cls) => {
+     const parsedScans: ClassScan[] = [];
+     cls.scans.forEach((scan: any) => {
+-       
++      const status = parseScanStatus(scan.status);
+       const parsedScan: ClassScan = {
+         member: scan.uid?.name || "Unknown Member",
+         phone: scan.uid?.phoneNumber || "No Phone",
+         time: new Date(scan.scanTime).toString(),
+         method: scan.method,
+-        status: typeof scan.status === "boolean"?(scan.status?"SUCCESS":"FAILED"):scan.status,
++        status,
++        statusDetail: getFailedStatusDetail(status, scan.method),
+         bookingId: scan.bookingId,
+       };
+       parsedScans.push(parsedScan);
+@@ -42,26 +63,37 @@ export const parseDailyAttendance = (scans: any) => {
+     pt: [],
+     openGym: [],
+   };
+-  scans[0].ptAttendance.forEach((scan: any) => {
++
++  const record = scans?.[0];
++  if (!record) {
++    return output;
++  }
++
++  (record.ptAttendance ?? []).forEach((scan: any) => {
++    const status = parseScanStatus(scan.status);
+     const parsedScan: ClassScan = {
+       member: scan.uid?.name || "Unknown Member",
+       phone: scan.uid?.phoneNumber || "No Phone",
+       time: new Date(scan.time).toString(),
+       method: scan.method,
+-      status: typeof scan.status === "boolean" ? (scan.status ? "SUCCESS" : "FAILED") : scan.status,
++      status,
++      statusDetail: getFailedStatusDetail(status, scan.method),
+     };
+     output.pt.push(parsedScan);
+   });
+-  scans[0].openGymAttendance.forEach((scan: any) => {
++
++  (record.openGymAttendance ?? []).forEach((scan: any) => {
++    const status = parseScanStatus(scan.status);
+     const parsedScan: ClassScan = {
+       member: scan.uid?.name || "Unknown Member",
+       phone: scan.uid?.phoneNumber || "No Phone",
+       time: new Date(scan.time).toString(),
+       method: scan.method,
+-      status: typeof scan.status === "boolean" ? (scan.status ? "SUCCESS" : "FAILED") : scan.status,
++      status,
++      statusDetail: getFailedStatusDetail(status, scan.method),
+     };
+     output.openGym.push(parsedScan);
+   });
+-  console.log(output);
++
+   return output;
+ };
+-- 
+2.43.0
+
+
+From bd1aa290453ab1e45143ac0342dbd16b8f9dc4be Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Tue, 30 Jun 2026 13:05:38 +0000
+Subject: [PATCH 2/2] Fix admin member request acceptance from dashboard
+
+- Add acceptMemberAction server action so approval uses server-side auth
+- Show loading states, success toasts, and API error messages on accept
+- Allow management and branch_admin roles to log into the dashboard
+- Fix pending members list parsing to use array map instead of for-in
+---
+ src/components/ui/forms/login-form.tsx        |  7 +-
+ src/components/ui/member-requests/columns.tsx | 82 ++++++++++++++-----
+ .../mobile-member-request-card.tsx            | 36 +++++---
+ .../pending-members-container.tsx             | 17 ++--
+ src/lib/actions/member-actions.ts             | 32 ++++++++
+ 5 files changed, 130 insertions(+), 44 deletions(-)
+
+diff --git a/src/components/ui/forms/login-form.tsx b/src/components/ui/forms/login-form.tsx
+index 1175047..d2691ea 100644
+--- a/src/components/ui/forms/login-form.tsx
++++ b/src/components/ui/forms/login-form.tsx
+@@ -91,7 +91,12 @@ export function LoginForm({
+           return initialState;
+         }
+ 
+-        if (loginData.role === "admin" || loginData.role === "fd") {
++        if (
++          loginData.role === "admin" ||
++          loginData.role === "fd" ||
++          loginData.role === "management" ||
++          loginData.role === "branch_admin"
++        ) {
+           dispatch(logoutCoach());
+           dispatch(setCredentials(loginData));
+           router.push("/dashboard");
+diff --git a/src/components/ui/member-requests/columns.tsx b/src/components/ui/member-requests/columns.tsx
+index 50e34ff..a478467 100644
+--- a/src/components/ui/member-requests/columns.tsx
++++ b/src/components/ui/member-requests/columns.tsx
+@@ -1,7 +1,14 @@
++"use client";
++
++"use client";
++
+ import { ColumnDef } from "@tanstack/react-table";
+ import { Button } from "../button";
+-import { Check } from "lucide-react";
+-import { addMember } from "@/lib/data/users";
++import { Check, Loader2 } from "lucide-react";
++import { acceptMemberAction } from "@/lib/actions/member-actions";
++import { useState } from "react";
++import toast from "react-hot-toast";
++import { ApiError } from "@/core/api-error";
+ 
+ export type PendingPackage = {
+   pkgName: string;
+@@ -16,6 +23,53 @@ export type User = {
+   pendingPackages: PendingPackage[];
+ };
+ 
++function AcceptMemberButton({ uid, name }: { uid: string; name: string }) {
++  const [isProcessing, setIsProcessing] = useState(false);
++
++  const handleAddMember = async () => {
++    setIsProcessing(true);
++    try {
++      const result = await acceptMemberAction(uid);
++      if (result.success) {
++        toast.success(`${name} was accepted as a member.`);
++        window.location.reload();
++        return;
++      }
++
++      const message =
++        result.errors instanceof ApiError
++          ? result.errors.message
++          : result.errors?.message || "Failed to accept member request.";
++      toast.error(message);
++    } catch {
++      toast.error("Failed to accept member request.");
++    } finally {
++      setIsProcessing(false);
++    }
++  };
++
++  return (
++    <Button
++      size="sm"
++      disabled={isProcessing}
++      className="flex items-center gap-1.5 text-green-800 bg-transparent border border-green-800 rounded-md px-2 py-1 hover:bg-green-800 hover:text-white w-full sm:w-auto"
++      onClick={handleAddMember}
++    >
++      {isProcessing ? (
++        <Loader2 className="h-4 w-4 animate-spin" />
++      ) : (
++        <Check className="h-4 w-4" />
++      )}
++      <span className="hidden sm:inline">
++        {isProcessing ? "Accepting..." : "Add Member"}
++      </span>
++      <span className="sm:hidden">
++        {isProcessing ? "..." : "Add"}
++      </span>
++    </Button>
++  );
++}
++
+ export const columns: ColumnDef<User>[] = [
+   {
+     accessorKey: "name",
+@@ -51,24 +105,10 @@ export const columns: ColumnDef<User>[] = [
+   {
+     id: "actions",
+     header: "Action",
+-    cell: ({ row }) => {
+-      const handleAddMember = async (uid: string) => {
+-        await addMember(uid);
+-        window.location.reload();
+-      };
+-      return (
+-        <div className="flex space-x-2">
+-          <Button
+-            size="sm"
+-            className="flex items-center gap-1.5 text-green-800 bg-transparent border border-green-800 rounded-md px-2 py-1 hover:bg-green-800 hover:text-white w-full sm:w-auto"
+-            onClick={() => handleAddMember(row.original.id)}
+-          >
+-            <Check className="h-4 w-4"/>
+-            <span className="hidden sm:inline">Add Member</span>
+-            <span className="sm:hidden">Add</span>
+-          </Button>
+-        </div>
+-      );
+-    },
++    cell: ({ row }) => (
++      <div className="flex space-x-2">
++        <AcceptMemberButton uid={row.original.id} name={row.original.name} />
++      </div>
++    ),
+   },
+ ];
+diff --git a/src/components/ui/member-requests/mobile-member-request-card.tsx b/src/components/ui/member-requests/mobile-member-request-card.tsx
+index c501f83..c10f7c4 100644
+--- a/src/components/ui/member-requests/mobile-member-request-card.tsx
++++ b/src/components/ui/member-requests/mobile-member-request-card.tsx
+@@ -6,12 +6,14 @@ import {
+   Phone,
+   Mail,
+   Check,
+-  UserPlus
++  UserPlus,
++  Loader2,
+ } from "lucide-react";
+ import { User as MemberRequest } from "./columns";
+-import { cn } from "@/lib/utils";
+-import { addMember } from "@/lib/data/users";
++import { acceptMemberAction } from "@/lib/actions/member-actions";
+ import { useState } from "react";
++import toast from "react-hot-toast";
++import { ApiError } from "@/core/api-error";
+ 
+ interface MobileMemberRequestCardProps {
+   memberRequest: MemberRequest;
+@@ -30,10 +32,20 @@ export function MobileMemberRequestCard({ memberRequest }: MobileMemberRequestCa
+     e.stopPropagation();
+     setIsProcessing(true);
+     try {
+-      await addMember(memberRequest.id);
+-      window.location.reload();
+-    } catch (error) {
+-      console.error('Failed to add member:', error);
++      const result = await acceptMemberAction(memberRequest.id);
++      if (result.success) {
++        toast.success(`${memberRequest.name} was accepted as a member.`);
++        window.location.reload();
++        return;
++      }
++
++      const message =
++        result.errors instanceof ApiError
++          ? result.errors.message
++          : result.errors?.message || "Failed to accept member request.";
++      toast.error(message);
++    } catch {
++      toast.error("Failed to accept member request.");
+     } finally {
+       setIsProcessing(false);
+     }
+@@ -59,7 +71,6 @@ export function MobileMemberRequestCard({ memberRequest }: MobileMemberRequestCa
+     >
+       <CardContent className="p-4">
+         <div className="space-y-3">
+-          {/* Header with member info and status */}
+           <div className="flex items-start justify-between">
+             <div className="flex items-center gap-3 flex-1 min-w-0">
+               <Avatar className="h-10 w-10 flex-shrink-0">
+@@ -81,7 +92,6 @@ export function MobileMemberRequestCard({ memberRequest }: MobileMemberRequestCa
+             </div>
+           </div>
+ 
+-          {/* Contact details */}
+           <div className="grid grid-cols-1 gap-2 text-sm">
+             <div 
+               className="flex items-center gap-2 text-muted-foreground cursor-pointer hover:text-foreground transition-colors"
+@@ -114,7 +124,6 @@ export function MobileMemberRequestCard({ memberRequest }: MobileMemberRequestCa
+             )}
+           </div>
+ 
+-          {/* Action button */}
+           <div className="pt-3 border-t">
+             <Button
+               onClick={handleAddMember}
+@@ -122,12 +131,15 @@ export function MobileMemberRequestCard({ memberRequest }: MobileMemberRequestCa
+               className="w-full bg-green-600 hover:bg-green-700 text-white"
+               size="sm"
+             >
+-              <Check className="h-4 w-4 mr-2" />
++              {isProcessing ? (
++                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
++              ) : (
++                <Check className="h-4 w-4 mr-2" />
++              )}
+               {isProcessing ? "Adding Member..." : "Add Member"}
+             </Button>
+           </div>
+ 
+-          {/* Request info */}
+           <div className="pt-2">
+             <div className="flex items-center justify-between text-xs text-muted-foreground">
+               <span>New member request</span>
+diff --git a/src/components/ui/member-requests/pending-members-container.tsx b/src/components/ui/member-requests/pending-members-container.tsx
+index 2bf79f8..4c26643 100644
+--- a/src/components/ui/member-requests/pending-members-container.tsx
++++ b/src/components/ui/member-requests/pending-members-container.tsx
+@@ -36,16 +36,13 @@ export default function PendingMembersContainer() {
+     try {
+       const response = await getUsers(debouncedTerm || null, page, 10);
+       const users = response.data;
+-      const renderedUsers: User[] = [];
+-      for (const user in users) {
+-        renderedUsers.push({
+-          id: users[user]._id,
+-          name: users[user].name,
+-          phone: users[user].phoneNumber,
+-          email: users[user].email,
+-          pendingPackages: users[user].pendingPackages ?? [],
+-        });
+-      }
++      const renderedUsers: User[] = users.map((user: any) => ({
++        id: user._id,
++        name: user.name,
++        phone: user.phoneNumber,
++        email: user.email,
++        pendingPackages: user.pendingPackages ?? [],
++      }));
+       setData(renderedUsers);
+       setTotalUsers(response.total);
+     } catch (error) {
+diff --git a/src/lib/actions/member-actions.ts b/src/lib/actions/member-actions.ts
+index 7da9309..1200b23 100644
+--- a/src/lib/actions/member-actions.ts
++++ b/src/lib/actions/member-actions.ts
+@@ -7,11 +7,43 @@ import {
+   subscribeMemberToPackage,
+   unsubscribeMemberFromPackage,
+ } from "../data/member";
++import { addMember as addMemberRequest } from "../data/users";
+ import { parseStateError } from "../utils/state-errors";
+ import { bookClass, bookDropIn, cancelBooking } from "../data/bookings";
+ import { nonUserDataSchema } from "../schemas/newUserSchema";
+ import { ApiError } from "@/core/api-error";
+ 
++export const acceptMemberAction = async (uid: string) => {
++  try {
++    if (!uid?.trim()) {
++      return {
++        success: false,
++        errors: { message: "Member id is required" },
++        data: null,
++      };
++    }
++
++    const response = await addMemberRequest(uid);
++    revalidatePath("/dashboard/member-requests");
++    revalidatePath("/dashboard/our-members");
++
++    return {
++      success: true,
++      errors: null,
++      data: response,
++    };
++  } catch (error) {
++    if (error instanceof ApiError) {
++      return {
++        success: false,
++        errors: error,
++        data: null,
++      };
++    }
++    return parseStateError(error as Error);
++  }
++};
++
+ export const adjustClassesAction = async (_prevState: any, formData: FormData) => {
+   try {
+     const uid = formData.get("uid") as string;
+-- 
+2.43.0
+
