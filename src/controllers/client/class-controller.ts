@@ -9,6 +9,7 @@ import { BookingsService } from "../../services/bookings-service";
 import { SchedulerService } from "../../services/scheduler-service";
 import ScheduledClass from "../../models/scheduledClass";
 import Package from "../../models/package";
+import { parseScanPayload } from "../../utils/scan-payload";
 
 export const getSchedule = asyncHandler(async function (
   req: Request,
@@ -100,22 +101,45 @@ export const attendClass = asyncHandler(async function (
   const _id = authReq.user._id as string;
   const attendanceId = req.params.attendanceId;
   const io = req.app.get("io");
-  if (attendanceId === "pt") {
+  const payload = parseScanPayload(attendanceId);
+
+  if (payload.type === "pt") {
     await BookingsService.recordPtAttendance(_id, io);
     new SuccessResponse("Class Attended!").send(res);
     return;
   }
-  if (attendanceId === "opengym") {
-    await BookingsService.recordOpenGymAttendance(_id, io);
+
+  if (payload.type === "legacy_open_gym") {
+    await BookingsService.recordLegacyOpenGymAttendance(_id, io);
     new SuccessResponse("Class Attended!").send(res);
     return;
   }
-  const scheduledClass = await ScheduledClass.findById(attendanceId);
-  if (scheduledClass) {
-    await BookingsService.recordAttendance(_id, attendanceId, io);
+
+  if (payload.type === "branch_open_gym") {
+    await BookingsService.recordOpenGymAttendance(
+      _id,
+      io,
+      payload.locationId,
+    );
     new SuccessResponse("Class Attended!").send(res);
     return;
   }
+
+  if (payload.type === "scheduled_class") {
+    const scheduledClass = await ScheduledClass.findById(
+      payload.scheduledClassId,
+    );
+    if (scheduledClass) {
+      await BookingsService.recordAttendance(
+        _id,
+        payload.scheduledClassId,
+        io,
+      );
+      new SuccessResponse("Class Attended!").send(res);
+      return;
+    }
+  }
+
   throw new NotFoundError("INVALID_QR_CODE", "Qr code is invalid");
 });
 

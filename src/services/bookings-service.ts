@@ -17,6 +17,11 @@ import { Server } from "http";
 import DailyAttendance from "../models/dailyAttendance";
 import Location from "../models/location";
 import logger from "../config/logger";
+import {
+  isValidOpenGymLocationId,
+  LEGACY_OPEN_GYM_PAYLOAD,
+} from "../utils/scan-payload";
+import { resolveLegacyOpenGymLocationId } from "../utils/open-gym-location";
 import NonUserBooking, { INonUserBooking } from "../models/nonUserBookings";
 import { sendPaymentToRentalSystem } from "./egygap-erp-service";
 import { NotificationsService } from "./notifications-service";
@@ -476,10 +481,110 @@ export class BookingsService {
     });
   }
 
-  static async recordOpenGymAttendance(uid: string, io: Server) {
+  static async recordLegacyOpenGymAttendance(uid: string, io: Server) {
+    const locationId = await resolveLegacyOpenGymLocationId();
+    if (!locationId) {
+      const member = await Member.findOne({ uid }).populate({ path: "uid" });
+      const memberName = member ? (member.uid as any).name : "";
+      io.emit("FAILED-SCAN", {
+        code: "LEGACY_OPEN_GYM_UNAVAILABLE",
+        message:
+          "Legacy open gym QR is not supported. Use branch QR code (opengym:locationId).",
+        member: memberName,
+      });
+      throw new BadRequestError(
+        "LEGACY_OPEN_GYM_UNAVAILABLE",
+        "Legacy open gym QR is not supported. Use branch-specific QR code.",
+      );
+    }
+    await BookingsService.recordOpenGymAttendance(uid, io, locationId, {
+      legacyPayload: LEGACY_OPEN_GYM_PAYLOAD,
+    });
+  }
+
+  private static async assertOpenGymBranchExists(
+    locationId: string,
+    memberName: string,
+    io: Server,
+  ): Promise<void> {
+    if (!isValidOpenGymLocationId(locationId)) {
+      io.emit("FAILED-SCAN", {
+        code: "INVALID_LOCATION",
+        message: "Invalid location",
+        member: memberName,
+      });
+      throw new BadRequestError("INVALID_LOCATION", "Invalid location", {
+        locationId,
+      });
+    }
+
+    const location = await Location.findById(locationId).select("_id");
+    if (!location) {
+      io.emit("FAILED-SCAN", {
+        code: "INVALID_LOCATION",
+        message: "Invalid location",
+        member: memberName,
+      });
+      throw new BadRequestError("INVALID_LOCATION", "Invalid location", {
+        locationId,
+      });
+    }
+  }
+
+  private static async findOpenGymDropInBooking(
+    uid: string,
+    locationId: string,
+  ): Promise<boolean> {
+    const member = await Member.findOne({ uid }).populate({
+      path: "bookings.scid",
+      populate: [{ path: "cid" }, { path: "locationId" }],
+    });
+    if (!member) {
+      return false;
+    }
+
+    if (!member?.bookings?.length) {
+      return false;
+    }
+
+    return member.bookings.some((booking) => {
+      if (!booking.isDropIn) {
+        return false;
+      }
+      const scheduledClass = booking.scid as any;
+      if (!scheduledClass || typeof scheduledClass !== "object") {
+        return false;
+      }
+      const classDoc = scheduledClass.cid;
+      if (!classDoc || classDoc.category !== "WORKSPACE") {
+        return false;
+      }
+      const bookingLocationId =
+        scheduledClass.locationId?._id?.toString() ??
+        scheduledClass.locationId?.toString();
+      return bookingLocationId === locationId;
+    });
+  }
+
+  static async recordOpenGymAttendance(
+    uid: string,
+    io: Server,
+    locationId?: string,
+    options?: { legacyPayload?: string },
+  ) {
     const member = await Member.findOne({ uid }).populate({ path: "uid" });
     if (!member)
       throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
+
+    const memberName = (member.uid as any).name;
+
+    if (locationId) {
+      await BookingsService.assertOpenGymBranchExists(
+        locationId,
+        memberName,
+        io,
+      );
+    }
 
     const pkgIds = await Package.getSpaceWalkPackageIds();
     if (!pkgIds.length)
@@ -488,25 +593,71 @@ export class BookingsService {
         "No eligible space walk packages found",
       );
 
-    if (await DailyAttendance.hasSuccessfulOpenGymToday(uid)) {
+    if (
+      await DailyAttendance.hasSuccessfulOpenGymToday(
+        uid,
+        locationId,
+      )
+    ) {
       io.emit("FAILED-SCAN", {
         code: "ATTENDANCE_ALREADY_RECORDED",
         message: "Attendance was already recorded",
-        member: (member.uid as any).name,
+        member: memberName,
       });
       throw new ConflictError(
         "ATTENDANCE_ALREADY_RECORDED",
-        "Open gym attendance already recorded today",
+        locationId
+          ? "Open gym attendance already recorded today at this branch"
+          : "Open gym attendance already recorded today",
       );
     }
 
+    const hasDropIn = locationId
+      ? await BookingsService.findOpenGymDropInBooking(uid, locationId)
+      : false;
+
     await runInTransaction(async (session: ClientSession) => {
+      if (hasDropIn) {
+        await DailyAttendance.recordOpenGymAttendance(
+          uid,
+          "Drop In",
+          session,
+          "SUCCESS",
+          io,
+          locationId,
+        );
+        io.emit("SUCCESS-SCAN", {
+          code: "OPEN_GYM_CLASS_ATTENDED",
+          message: "Success",
+          member: memberName,
+        });
+        return;
+      }
+
       const pid = await Member.recordSpaceWalkAttendance(
         uid,
         pkgIds,
         session,
         io,
+        locationId,
       );
+
+      if (pid === "NO_ACCESS_AT_LOCATION") {
+        await DailyAttendance.recordOpenGymAttendance(
+          uid,
+          "No Access At Location",
+          session,
+          "FAILED",
+          io,
+          locationId,
+        );
+        throw new ForbiddenError(
+          "NO_ACCESS_AT_LOCATION",
+          "Member does not have access at this location",
+          { locationId },
+        );
+      }
+
       if (!pid) {
         await DailyAttendance.recordOpenGymAttendance(
           uid,
@@ -514,12 +665,14 @@ export class BookingsService {
           session,
           "FAILED",
           io,
+          locationId,
         );
         throw new ForbiddenError(
           "NO_ACTIVE_PACKAGE_FOUND",
           "No active packages found",
         );
       }
+
       const pkg = await Package.findById(pid);
       if (!pkg)
         throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found");
@@ -529,11 +682,16 @@ export class BookingsService {
         session,
         "SUCCESS",
         io,
+        locationId,
       );
       io.emit("SUCCESS-SCAN", {
         code: "OPEN_GYM_CLASS_ATTENDED",
         message: "Success",
-        member: (member.uid as any).name,
+        member: memberName,
+        ...(options?.legacyPayload
+          ? { legacyOpenGymPayload: options.legacyPayload }
+          : {}),
+        ...(locationId ? { locationId } : {}),
       });
     });
   }
