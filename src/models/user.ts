@@ -100,7 +100,7 @@ const UserSchema: Schema<IUser, UserModel, IUserMethods> = new Schema({
     type: String,
     required: true,
     enum: {
-      values: ["member", "user", "admin", "fd", "coach"],
+      values: ["member", "user", "admin", "fd", "coach", "management", "branch_admin"],
       message: "{VALUE} is not a valid role",
     },
   },

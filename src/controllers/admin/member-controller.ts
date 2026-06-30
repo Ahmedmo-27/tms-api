@@ -6,7 +6,6 @@ import { SuccessResponse } from "../../core/ApiResponse";
 import asyncHandler from "../../utils/asyncHandler";
 import NonUserPackage from "../../models/nonUserPackage";
 import { SubscriptionsService } from "../../services/subscriptions-service";
-import logger from "../../config/logger";
 import { runInTransaction } from "../../utils/transaction";
 
 export const addMember = asyncHandler(async function (
@@ -28,16 +27,15 @@ export const addMember = asyncHandler(async function (
     await member.save(session ? { session } : {});
     user.role = "member";
     await user.save(session ? { session } : {});
-    logger.info("User: ", user);
+
     const pkgQuery = NonUserPackage.find({
       phoneNumber: user.phoneNumber,
       added: false,
     });
     if (session) pkgQuery.session(session);
     const savedPkgs = await pkgQuery;
-    logger.info("Packages: ", savedPkgs);
+
     for (const savedPkg of savedPkgs) {
-      logger.info("Adding package", savedPkg);
       await SubscriptionsService.addSavedPkgToMember(
         id,
         savedPkg.pkgId.toString(),
@@ -54,7 +52,7 @@ export const addMember = asyncHandler(async function (
     }
   });
 
-  const member = await Member.findOne({ uid: id });
+  const member = await Member.findOne({ uid: id }).lean();
   new SuccessResponse("Member Added!", member).send(res);
 });
 

@@ -20,12 +20,15 @@ abstract class ApiResponse {
   ) {}
 
   public send(res: Response): Response {
-    
-    const resData = this;
-    if (resData.statusCode === 200) {
-      logger.info(resData.message);
+    if (this.statusCode === 200) {
+      logger.info(this.message);
     }
-    return res.status(this.statusCode).json(resData);
+    return res.status(this.statusCode).json({
+      statusCode: this.statusCode,
+      message: this.message,
+      code: this.code,
+      data: this.data,
+    });
   }
 }
 
