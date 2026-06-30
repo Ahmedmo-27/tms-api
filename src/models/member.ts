@@ -17,6 +17,7 @@ import Package, {
   isUnlimitedSpaceAccess,
   spaceAccessPriority,
 } from "./package";
+import { memberPackageGrantsAccessAtLocation } from "../utils/open-gym-location";
 
 interface IAttendance {
   scid: Types.ObjectId;
@@ -129,8 +130,9 @@ interface IMemberstatics {
     uid: string,
     pkgIds: string[],
     session: ClientSession,
-    io: Server
-  ): Promise<string | null>;
+    io: Server,
+    locationId?: string
+  ): Promise<"NO_ACCESS_AT_LOCATION" | string | null>;
   removeBooking(
     uid: string,
     scid: string,
@@ -1073,8 +1075,9 @@ MemberSchema.static(
     uid: string,
     pkgIds: string[],
     session: ClientSession,
-    io: Server
-  ): Promise<string | null> {
+    io: Server,
+    locationId?: string
+  ): Promise<"NO_ACCESS_AT_LOCATION" | string | null> {
     const member = await this.findOne({ uid })
       .populate({ path: "uid" })
       .session(session);
@@ -1082,7 +1085,7 @@ MemberSchema.static(
     if (!member)
       throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
 
-    const memberPkgs = member.packages.filter(
+    let memberPkgs = member.packages.filter(
       (p) => pkgIds.includes(p.pkgId.toString()) && p.status === "ACTIVE"
     );
 
@@ -1098,6 +1101,32 @@ MemberSchema.static(
     const catalogPkgs = await Package.find({
       _id: { $in: memberPkgs.map((p) => p.pkgId) },
     }).session(session);
+    const catalogByPkgId = new Map(
+      catalogPkgs.map((p) => [p._id.toString(), p]),
+    );
+
+    if (locationId) {
+      const branchEligible = memberPkgs.filter((memberPkg) => {
+        const catalogPkg = catalogByPkgId.get(memberPkg.pkgId.toString());
+        return memberPackageGrantsAccessAtLocation(
+          memberPkg.locationId,
+          catalogPkg?.locationId,
+          locationId,
+        );
+      });
+
+      if (branchEligible.length === 0) {
+        io.emit("FAILED-SCAN", {
+          code: "NO_ACCESS_AT_LOCATION",
+          message: "Member does not have access at this location",
+          member: (member.uid as any).name,
+        });
+        return "NO_ACCESS_AT_LOCATION";
+      }
+
+      memberPkgs = branchEligible;
+    }
+
     const categoryByPkgId = new Map(
       catalogPkgs.map((p) => [p._id.toString(), p.category]),
     );
