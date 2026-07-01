@@ -1,7 +1,20 @@
 import { IPayment } from "../models/payment";
 import { IPackage } from "../models/package";
 
-type PopulatedPackage = Pick<IPackage, "category" | "renewalPeriod" | "name">;
+type PopulatedPackage = Pick<IPackage, "category" | "name" | "expiryPeriod">;
+
+export function formatOpenGymDurationLabel(expiryPeriod?: number): string | null {
+  if (!expiryPeriod || expiryPeriod < 1) return null;
+  if (expiryPeriod % 30 === 0) {
+    const months = expiryPeriod / 30;
+    return months === 1 ? "1 month" : `${months} months`;
+  }
+  if (expiryPeriod % 7 === 0) {
+    const weeks = expiryPeriod / 7;
+    return weeks === 1 ? "1 week" : `${weeks} weeks`;
+  }
+  return expiryPeriod === 1 ? "1 day" : `${expiryPeriod} days`;
+}
 
 export function resolveOpenGymPaymentPurposeLabel(payment: {
   purpose: IPayment["purpose"];
@@ -19,14 +32,16 @@ export function resolveOpenGymPaymentPurposeLabel(payment: {
     const pkg = payment.pkgId as PopulatedPackage;
     if (pkg.category !== "OPEN_GYM") return null;
 
-    if (pkg.renewalPeriod === "WEEKLY") {
-      return "Open Gym Weekly Package";
-    }
-    if (pkg.renewalPeriod === "MONTHLY") {
-      return "Open Gym Monthly Package";
+    if (pkg.name?.trim()) {
+      return pkg.name;
     }
 
-    return pkg.name ?? "Open Gym Package";
+    const duration = formatOpenGymDurationLabel(pkg.expiryPeriod);
+    if (duration) {
+      return `Open Gym ${duration} package`;
+    }
+
+    return "Open Gym Package";
   }
 
   return null;
@@ -34,10 +49,13 @@ export function resolveOpenGymPaymentPurposeLabel(payment: {
 
 export function resolveOpenGymPaymentNote(
   category: string,
-  renewalPeriod?: string,
+  _renewalPeriod?: string,
+  name?: string,
+  expiryPeriod?: number,
 ): string | undefined {
   if (category !== "OPEN_GYM") return undefined;
-  if (renewalPeriod === "WEEKLY") return "Open gym weekly package";
-  if (renewalPeriod === "MONTHLY") return "Open gym monthly package";
+  if (name?.trim()) return name.trim();
+  const duration = formatOpenGymDurationLabel(expiryPeriod);
+  if (duration) return `Open gym ${duration} package`;
   return "Open gym package";
 }
