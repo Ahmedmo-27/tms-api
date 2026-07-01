@@ -1,7 +1,23 @@
 import { IPayment } from "../models/payment";
-import { IPackage } from "../models/package";
+import { IPackage, OpenGymRenewalPeriod } from "../models/package";
 
 type PopulatedPackage = Pick<IPackage, "category" | "renewalPeriod" | "name">;
+
+const OPEN_GYM_RENEWAL_LABELS: Record<OpenGymRenewalPeriod, string> = {
+  WEEKLY: "Weekly",
+  BIWEEKLY: "2-Week",
+  TRIWEEKLY: "3-Week",
+  MONTHLY: "Monthly",
+  BIMONTHLY: "2-Month",
+  TRIMONTHLY: "3-Month",
+};
+
+function renewalLabel(renewalPeriod?: string): string | null {
+  if (!renewalPeriod) return null;
+  return (
+    OPEN_GYM_RENEWAL_LABELS[renewalPeriod as OpenGymRenewalPeriod] ?? null
+  );
+}
 
 export function resolveOpenGymPaymentPurposeLabel(payment: {
   purpose: IPayment["purpose"];
@@ -19,14 +35,16 @@ export function resolveOpenGymPaymentPurposeLabel(payment: {
     const pkg = payment.pkgId as PopulatedPackage;
     if (pkg.category !== "OPEN_GYM") return null;
 
-    if (pkg.renewalPeriod === "WEEKLY") {
-      return "Open Gym Weekly Package";
-    }
-    if (pkg.renewalPeriod === "MONTHLY") {
-      return "Open Gym Monthly Package";
+    if (pkg.name?.trim()) {
+      return pkg.name;
     }
 
-    return pkg.name ?? "Open Gym Package";
+    const label = renewalLabel(pkg.renewalPeriod);
+    if (label) {
+      return `Open Gym ${label} Package`;
+    }
+
+    return "Open Gym Package";
   }
 
   return null;
@@ -35,9 +53,11 @@ export function resolveOpenGymPaymentPurposeLabel(payment: {
 export function resolveOpenGymPaymentNote(
   category: string,
   renewalPeriod?: string,
+  name?: string,
 ): string | undefined {
   if (category !== "OPEN_GYM") return undefined;
-  if (renewalPeriod === "WEEKLY") return "Open gym weekly package";
-  if (renewalPeriod === "MONTHLY") return "Open gym monthly package";
+  if (name?.trim()) return name.trim();
+  const label = renewalLabel(renewalPeriod);
+  if (label) return `Open gym ${label.toLowerCase()} package`;
   return "Open gym package";
 }

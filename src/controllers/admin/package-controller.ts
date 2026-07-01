@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import Package, {
   OPEN_GYM_RENEWAL_DAYS,
   OpenGymRenewalPeriod,
+  isOpenGymRenewalPeriod,
 } from "../../models/package";
 import Member from "../../models/member";
 import { BadRequestError, NotFoundError } from "../../core/ApiError";
@@ -66,26 +67,23 @@ function normalizeOpenGymPackageFields(body: {
   let expiryPeriod = body.expiryPeriod;
 
   if (renewalPeriod) {
+    if (!isOpenGymRenewalPeriod(renewalPeriod)) {
+      throw new BadRequestError(
+        "INVALID_OPEN_GYM_RENEWAL",
+        `Invalid renewalPeriod. Allowed values: ${Object.keys(OPEN_GYM_RENEWAL_DAYS).join(", ")}`,
+      );
+    }
     expiryPeriod = OPEN_GYM_RENEWAL_DAYS[renewalPeriod];
-  } else if (!expiryPeriod || ![7, 30].includes(expiryPeriod)) {
+  } else if (!expiryPeriod || expiryPeriod < 1) {
     throw new BadRequestError(
       "INVALID_OPEN_GYM_RENEWAL",
-      "Open gym packages require renewalPeriod (WEEKLY or MONTHLY) or expiryPeriod of 7 or 30 days",
+      "Open gym packages require renewalPeriod or a positive expiryPeriod (days)",
     );
-  } else {
-    expiryPeriod =
-      expiryPeriod === 7
-        ? OPEN_GYM_RENEWAL_DAYS.WEEKLY
-        : OPEN_GYM_RENEWAL_DAYS.MONTHLY;
   }
-
-  const resolvedRenewal: OpenGymRenewalPeriod | undefined =
-    renewalPeriod ??
-    (expiryPeriod === OPEN_GYM_RENEWAL_DAYS.WEEKLY ? "WEEKLY" : "MONTHLY");
 
   return {
     expiryPeriod,
-    renewalPeriod: resolvedRenewal,
+    renewalPeriod,
     numberOfSessions: body.numberOfSessions ?? 10000,
   };
 }
