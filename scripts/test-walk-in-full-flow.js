@@ -236,6 +236,43 @@ async function runFlow(uri, seeded) {
     "paymentId stable"
   );
 
+  const pendingLoginRes = await request("POST", "/auth/login", {
+    body: { phoneNumber: walkInPhone, password: "TestPass1!" },
+  });
+  const pendingToken = pendingLoginRes.data?.data?.token;
+  log(
+    "Pending: can log into app",
+    pendingLoginRes.status === 200 && pendingToken,
+    `role=${pendingLoginRes.data?.data?.role}`
+  );
+
+  const pendingPkgsRes = await request("GET", "/member/member-packages", {
+    token: pendingToken,
+  });
+  log(
+    "Pending: cannot access member packages API",
+    pendingPkgsRes.status === 403,
+    `status=${pendingPkgsRes.status} (403 expected — role=user)`
+  );
+
+  const pendingScanRes = await request("POST", "/member/attend/pt", {
+    token: pendingToken,
+  });
+  log(
+    "Pending: cannot scan / use package before acceptance",
+    pendingScanRes.status === 403,
+    `status=${pendingScanRes.status} (403 expected — member role required)`
+  );
+
+  const pendingProfileRes = await request("GET", "/member/profile", {
+    token: pendingToken,
+  });
+  log(
+    "Pending: no member profile yet (package not on account)",
+    pendingProfileRes.status === 404,
+    `status=${pendingProfileRes.status}`
+  );
+
   // ── Stage 3: Staff accepts → full member ──
   const acceptRes = await request("POST", `/admin/member/${pendingUserId}`, auth);
   log(
@@ -251,6 +288,35 @@ async function runFlow(uri, seeded) {
     "Member: package transferred to account",
     memberPackages.length > 0 && memberPackages[0].remainingClasses === 5,
     `packages=${memberPackages.length} remaining=${memberPackages[0]?.remainingClasses}`
+  );
+  log(
+    "Member: transferred package is ACTIVE",
+    memberPackages[0]?.status === "ACTIVE",
+    `status=${memberPackages[0]?.status}`
+  );
+
+  const memberLoginRes = await request("POST", "/auth/login", {
+    body: { phoneNumber: walkInPhone, password: "TestPass1!" },
+  });
+  const memberToken = memberLoginRes.data?.data?.token;
+  const memberPkgsApiRes = await request("GET", "/member/member-packages", {
+    token: memberToken,
+  });
+  const apiPackages = memberPkgsApiRes.data?.data || [];
+  log(
+    "Member: package visible in app after acceptance",
+    memberPkgsApiRes.status === 200 && apiPackages.length > 0,
+    `count=${apiPackages.length}`
+  );
+
+  const memberProfileRes = await request("GET", "/member/profile", {
+    token: memberToken,
+  });
+  const profilePackages = memberProfileRes.data?.data?.packages || [];
+  log(
+    "Member: profile shows active package",
+    memberProfileRes.status === 200 && profilePackages.length > 0,
+    `packages=${profilePackages.length}`
   );
 
   const stage3 = await queryDb(uri, async (db) => {
