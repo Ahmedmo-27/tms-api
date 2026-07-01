@@ -69,7 +69,12 @@ export class SubscriptionsService {
 
     const resolvedNote =
       note ??
-      resolveOpenGymPaymentNote(pkg.category, pkg.renewalPeriod, pkg.name);
+      resolveOpenGymPaymentNote(
+        pkg.category,
+        pkg.renewalPeriod,
+        pkg.name,
+        pkg.expiryPeriod,
+      );
 
     await runInTransaction(async (session: ClientSession) => {
       const payment = await PaymentsService.savePayment(

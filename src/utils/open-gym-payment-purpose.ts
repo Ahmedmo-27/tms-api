@@ -1,22 +1,19 @@
 import { IPayment } from "../models/payment";
-import { IPackage, OpenGymRenewalPeriod } from "../models/package";
+import { IPackage } from "../models/package";
 
-type PopulatedPackage = Pick<IPackage, "category" | "renewalPeriod" | "name">;
+type PopulatedPackage = Pick<IPackage, "category" | "name" | "expiryPeriod">;
 
-const OPEN_GYM_RENEWAL_LABELS: Record<OpenGymRenewalPeriod, string> = {
-  WEEKLY: "Weekly",
-  BIWEEKLY: "2-Week",
-  TRIWEEKLY: "3-Week",
-  MONTHLY: "Monthly",
-  BIMONTHLY: "2-Month",
-  TRIMONTHLY: "3-Month",
-};
-
-function renewalLabel(renewalPeriod?: string): string | null {
-  if (!renewalPeriod) return null;
-  return (
-    OPEN_GYM_RENEWAL_LABELS[renewalPeriod as OpenGymRenewalPeriod] ?? null
-  );
+export function formatOpenGymDurationLabel(expiryPeriod?: number): string | null {
+  if (!expiryPeriod || expiryPeriod < 1) return null;
+  if (expiryPeriod % 30 === 0) {
+    const months = expiryPeriod / 30;
+    return months === 1 ? "1 month" : `${months} months`;
+  }
+  if (expiryPeriod % 7 === 0) {
+    const weeks = expiryPeriod / 7;
+    return weeks === 1 ? "1 week" : `${weeks} weeks`;
+  }
+  return expiryPeriod === 1 ? "1 day" : `${expiryPeriod} days`;
 }
 
 export function resolveOpenGymPaymentPurposeLabel(payment: {
@@ -39,9 +36,9 @@ export function resolveOpenGymPaymentPurposeLabel(payment: {
       return pkg.name;
     }
 
-    const label = renewalLabel(pkg.renewalPeriod);
-    if (label) {
-      return `Open Gym ${label} Package`;
+    const duration = formatOpenGymDurationLabel(pkg.expiryPeriod);
+    if (duration) {
+      return `Open Gym ${duration} package`;
     }
 
     return "Open Gym Package";
@@ -52,12 +49,13 @@ export function resolveOpenGymPaymentPurposeLabel(payment: {
 
 export function resolveOpenGymPaymentNote(
   category: string,
-  renewalPeriod?: string,
+  _renewalPeriod?: string,
   name?: string,
+  expiryPeriod?: number,
 ): string | undefined {
   if (category !== "OPEN_GYM") return undefined;
   if (name?.trim()) return name.trim();
-  const label = renewalLabel(renewalPeriod);
-  if (label) return `Open gym ${label.toLowerCase()} package`;
+  const duration = formatOpenGymDurationLabel(expiryPeriod);
+  if (duration) return `Open gym ${duration} package`;
   return "Open gym package";
 }

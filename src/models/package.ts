@@ -27,33 +27,6 @@ export function spaceAccessPriority(category: string): number {
   }
 }
 
-export type OpenGymRenewalPeriod =
-  | "WEEKLY"
-  | "BIWEEKLY"
-  | "TRIWEEKLY"
-  | "MONTHLY"
-  | "BIMONTHLY"
-  | "TRIMONTHLY";
-
-export const OPEN_GYM_RENEWAL_DAYS: Record<OpenGymRenewalPeriod, number> = {
-  WEEKLY: 7,
-  BIWEEKLY: 14,
-  TRIWEEKLY: 21,
-  MONTHLY: 30,
-  BIMONTHLY: 60,
-  TRIMONTHLY: 90,
-};
-
-export const OPEN_GYM_RENEWAL_PERIOD_VALUES = Object.keys(
-  OPEN_GYM_RENEWAL_DAYS,
-) as OpenGymRenewalPeriod[];
-
-export function isOpenGymRenewalPeriod(
-  value: string,
-): value is OpenGymRenewalPeriod {
-  return value in OPEN_GYM_RENEWAL_DAYS;
-}
-
 export function resolvePackageExpiryDays(pkg: {
   expiryPeriod: number;
 }): number {
@@ -63,8 +36,6 @@ export function resolvePackageExpiryDays(pkg: {
 export function getPackageEndDate(
   startDate: string | Date,
   pkg: {
-    category: string;
-    renewalPeriod?: OpenGymRenewalPeriod;
     expiryPeriod: number;
   },
 ): Date {
@@ -83,7 +54,7 @@ export interface IPackage {
   category: string;
   price: number;
   expiryPeriod: number;
-  renewalPeriod?: OpenGymRenewalPeriod;
+  renewalPeriod?: string;
   locationId?: Types.ObjectId;
   coachId?: string;
   hidden?: boolean;
@@ -130,7 +101,6 @@ const PackageSchema = new Schema<IPackage, IPackageModel, IPackageMethods>({
   },
   renewalPeriod: {
     type: String,
-    enum: OPEN_GYM_RENEWAL_PERIOD_VALUES,
     required: false,
   },
   category: {

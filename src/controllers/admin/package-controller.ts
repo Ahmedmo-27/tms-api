@@ -1,9 +1,5 @@
 import { Request, Response } from "express";
-import Package, {
-  OPEN_GYM_RENEWAL_DAYS,
-  OpenGymRenewalPeriod,
-  isOpenGymRenewalPeriod,
-} from "../../models/package";
+import Package from "../../models/package";
 import Member from "../../models/member";
 import { BadRequestError, NotFoundError } from "../../core/ApiError";
 import { SuccessResponse } from "../../core/ApiResponse";
@@ -51,9 +47,8 @@ export const getPackage = asyncHandler(async function (
 function normalizeOpenGymPackageFields(body: {
   category: string;
   expiryPeriod?: number;
-  renewalPeriod?: OpenGymRenewalPeriod;
   numberOfSessions?: number;
-}): { expiryPeriod: number; renewalPeriod?: OpenGymRenewalPeriod; numberOfSessions: number } {
+}): { expiryPeriod: number; numberOfSessions: number } {
   if (body.category !== "OPEN_GYM") {
     if (!body.expiryPeriod)
       throw new BadRequestError("INVALID_REQUEST", "Invalid request");
@@ -63,27 +58,15 @@ function normalizeOpenGymPackageFields(body: {
     };
   }
 
-  const renewalPeriod = body.renewalPeriod;
-  let expiryPeriod = body.expiryPeriod;
-
-  if (renewalPeriod) {
-    if (!isOpenGymRenewalPeriod(renewalPeriod)) {
-      throw new BadRequestError(
-        "INVALID_OPEN_GYM_RENEWAL",
-        `Invalid renewalPeriod. Allowed values: ${Object.keys(OPEN_GYM_RENEWAL_DAYS).join(", ")}`,
-      );
-    }
-    expiryPeriod = OPEN_GYM_RENEWAL_DAYS[renewalPeriod];
-  } else if (!expiryPeriod || expiryPeriod < 1) {
+  if (!body.expiryPeriod || body.expiryPeriod < 1) {
     throw new BadRequestError(
-      "INVALID_OPEN_GYM_RENEWAL",
-      "Open gym packages require renewalPeriod or a positive expiryPeriod (days)",
+      "INVALID_OPEN_GYM_DURATION",
+      "Open gym packages require a positive expiryPeriod (duration in days)",
     );
   }
 
   return {
-    expiryPeriod,
-    renewalPeriod,
+    expiryPeriod: body.expiryPeriod,
     numberOfSessions: body.numberOfSessions ?? 10000,
   };
 }
@@ -98,7 +81,6 @@ export const addPackage = asyncHandler(
       coachId,
       classRestrictions,
       expiryPeriod,
-      renewalPeriod,
       numberOfSessions,
       locationId,
     } = req.body;
@@ -116,7 +98,6 @@ export const addPackage = asyncHandler(
     const normalized = normalizeOpenGymPackageFields({
       category,
       expiryPeriod,
-      renewalPeriod,
       numberOfSessions,
     });
 
@@ -126,7 +107,6 @@ export const addPackage = asyncHandler(
       category,
       price,
       expiryPeriod: normalized.expiryPeriod,
-      renewalPeriod: normalized.renewalPeriod,
       coachId,
       opensClasses,
       classRestrictions,
@@ -178,14 +158,12 @@ export const updatePackage = asyncHandler(
     const merged = {
       category: req.body.category ?? existing.category,
       expiryPeriod: req.body.expiryPeriod ?? existing.expiryPeriod,
-      renewalPeriod: req.body.renewalPeriod ?? existing.renewalPeriod,
       numberOfSessions: req.body.numberOfSessions ?? existing.numberOfSessions,
     };
     const normalized = normalizeOpenGymPackageFields(merged);
     const updatePayload = {
       ...req.body,
       expiryPeriod: normalized.expiryPeriod,
-      renewalPeriod: normalized.renewalPeriod,
       numberOfSessions: normalized.numberOfSessions,
     };
 

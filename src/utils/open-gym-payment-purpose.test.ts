@@ -1,21 +1,32 @@
 import {
+  formatOpenGymDurationLabel,
   resolveOpenGymPaymentNote,
   resolveOpenGymPaymentPurposeLabel,
 } from "./open-gym-payment-purpose";
 
+describe("formatOpenGymDurationLabel", () => {
+  it("formats custom week and month durations", () => {
+    expect(formatOpenGymDurationLabel(21)).toBe("3 weeks");
+    expect(formatOpenGymDurationLabel(60)).toBe("2 months");
+    expect(formatOpenGymDurationLabel(45)).toBe("45 days");
+  });
+});
+
 describe("resolveOpenGymPaymentNote", () => {
   it("prefers the package name when provided", () => {
     expect(
-      resolveOpenGymPaymentNote("OPEN_GYM", "BIMONTHLY", "Premium 2-Month Pass"),
+      resolveOpenGymPaymentNote(
+        "OPEN_GYM",
+        undefined,
+        "Premium 2-Month Pass",
+        60,
+      ),
     ).toBe("Premium 2-Month Pass");
   });
 
-  it("falls back to renewal period labels", () => {
-    expect(resolveOpenGymPaymentNote("OPEN_GYM", "TRIWEEKLY")).toBe(
-      "Open gym 3-week package",
-    );
-    expect(resolveOpenGymPaymentNote("OPEN_GYM", "TRIMONTHLY")).toBe(
-      "Open gym 3-month package",
+  it("falls back to duration labels", () => {
+    expect(resolveOpenGymPaymentNote("OPEN_GYM", undefined, undefined, 21)).toBe(
+      "Open gym 3 weeks package",
     );
   });
 });
@@ -27,8 +38,8 @@ describe("resolveOpenGymPaymentPurposeLabel", () => {
         purpose: "PACKAGE",
         pkgId: {
           category: "OPEN_GYM",
-          renewalPeriod: "BIWEEKLY",
           name: "Open Gym 2 Weeks — Maadi",
+          expiryPeriod: 14,
         },
       }),
     ).toBe("Open Gym 2 Weeks — Maadi");
