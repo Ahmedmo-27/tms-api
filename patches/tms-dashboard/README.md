@@ -14,7 +14,7 @@ git am /path/to/tms-api/patches/tms-dashboard/open-gym-custom-packages.patch
 git push -u origin cursor/open-gym-custom-packages-ce23
 ```
 
-**Requires** the matching `tms-api` branch `cursor/open-gym-custom-packages-ce23` (custom open gym package name, duration in weeks/months/days, and price per branch).
+**Requires** the matching `tms-api` branch `cursor/open-gym-custom-packages-ce23` (custom open gym packages + optional combo with class sessions).
 
 ## Earlier fixes bundle
 
