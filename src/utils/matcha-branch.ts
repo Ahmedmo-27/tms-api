@@ -66,23 +66,51 @@ export async function ensureMemberForPendingPurchase(
   uid: string,
   session?: ClientSession,
 ): Promise<IMember> {
-  const existing = await Member.findOne({ uid }).session(session ?? null);
-  if (existing) return existing;
-
   const user = await User.findById(uid).session(session ?? null);
   if (!user || user.role !== "user") {
     throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found", { uid });
   }
 
-  const member = new Member({
-    uid,
-    packages: [],
-    bookings: [],
-    attendance: [],
-    isActive: true,
-  });
-  await member.save(session ? { session } : {});
-  return member;
+  const uidObjectId = new Types.ObjectId(uid);
+  const upsertOptions = {
+    upsert: true,
+    new: true,
+    setDefaultsOnInsert: true,
+    ...(session ? { session } : {}),
+  };
+
+  try {
+    const member = await Member.findOneAndUpdate(
+      { uid: uidObjectId },
+      {
+        $setOnInsert: {
+          uid: uidObjectId,
+          packages: [],
+          bookings: [],
+          attendance: [],
+          isActive: true,
+        },
+      },
+      upsertOptions,
+    );
+    if (!member) {
+      throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found", { uid });
+    }
+    return member;
+  } catch (error: unknown) {
+    if (
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as { code: number }).code === 11000
+    ) {
+      const existing = await Member.findOne({ uid: uidObjectId }).session(
+        session ?? null,
+      );
+      if (existing) return existing;
+    }
+    throw error;
+  }
 }
 
 export async function assertMatchaPackageForPendingUser(pkg: {

@@ -26,7 +26,6 @@ import {
   updateFcmToken,
   removeFcmToken,
 } from "../controllers/admin/notifications-controller";
-import { returnPublicPackages } from "../middlewares/publicPkgs.middleware";
 
 const memberRoutes = express.Router();
 const memberOrPending = ["member", "user"] as const;
@@ -87,7 +86,6 @@ memberRoutes.post(
 memberRoutes.get(
   "/packages",
   authenticateUser,
-  returnPublicPackages(),
   authorizeUser([...memberOrPending]),
   getPackage
 );
