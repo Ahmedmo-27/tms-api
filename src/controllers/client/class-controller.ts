@@ -10,13 +10,28 @@ import { SchedulerService } from "../../services/scheduler-service";
 import ScheduledClass from "../../models/scheduledClass";
 import Package from "../../models/package";
 import { parseScanPayload } from "../../utils/scan-payload";
+import { getMatchaBranchName, isPendingMember } from "../../utils/matcha-branch";
 
 export const getSchedule = asyncHandler(async function (
   req: Request,
   res: Response
 ): Promise<void> {
+  const authReq = req as AuthRequest;
   const date = req.query.date;
-  const scheduleData = await SchedulerService.getSchedule(date as string);
+  let scheduleData = await SchedulerService.getSchedule(date as string);
+
+  if (await isPendingMember(authReq.user._id as string)) {
+    const matchaBranchName = getMatchaBranchName().toLowerCase();
+    scheduleData = scheduleData.filter((session: any) => {
+      const branchName = (
+        session.sessionBranchName ??
+        session.locationId?.branchName ??
+        ""
+      ).toLowerCase();
+      return branchName === matchaBranchName;
+    });
+  }
+
   new SuccessResponse("Scheduled Classes Found!", scheduleData).send(res);
 });
 
@@ -27,7 +42,7 @@ export const getBookings = asyncHandler(async function (
   const authReq = req as AuthRequest;
   // get member
   const _id = authReq.user._id;
-  const member = await Member.findOne({ uid: _id })
+  let member = await Member.findOne({ uid: _id })
     .populate({
       path: "bookings.scid",
       populate: [
@@ -41,6 +56,10 @@ export const getBookings = asyncHandler(async function (
         },
       ],
     });
+  if (!member && authReq.user.role === "user") {
+    new SuccessResponse("Bookings Found!", []).send(res);
+    return;
+  }
   if (!member)
     throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found", { _id });
   member.bookings = member.bookings.filter(

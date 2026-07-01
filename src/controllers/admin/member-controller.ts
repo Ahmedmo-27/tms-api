@@ -17,13 +17,16 @@ export const addMember = asyncHandler(async function (
     throw new NotFoundError("USER_NOT_FOUND", "User not found", { id });
 
   await runInTransaction(async (session) => {
-    const member = new Member({
-      uid: id,
-      packages: [],
-      bookings: [],
-      attendance: [],
-    });
-    await member.save(session ? { session } : {});
+    let member = await Member.findOne({ uid: id }).session(session ?? null);
+    if (!member) {
+      member = new Member({
+        uid: id,
+        packages: [],
+        bookings: [],
+        attendance: [],
+      });
+      await member.save(session ? { session } : {});
+    }
     user.role = "member";
     await user.save(session ? { session } : {});
 
