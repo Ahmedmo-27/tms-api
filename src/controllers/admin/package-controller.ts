@@ -10,6 +10,7 @@ import NonUserPackage from "../../models/nonUserPackage";
 import { runInTransaction } from "../../utils/transaction";
 import { ClientSession } from "mongoose";
 import { resolveLocationFilter } from "../../utils/location-scope";
+import { normalizePhoneNumber } from "../../utils/phone";
 import { normalizeOpenGymPackageFields } from "../../utils/open-gym-package";
 import { Types } from "mongoose";
 
@@ -288,9 +289,18 @@ export const addNonUserPackage = asyncHandler(async function (
 
   const targetLocationId = resolveLocationFilter(req) ?? undefined;
 
+  const trimmedName = (name as string)?.trim();
+  const cleanPhone = normalizePhoneNumber(phoneNumber as string);
+  if (!trimmedName) {
+    throw new BadRequestError("INVALID_NAME", "Name is required");
+  }
+  if (!/^[0-9]{11}$/.test(cleanPhone)) {
+    throw new BadRequestError("INVALID_PHONE", "Phone number must be 11 digits");
+  }
+
   await SubscriptionsService.addNonUserPackage(
-    name,
-    phoneNumber,
+    trimmedName,
+    cleanPhone,
     pkgId,
     pkgStartDate,
     paymentMethod,

@@ -60,3 +60,22 @@ git push -u origin cursor/fix-member-request-accept-b76e
 - `/dashboard` redirects to Scans Monitor
 - Member request **Add Member** uses server action + error toasts
 - `management` / `branch_admin` roles can log into dashboard
+
+## Guest package / Scans Monitor (new)
+
+Apply `guest-package-scans-monitor.patch` on branch `cursor/guest-package-scans-monitor-cf64`:
+
+```bash
+cd tms-dashboard
+git checkout -b cursor/guest-package-scans-monitor-cf64
+git am /path/to/guest-package-scans-monitor.patch
+git push -u origin cursor/guest-package-scans-monitor-cf64
+```
+
+Changes:
+- Scans Monitor **Add Package** uses the unified non-member form
+- **Add open gym package** supports walk-ins with name + phone (same flow)
+- Staff can type name + phone for walk-ins (no pending signup required)
+- Optional search pre-fills existing members or pending signups
+- Relaxed guest name validation; phone normalized before API call
+- Branch `locationId` forwarded for guest open gym package purchases
