@@ -113,8 +113,23 @@ export async function ensureMemberForPendingPurchase(
   }
 }
 
+function resolveBranchLocationId(
+  locationId:
+    | Types.ObjectId
+    | { _id?: Types.ObjectId }
+    | string
+    | null
+    | undefined,
+): string | null {
+  if (!locationId) return null;
+  if (typeof locationId === "object" && "_id" in locationId && locationId._id) {
+    return locationId._id.toString();
+  }
+  return locationId.toString();
+}
+
 export async function assertMatchaPackageForPendingUser(pkg: {
-  locationId?: Types.ObjectId | null;
+  locationId?: Types.ObjectId | { _id?: Types.ObjectId } | null;
 }): Promise<void> {
   const matchaId = await getMatchaLocationId();
   if (!matchaId) {
@@ -123,7 +138,8 @@ export async function assertMatchaPackageForPendingUser(pkg: {
       "Matcha branch is not configured",
     );
   }
-  if (!pkg.locationId || pkg.locationId.toString() !== matchaId) {
+  const pkgLocationId = resolveBranchLocationId(pkg.locationId);
+  if (!pkgLocationId || pkgLocationId !== matchaId) {
     throw new ForbiddenError(
       "PENDING_PURCHASE_BRANCH_RESTRICTED",
       "Pending members can only purchase packages at the Matcha branch",
@@ -132,7 +148,7 @@ export async function assertMatchaPackageForPendingUser(pkg: {
 }
 
 export async function assertMatchaSessionForPendingUser(scheduledClass: {
-  locationId?: Types.ObjectId | null;
+  locationId?: Types.ObjectId | { _id?: Types.ObjectId; branchName?: string } | null;
 }): Promise<void> {
   const matchaId = await getMatchaLocationId();
   if (!matchaId) {
@@ -141,10 +157,8 @@ export async function assertMatchaSessionForPendingUser(scheduledClass: {
       "Matcha branch is not configured",
     );
   }
-  if (
-    !scheduledClass.locationId ||
-    scheduledClass.locationId.toString() !== matchaId
-  ) {
+  const sessionLocationId = resolveBranchLocationId(scheduledClass.locationId);
+  if (!sessionLocationId || sessionLocationId !== matchaId) {
     throw new ForbiddenError(
       "PENDING_PURCHASE_BRANCH_RESTRICTED",
       "Pending members can only book sessions at the Matcha branch",

@@ -62,10 +62,13 @@ describe("matcha-branch", () => {
     ).rejects.toThrow(ForbiddenError);
   });
 
-  it("allows matcha sessions for pending users", async () => {
+  it("allows matcha sessions when locationId is populated", async () => {
     await expect(
       assertMatchaSessionForPendingUser({
-        locationId: new Types.ObjectId(matchaId),
+        locationId: {
+          _id: new Types.ObjectId(matchaId),
+          branchName: "Matcha",
+        },
       }),
     ).resolves.toBeUndefined();
   });
