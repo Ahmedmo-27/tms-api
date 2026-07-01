@@ -8,7 +8,7 @@ import {
   NotFoundError,
 } from "../core/ApiError";
 
-const DEFAULT_MATCHA_BRANCH_NAME = "Matcha";
+const DEFAULT_MATCHA_BRANCH_NAME = "Matcha North Coast";
 
 let cachedMatchaLocationId: string | null | undefined;
 

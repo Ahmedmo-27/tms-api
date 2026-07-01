@@ -20,8 +20,8 @@ const LOCATIONS = [
     locationUrl: "https://maps.app.goo.gl/qKnnCbgJUUS4ViGd6",
   },
   {
-    branchName: "Matcha",
-    location: "Matcha",
+    branchName: "Matcha North Coast",
+    location: "North Coast",
     locationUrl: "",
   },
 ];
