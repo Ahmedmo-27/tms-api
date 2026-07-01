@@ -10,6 +10,7 @@ import NonUserPackage from "../../models/nonUserPackage";
 import { runInTransaction } from "../../utils/transaction";
 import { ClientSession } from "mongoose";
 import { resolveLocationFilter } from "../../utils/location-scope";
+import { normalizeOpenGymPackageFields } from "../../utils/open-gym-package";
 import { Types } from "mongoose";
 
 export const getPackage = asyncHandler(async function (
@@ -44,33 +45,6 @@ export const getPackage = asyncHandler(async function (
   new SuccessResponse("Packages Found!", packages).send(res);
 });
 
-function normalizeOpenGymPackageFields(body: {
-  category: string;
-  expiryPeriod?: number;
-  numberOfSessions?: number;
-}): { expiryPeriod: number; numberOfSessions: number } {
-  if (body.category !== "OPEN_GYM") {
-    if (!body.expiryPeriod)
-      throw new BadRequestError("INVALID_REQUEST", "Invalid request");
-    return {
-      expiryPeriod: body.expiryPeriod,
-      numberOfSessions: body.numberOfSessions ?? 1000,
-    };
-  }
-
-  if (!body.expiryPeriod || body.expiryPeriod < 1) {
-    throw new BadRequestError(
-      "INVALID_OPEN_GYM_DURATION",
-      "Open gym packages require a positive expiryPeriod (duration in days)",
-    );
-  }
-
-  return {
-    expiryPeriod: body.expiryPeriod,
-    numberOfSessions: body.numberOfSessions ?? 10000,
-  };
-}
-
 export const addPackage = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const {
@@ -99,6 +73,7 @@ export const addPackage = asyncHandler(
       category,
       expiryPeriod,
       numberOfSessions,
+      opensClasses,
     });
 
     const pkg = new Package({
@@ -159,6 +134,7 @@ export const updatePackage = asyncHandler(
       category: req.body.category ?? existing.category,
       expiryPeriod: req.body.expiryPeriod ?? existing.expiryPeriod,
       numberOfSessions: req.body.numberOfSessions ?? existing.numberOfSessions,
+      opensClasses: req.body.opensClasses ?? existing.opensClasses,
     };
     const normalized = normalizeOpenGymPackageFields(merged);
     const updatePayload = {
