@@ -29,72 +29,57 @@ import {
 import { returnPublicPackages } from "../middlewares/publicPkgs.middleware";
 
 const memberRoutes = express.Router();
+const memberOrPending = ["member", "user"] as const;
 
 // Profile Routes
 memberRoutes.get(
   "/profile",
   authenticateUser,
-  authorizeUser(["member", "user"]),
+  authorizeUser([...memberOrPending]),
   getMemberProfile
 );
-
-// // PT Routes
-// memberRoutes.post(
-//   "/pt/:pkgId",
-//   authenticateUser,
-//   authorizeUser(["member"]),
-//   attendPt
-// );
-
-// // OpenGym Routes
-// memberRoutes.post(
-//   "/opengym/:pkgId",
-//   authenticateUser,
-//   authorizeUser(["member"]),
-//   attendOpenGym
-// )
 
 // Booking Routes
 memberRoutes.get(
   "/classes",
   authenticateUser,
-  authorizeUser(["member", "user"]),
+  authorizeUser([...memberOrPending]),
   getBookings
 );
 memberRoutes.post(
   "/book/:scid",
   authenticateUser,
-  authorizeUser(["member"]),
+  authorizeUser([...memberOrPending]),
   bookClass
 );
 memberRoutes.post(
   "/dropIn",
   authenticateUser,
-  authorizeUser(["member"]),
+  authorizeUser([...memberOrPending]),
   bookDropIn
 );
 memberRoutes.post(
   "/subToWaitingList",
   authenticateUser,
-  authorizeUser(["member"]),
+  authorizeUser([...memberOrPending]),
   subToWaitingList
 )
 memberRoutes.delete(
   "/cancel/:scid",
   authenticateUser,
-  authorizeUser(["member"]),
+  authorizeUser([...memberOrPending]),
   cancelClass
 );
 memberRoutes.post(
   "/cancel-dropin/:scid",
   authenticateUser,
-  authorizeUser(["member"]),
+  authorizeUser([...memberOrPending]),
   cancelDropIn
 )
 memberRoutes.post(
   "/attend/:attendanceId",
   authenticateUser,
-  authorizeUser(["member"]),
+  authorizeUser([...memberOrPending]),
   attendClass
 );
 
@@ -103,19 +88,19 @@ memberRoutes.get(
   "/packages",
   authenticateUser,
   returnPublicPackages(),
-  authorizeUser(["member"]),
+  authorizeUser([...memberOrPending]),
   getPackage
 );
 memberRoutes.get(
   "/member-packages",
   authenticateUser,
-  authorizeUser(["member"]),
+  authorizeUser([...memberOrPending]),
   getMemberPackages
 );
 memberRoutes.post(
   "/packages",
   authenticateUser,
-  authorizeUser(["member"]),
+  authorizeUser([...memberOrPending]),
   subToPackage
 );
 memberRoutes.delete(
@@ -129,7 +114,7 @@ memberRoutes.delete(
 memberRoutes.get(
   "/schedule",
   authenticateUser,
-  authorizeUser(["member"]),
+  authorizeUser([...memberOrPending]),
   getSchedule
 );
 
@@ -151,7 +136,7 @@ memberRoutes.delete(
 memberRoutes.get(
   "/coaches",
   authenticateUser,
-  authorizeUser(["member", "user"]),
+  authorizeUser([...memberOrPending]),
   getCoaches
 );
 
@@ -159,7 +144,7 @@ memberRoutes.get(
 memberRoutes.get(
   "/locations",
   authenticateUser,
-  authorizeUser(["member", "user"]),
+  authorizeUser([...memberOrPending]),
   getLocation
 );
 

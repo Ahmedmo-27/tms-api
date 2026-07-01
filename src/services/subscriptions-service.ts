@@ -15,6 +15,12 @@ import User from "../models/user";
 import { Server as SocketIOServer } from "socket.io";
 import { resolveOpenGymPaymentNote } from "../utils/open-gym-payment-purpose";
 import { normalizePhoneNumber } from "../utils/phone";
+import {
+  assertMatchaPackageForPendingUser,
+  ensureMemberForPendingPurchase,
+  getMatchaLocationId,
+  isPendingMember,
+} from "../utils/matcha-branch";
 
 export class SubscriptionsService {
   static async frontDeskSubscribeToPackage(
@@ -132,16 +138,24 @@ export class SubscriptionsService {
     note?: string,
   ) {
     let orderId: string;
-    const member = await Member.findOne({ uid });
-    if (!member)
-      throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found", {
-        uid,
-      });
     const pkg = await Package.findById(pkgId);
     if (!pkg)
       throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found", {
         pkgId,
       });
+
+    const pendingMember = await isPendingMember(uid);
+    if (pendingMember) {
+      await assertMatchaPackageForPendingUser(pkg);
+    }
+
+    let member = await Member.findOne({ uid });
+    if (!member) {
+      await ensureMemberForPendingPurchase(uid);
+      member = await Member.findOne({ uid });
+    }
+    if (!member)
+      throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found", { uid });
 
     startDate = new Date(startDate).toISOString();
     const packageId = new Types.ObjectId(pkgId);
@@ -190,6 +204,9 @@ export class SubscriptionsService {
         packageId,
         undefined,
       );
+      const packageLocationId = pendingMember
+        ? (await getMatchaLocationId()) ?? undefined
+        : undefined;
       await Member.addPackage(
         uid,
         pkg._id.toString(),
@@ -199,7 +216,7 @@ export class SubscriptionsService {
         endDate,
         session,
         restrictions,
-        undefined
+        packageLocationId,
       );
       if (pkg.category !== "PERSONAL_TRAINING") {
         await sendPaymentToRentalSystem(payment);

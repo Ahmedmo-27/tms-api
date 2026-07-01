@@ -3,16 +3,8 @@ import { AuthRequest } from "./auth.middleware";
 import Member from "../models/member";
 import Package from "../models/package";
 import asyncHandler from "../utils/asyncHandler";
-import { NotFoundError } from "../core/ApiError";
 import { SuccessResponse } from "../core/ApiResponse";
-
-const RAMADAN_PACKAGE_NAMES = [
-  "WHOLE-E Ramadan",
-  "Pilates Ramadan Program 12 Classes",
-  "Functional Ramadan Program 12 Sessions",
-  "Functional Unlimited Ramadan",
-  "Ultimate Ramadan Mix",
-];
+import { buildMatchaPackageFilter } from "../utils/matcha-branch";
 
 export const returnPublicPackages = (): RequestHandler => {
   return asyncHandler(
@@ -20,25 +12,20 @@ export const returnPublicPackages = (): RequestHandler => {
       const authReq = req as AuthRequest;
       const uid = authReq.user._id as string;
 
-      const member = await Member.findOne({ uid });
-
-      // ✅ If member NOT found → return packages directly
-      if (!member) {
-        const ramadanPkgs = await Package.find({
-          name: { $in: RAMADAN_PACKAGE_NAMES },
-        });
-
-        if (!ramadanPkgs.length) {
-          throw new NotFoundError(
-            "PACKAGE_NOT_FOUND",
-            "Ramadan packages are not registered",
-          );
-        }
-        new SuccessResponse("Packages Found!", ramadanPkgs).send(res);
-        return; // Stop further execution
+      if (authReq.user.role !== "user") {
+        next();
+        return;
       }
 
-      // ✅ If member exists → continue to next middleware/controller
+      const member = await Member.findOne({ uid });
+
+      if (!member) {
+        const matchaFilter = await buildMatchaPackageFilter();
+        const matchaPkgs = await Package.find(matchaFilter);
+        new SuccessResponse("Packages Found!", matchaPkgs).send(res);
+        return;
+      }
+
       next();
     },
   );
