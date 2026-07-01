@@ -22,8 +22,8 @@ describe("matcha-branch", () => {
     clearMatchaLocationCache();
   });
 
-  it("defaults branch name to Matcha North Coast", () => {
-    expect(getMatchaBranchName()).toBe("Matcha North Coast");
+  it("defaults branch name to Matcha", () => {
+    expect(getMatchaBranchName()).toBe("Matcha");
   });
 
   it("uses MATCHA_BRANCH_NAME when set", () => {
