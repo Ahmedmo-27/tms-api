@@ -1,0 +1,585 @@
+From cd4eb60fd65af8275f9a0457b92889ad18e40ed1 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Wed, 1 Jul 2026 07:48:58 +0000
+Subject: [PATCH] Add full open gym package tier management in dashboard
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Expand the open gym pricing dialog to configure six package tiers (1–3
+weeks and 1–3 months) with custom names and prices per branch. Update
+data layer and labels to match new API renewal periods.
+---
+ .../open-gym/open-gym-pricing-dialog.tsx      | 245 ++++++++++++------
+ .../open-gym/open-gym-subscribe-dialog.tsx    |   4 +-
+ src/components/ui/packages/columns.tsx        |   8 +-
+ src/lib/data/open-gym.ts                      |  13 +-
+ src/lib/utils/open-gym-renewal.ts             |  89 +++++++
+ src/lib/utils/open-gym.ts                     |  17 +-
+ 6 files changed, 286 insertions(+), 90 deletions(-)
+ create mode 100644 src/lib/utils/open-gym-renewal.ts
+
+diff --git a/src/components/ui/dialogs/open-gym/open-gym-pricing-dialog.tsx b/src/components/ui/dialogs/open-gym/open-gym-pricing-dialog.tsx
+index 091ada1..0fa47e0 100644
+--- a/src/components/ui/dialogs/open-gym/open-gym-pricing-dialog.tsx
++++ b/src/components/ui/dialogs/open-gym/open-gym-pricing-dialog.tsx
+@@ -1,6 +1,6 @@
+ "use client";
+ 
+-import { useEffect, useState } from "react";
++import { useEffect, useMemo, useState } from "react";
+ import { Button } from "@/components/ui/button";
+ import {
+   Dialog,
+@@ -19,9 +19,31 @@ import {
+   upsertOpenGymPackage,
+   type OpenGymBranchPrice,
+ } from "@/lib/data/open-gym";
++import {
++  OPEN_GYM_TIERS,
++  OpenGymRenewalPeriod,
++} from "@/lib/utils/open-gym-renewal";
+ import { useRouter } from "next/navigation";
+ import toast from "react-hot-toast";
+ 
++type TierFormState = {
++  name: string;
++  price: string;
++};
++
++type TierFormMap = Record<OpenGymRenewalPeriod, TierFormState>;
++
++function emptyTierForm(): TierFormState {
++  return { name: "", price: "" };
++}
++
++function emptyTierFormMap(): TierFormMap {
++  return OPEN_GYM_TIERS.reduce((acc, tier) => {
++    acc[tier.renewalPeriod] = emptyTierForm();
++    return acc;
++  }, {} as TierFormMap);
++}
++
+ function packageLocationId(pkg: Package): string {
+   if (!pkg.locationId) return "";
+   return typeof pkg.locationId === "string"
+@@ -32,7 +54,7 @@ function packageLocationId(pkg: Package): string {
+ function findBranchPackage(
+   packages: Package[],
+   locationId: string,
+-  renewalPeriod: "WEEKLY" | "MONTHLY",
++  renewalPeriod: OpenGymRenewalPeriod,
+ ): Package | undefined {
+   return packages.find(
+     (p) =>
+@@ -54,16 +76,23 @@ export function OpenGymPricingDialog({
+   const [prices, setPrices] = useState<OpenGymBranchPrice[]>([]);
+   const [locationId, setLocationId] = useState("");
+   const [dropInPrice, setDropInPrice] = useState("");
+-  const [weeklyPrice, setWeeklyPrice] = useState("");
+-  const [monthlyPrice, setMonthlyPrice] = useState("");
++  const [tierForms, setTierForms] = useState<TierFormMap>(emptyTierFormMap);
+   const [saving, setSaving] = useState(false);
+ 
+-  const weeklyPkg = locationId
+-    ? findBranchPackage(packages, locationId, "WEEKLY")
+-    : undefined;
+-  const monthlyPkg = locationId
+-    ? findBranchPackage(packages, locationId, "MONTHLY")
+-    : undefined;
++  const branchPackages = useMemo(() => {
++    if (!locationId) return {} as Partial<Record<OpenGymRenewalPeriod, Package>>;
++    return OPEN_GYM_TIERS.reduce(
++      (acc, tier) => {
++        acc[tier.renewalPeriod] = findBranchPackage(
++          packages,
++          locationId,
++          tier.renewalPeriod,
++        );
++        return acc;
++      },
++      {} as Partial<Record<OpenGymRenewalPeriod, Package>>,
++    );
++  }, [locationId, packages]);
+ 
+   const loadPrices = async () => {
+     try {
+@@ -77,37 +106,82 @@ export function OpenGymPricingDialog({
+     if (open) loadPrices();
+   }, [open]);
+ 
+-  // Pre-fill all fields for the selected branch.
+   useEffect(() => {
+     if (!locationId) {
+       setDropInPrice("");
+-      setWeeklyPrice("");
+-      setMonthlyPrice("");
++      setTierForms(emptyTierFormMap());
+       return;
+     }
++
+     const branch = prices.find((p) => p.locationId === locationId);
++    const branchName = branch?.branchName ?? "Branch";
+     setDropInPrice(branch?.price != null ? String(branch.price) : "");
+-    setWeeklyPrice(weeklyPkg?.price != null ? String(weeklyPkg.price) : "");
+-    setMonthlyPrice(monthlyPkg?.price != null ? String(monthlyPkg.price) : "");
++
++    setTierForms(
++      OPEN_GYM_TIERS.reduce((acc, tier) => {
++        const existing = branchPackages[tier.renewalPeriod];
++        acc[tier.renewalPeriod] = {
++          name: existing?.name ?? tier.defaultName(branchName),
++          price: existing?.price != null ? String(existing.price) : "",
++        };
++        return acc;
++      }, {} as TierFormMap),
++    );
+     // eslint-disable-next-line react-hooks/exhaustive-deps
+   }, [locationId, prices]);
+ 
++  useEffect(() => {
++    if (!locationId) return;
++    const branch = prices.find((p) => p.locationId === locationId);
++    const branchName = branch?.branchName ?? "Branch";
++
++    setTierForms((prev) => {
++      const next = { ...prev };
++      for (const tier of OPEN_GYM_TIERS) {
++        const existing = branchPackages[tier.renewalPeriod];
++        if (!existing) continue;
++        next[tier.renewalPeriod] = {
++          name: existing.name || tier.defaultName(branchName),
++          price: String(existing.price ?? ""),
++        };
++      }
++      return next;
++    });
++  }, [branchPackages, locationId, prices]);
++
+   const isNum = (v: string) => v !== "" && !Number.isNaN(Number(v));
+ 
++  const updateTier = (
++    renewalPeriod: OpenGymRenewalPeriod,
++    field: keyof TierFormState,
++    value: string,
++  ) => {
++    setTierForms((prev) => ({
++      ...prev,
++      [renewalPeriod]: {
++        ...prev[renewalPeriod],
++        [field]: value,
++      },
++    }));
++  };
++
+   const handleSubmit = async (e: React.FormEvent) => {
+     e.preventDefault();
+     if (!locationId) {
+       toast.error("Select a branch first");
+       return;
+     }
+-    if (!isNum(dropInPrice) && !isNum(weeklyPrice) && !isNum(monthlyPrice)) {
++
++    const tierSaves = OPEN_GYM_TIERS.filter((tier) => {
++      const form = tierForms[tier.renewalPeriod];
++      return isNum(form.price) && form.name.trim().length > 0;
++    });
++
++    if (!isNum(dropInPrice) && tierSaves.length === 0) {
+       toast.error("Enter at least one price");
+       return;
+     }
+ 
+-    const branch = prices.find((p) => p.locationId === locationId);
+-    const branchName = branch?.branchName ?? "Branch";
+-
+     setSaving(true);
+     try {
+       const tasks: Promise<unknown>[] = [];
+@@ -115,24 +189,16 @@ export function OpenGymPricingDialog({
+       if (isNum(dropInPrice)) {
+         tasks.push(setOpenGymDropInPrice(locationId, Number(dropInPrice)));
+       }
+-      if (isNum(weeklyPrice)) {
+-        tasks.push(
+-          upsertOpenGymPackage({
+-            pkgId: weeklyPkg?._id,
+-            name: `Open Gym Weekly — ${branchName}`,
+-            price: Number(weeklyPrice),
+-            renewalPeriod: "WEEKLY",
+-            locationId,
+-          }),
+-        );
+-      }
+-      if (isNum(monthlyPrice)) {
++
++      for (const tier of tierSaves) {
++        const form = tierForms[tier.renewalPeriod];
++        const existing = branchPackages[tier.renewalPeriod];
+         tasks.push(
+           upsertOpenGymPackage({
+-            pkgId: monthlyPkg?._id,
+-            name: `Open Gym Monthly — ${branchName}`,
+-            price: Number(monthlyPrice),
+-            renewalPeriod: "MONTHLY",
++            pkgId: existing?._id,
++            name: form.name.trim(),
++            price: Number(form.price),
++            renewalPeriod: tier.renewalPeriod,
+             locationId,
+           }),
+         );
+@@ -157,13 +223,13 @@ export function OpenGymPricingDialog({
+       </Button>
+ 
+       <Dialog open={open} onOpenChange={setOpen}>
+-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
++        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+           <DialogHeader>
+             <DialogTitle>Open gym pricing</DialogTitle>
+             <DialogDescription>
+-              Choose a branch, then set its drop-in price and weekly / monthly
+-              package prices. Saving creates the packages for that branch (or
+-              updates them if they already exist).
++              Choose a branch, then set drop-in and package prices. Each tier
++              has its own name and price — leave price empty to skip a tier.
++              Saving creates packages for that branch or updates existing ones.
+             </DialogDescription>
+           </DialogHeader>
+ 
+@@ -182,43 +248,70 @@ export function OpenGymPricingDialog({
+               />
+             </div>
+ 
+-            <div className="grid grid-cols-2 gap-4">
+-              <div className="space-y-2">
+-                <Label className="text-sm font-medium">
+-                  Weekly price (EGP)
+-                  {weeklyPkg ? (
+-                    <span className="ml-1 text-xs text-muted-foreground">
+-                      (update)
+-                    </span>
+-                  ) : null}
+-                </Label>
+-                <Input
+-                  type="number"
+-                  min={0}
+-                  value={weeklyPrice}
+-                  onChange={(e) => setWeeklyPrice(e.target.value)}
+-                  placeholder="7 days"
+-                  disabled={!locationId}
+-                />
+-              </div>
+-              <div className="space-y-2">
+-                <Label className="text-sm font-medium">
+-                  Monthly price (EGP)
+-                  {monthlyPkg ? (
+-                    <span className="ml-1 text-xs text-muted-foreground">
+-                      (update)
+-                    </span>
+-                  ) : null}
+-                </Label>
+-                <Input
+-                  type="number"
+-                  min={0}
+-                  value={monthlyPrice}
+-                  onChange={(e) => setMonthlyPrice(e.target.value)}
+-                  placeholder="30 days"
+-                  disabled={!locationId}
+-                />
+-              </div>
++            <div className="space-y-4">
++              <Label className="text-sm font-medium">Package tiers</Label>
++              {OPEN_GYM_TIERS.map((tier) => {
++                const form = tierForms[tier.renewalPeriod];
++                const existing = branchPackages[tier.renewalPeriod];
++                return (
++                  <div
++                    key={tier.renewalPeriod}
++                    className="rounded-md border p-3 space-y-3"
++                  >
++                    <div className="flex items-center justify-between gap-2">
++                      <p className="text-sm font-medium">
++                        {tier.label}
++                        <span className="ml-1 text-xs text-muted-foreground">
++                          ({tier.days} days)
++                        </span>
++                      </p>
++                      {existing ? (
++                        <span className="text-xs text-muted-foreground">
++                          existing package
++                        </span>
++                      ) : null}
++                    </div>
++                    <div className="grid gap-3 sm:grid-cols-2">
++                      <div className="space-y-1.5">
++                        <Label className="text-xs text-muted-foreground">
++                          Display name
++                        </Label>
++                        <Input
++                          value={form.name}
++                          onChange={(e) =>
++                            updateTier(
++                              tier.renewalPeriod,
++                              "name",
++                              e.target.value,
++                            )
++                          }
++                          placeholder={tier.defaultName("Branch")}
++                          disabled={!locationId}
++                        />
++                      </div>
++                      <div className="space-y-1.5">
++                        <Label className="text-xs text-muted-foreground">
++                          Price (EGP)
++                        </Label>
++                        <Input
++                          type="number"
++                          min={0}
++                          value={form.price}
++                          onChange={(e) =>
++                            updateTier(
++                              tier.renewalPeriod,
++                              "price",
++                              e.target.value,
++                            )
++                          }
++                          placeholder="Leave empty to skip"
++                          disabled={!locationId}
++                        />
++                      </div>
++                    </div>
++                  </div>
++                );
++              })}
+             </div>
+ 
+             <div className="flex justify-end gap-2 pt-2">
+diff --git a/src/components/ui/dialogs/open-gym/open-gym-subscribe-dialog.tsx b/src/components/ui/dialogs/open-gym/open-gym-subscribe-dialog.tsx
+index b6a2ccb..d910957 100644
+--- a/src/components/ui/dialogs/open-gym/open-gym-subscribe-dialog.tsx
++++ b/src/components/ui/dialogs/open-gym/open-gym-subscribe-dialog.tsx
+@@ -192,8 +192,8 @@ export function OpenGymSubscribeDialog({
+           <DialogHeader>
+             <DialogTitle>Add open gym package to member</DialogTitle>
+             <DialogDescription>
+-              Search for a member and subscribe them to a weekly or monthly open
+-              gym package.
++              Search for a member and subscribe them to an open gym package
++              (weekly, multi-week, monthly, or multi-month).
+             </DialogDescription>
+           </DialogHeader>
+ 
+diff --git a/src/components/ui/packages/columns.tsx b/src/components/ui/packages/columns.tsx
+index af1df3c..bbddac0 100644
+--- a/src/components/ui/packages/columns.tsx
++++ b/src/components/ui/packages/columns.tsx
+@@ -24,7 +24,13 @@ export type Package = {
+   category: string;
+   price: string;
+   hidden?: boolean;
+-  renewalPeriod?: "WEEKLY" | "MONTHLY";
++  renewalPeriod?:
++    | "WEEKLY"
++    | "BIWEEKLY"
++    | "TRIWEEKLY"
++    | "MONTHLY"
++    | "BIMONTHLY"
++    | "TRIMONTHLY";
+   locationId?: string | { _id?: string; branchName?: string; location?: string };
+   opensClasses: { _id: string; title: string }[];
+   classRestrictions?: { cid: string; limit: number }[];
+diff --git a/src/lib/data/open-gym.ts b/src/lib/data/open-gym.ts
+index 1fd4f06..c5bc154 100644
+--- a/src/lib/data/open-gym.ts
++++ b/src/lib/data/open-gym.ts
+@@ -2,6 +2,7 @@
+ 
+ import { revalidatePath } from "next/cache";
+ import { tms } from "../tms-api";
++import { OpenGymRenewalPeriod } from "../utils/open-gym-renewal";
+ 
+ export const getOpenGymDropInPrice = async (
+   locationId?: string
+@@ -41,7 +42,7 @@ export const setOpenGymDropInPrice = async (
+ export const createOpenGymPackage = async (params: {
+   name: string;
+   price: number;
+-  renewalPeriod: "WEEKLY" | "MONTHLY";
++  renewalPeriod: OpenGymRenewalPeriod;
+   locationId: string;
+ }) => {
+   const response = await tms.post("/admin/packages", {
+@@ -52,28 +53,30 @@ export const createOpenGymPackage = async (params: {
+     locationId: params.locationId,
+   });
+   revalidatePath("/dashboard/catalog");
++  revalidatePath("/dashboard/scans-monitor");
+   return response.data.data;
+ };
+ 
+ /**
+- * Creates a per-branch OPEN_GYM package, or updates its price if one already
+- * exists for that branch + renewalPeriod (pkgId provided). Keeps a single
+- * weekly and single monthly package per branch instead of duplicating.
++ * Creates a per-branch OPEN_GYM package, or updates name/price if one already
++ * exists for that branch + renewalPeriod (pkgId provided).
+  */
+ export const upsertOpenGymPackage = async (params: {
+   pkgId?: string;
+   name: string;
+   price: number;
+-  renewalPeriod: "WEEKLY" | "MONTHLY";
++  renewalPeriod: OpenGymRenewalPeriod;
+   locationId: string;
+ }) => {
+   if (params.pkgId) {
+     const response = await tms.patch(`/admin/packages/${params.pkgId}`, {
++      name: params.name,
+       price: String(params.price),
+       renewalPeriod: params.renewalPeriod,
+       locationId: params.locationId,
+     });
+     revalidatePath("/dashboard/catalog");
++    revalidatePath("/dashboard/scans-monitor");
+     return response.data.data;
+   }
+   return createOpenGymPackage({
+diff --git a/src/lib/utils/open-gym-renewal.ts b/src/lib/utils/open-gym-renewal.ts
+new file mode 100644
+index 0000000..54a9b4a
+--- /dev/null
++++ b/src/lib/utils/open-gym-renewal.ts
+@@ -0,0 +1,89 @@
++export type OpenGymRenewalPeriod =
++  | "WEEKLY"
++  | "BIWEEKLY"
++  | "TRIWEEKLY"
++  | "MONTHLY"
++  | "BIMONTHLY"
++  | "TRIMONTHLY";
++
++export const OPEN_GYM_RENEWAL_DAYS: Record<OpenGymRenewalPeriod, number> = {
++  WEEKLY: 7,
++  BIWEEKLY: 14,
++  TRIWEEKLY: 21,
++  MONTHLY: 30,
++  BIMONTHLY: 60,
++  TRIMONTHLY: 90,
++};
++
++export type OpenGymTierConfig = {
++  renewalPeriod: OpenGymRenewalPeriod;
++  label: string;
++  days: number;
++  defaultName: (branchName: string) => string;
++};
++
++export const OPEN_GYM_TIERS: OpenGymTierConfig[] = [
++  {
++    renewalPeriod: "WEEKLY",
++    label: "1 week",
++    days: 7,
++    defaultName: (branch) => `Open Gym Weekly — ${branch}`,
++  },
++  {
++    renewalPeriod: "BIWEEKLY",
++    label: "2 weeks",
++    days: 14,
++    defaultName: (branch) => `Open Gym 2 Weeks — ${branch}`,
++  },
++  {
++    renewalPeriod: "TRIWEEKLY",
++    label: "3 weeks",
++    days: 21,
++    defaultName: (branch) => `Open Gym 3 Weeks — ${branch}`,
++  },
++  {
++    renewalPeriod: "MONTHLY",
++    label: "1 month",
++    days: 30,
++    defaultName: (branch) => `Open Gym Monthly — ${branch}`,
++  },
++  {
++    renewalPeriod: "BIMONTHLY",
++    label: "2 months",
++    days: 60,
++    defaultName: (branch) => `Open Gym 2 Months — ${branch}`,
++  },
++  {
++    renewalPeriod: "TRIMONTHLY",
++    label: "3 months",
++    days: 90,
++    defaultName: (branch) => `Open Gym 3 Months — ${branch}`,
++  },
++];
++
++export const OPEN_GYM_RENEWAL_LABELS: Record<OpenGymRenewalPeriod, string> = {
++  WEEKLY: "Weekly",
++  BIWEEKLY: "2-Week",
++  TRIWEEKLY: "3-Week",
++  MONTHLY: "Monthly",
++  BIMONTHLY: "2-Month",
++  TRIMONTHLY: "3-Month",
++};
++
++export function formatRenewalPeriodLabel(
++  renewalPeriod?: OpenGymRenewalPeriod,
++  expiryPeriod?: string | number,
++): string {
++  if (renewalPeriod && OPEN_GYM_RENEWAL_LABELS[renewalPeriod]) {
++    return OPEN_GYM_RENEWAL_LABELS[renewalPeriod];
++  }
++  const days = Number(expiryPeriod);
++  if (days === 7) return "Weekly";
++  if (days === 14) return "2-Week";
++  if (days === 21) return "3-Week";
++  if (days === 30) return "Monthly";
++  if (days === 60) return "2-Month";
++  if (days === 90) return "3-Month";
++  if (days > 0) return `${days} days`;
++  return "Custom";
++}
+diff --git a/src/lib/utils/open-gym.ts b/src/lib/utils/open-gym.ts
+index 5e8f92a..758ddc2 100644
+--- a/src/lib/utils/open-gym.ts
++++ b/src/lib/utils/open-gym.ts
+@@ -1,4 +1,8 @@
+ import { Package } from "@/components/ui/packages/columns";
++import {
++  formatRenewalPeriodLabel,
++  OpenGymRenewalPeriod,
++} from "./open-gym-renewal";
+ 
+ export const OPEN_GYM_PACKAGE_CATEGORIES = [
+   "OPEN_GYM",
+@@ -19,12 +23,10 @@ export function isUnlimitedSessions(sessions: string | number): boolean {
+ export function formatRenewalLabel(
+   pkg: Pick<Package, "renewalPeriod"> & Partial<Pick<Package, "expiryPeriod">>
+ ): string {
+-  if (pkg.renewalPeriod === "WEEKLY") return "Weekly";
+-  if (pkg.renewalPeriod === "MONTHLY") return "Monthly";
+-  const days = Number(pkg.expiryPeriod);
+-  if (days === 7) return "Weekly";
+-  if (days === 30) return "Monthly";
+-  return `${pkg.expiryPeriod} days`;
++  return formatRenewalPeriodLabel(
++    pkg.renewalPeriod as OpenGymRenewalPeriod | undefined,
++    pkg.expiryPeriod,
++  );
+ }
+ 
+ export function formatCatalogPackageLabel(pkg: Package): string {
+@@ -69,6 +71,9 @@ export function resolveOpenGymPaymentPurpose(record: {
+   }
+ 
+   if (record.purpose === "PACKAGE" && record.pkgId?.category === "OPEN_GYM") {
++    if (record.pkgId.name?.trim()) {
++      return record.pkgId.name;
++    }
+     const renewal = formatRenewalLabel(record.pkgId);
+     return `Open Gym ${renewal} Package`;
+   }
+-- 
+2.43.0
+
