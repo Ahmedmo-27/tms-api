@@ -318,6 +318,8 @@ const MemberSchema: Schema<IMember, IMemberModel, IMemberMethods> = new Schema({
   },
 });
 
+MemberSchema.index({ uid: 1 }, { unique: true });
+
 MemberSchema.static(
   "saveDropIn",
   async function (

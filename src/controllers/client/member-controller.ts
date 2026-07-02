@@ -17,6 +17,18 @@ export const getMemberProfile: RequestHandler = asyncHandler(async function (
     .populate("uid")
     .populate({ path: "packages.pkgId" });
 
+  if (!member && authReq.user.role === "user") {
+    new SuccessResponse("Member Found!", {
+      uid: _id,
+      packages: [],
+      bookings: [],
+      attendance: [],
+      isActive: true,
+      pendingApproval: true,
+    }).send(res);
+    return;
+  }
+
   if (!member)
     throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found", { _id });
 

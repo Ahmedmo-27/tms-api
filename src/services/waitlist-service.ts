@@ -11,6 +11,10 @@ import {
 } from "../core/ApiError";
 import logger from "../config/logger";
 import { runInTransaction } from "../utils/transaction";
+import {
+  assertMatchaSessionForPendingUser,
+  isPendingMember,
+} from "../utils/matcha-branch";
 
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
@@ -20,6 +24,10 @@ export class WaitlistService {
     const scheduledClass = await ScheduledClass.findById(scid);
     if (!scheduledClass) {
       throw new NotFoundError("CLASS_NOT_FOUND", "Scheduled Class not found");
+    }
+
+    if (await isPendingMember(uid)) {
+      await assertMatchaSessionForPendingUser(scheduledClass);
     }
 
     if (scheduledClass.availableSlots > 0) {

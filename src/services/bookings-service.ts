@@ -29,19 +29,33 @@ import { WaitlistService } from "./waitlist-service";
 import Reservation from "../models/reservation";
 import WaitlistEntry from "../models/waitlistEntry";
 import ChallengeRecord from "../models/challengeRecord";
+import {
+  assertMatchaSessionForPendingUser,
+  ensureMemberForPendingPurchase,
+  isPendingMember,
+} from "../utils/matcha-branch";
 
 export class BookingsService {
   static async addBooking(uid: string, scid: string, isAdminOverride: boolean = false) {
-    // Validate Member and ScheduledClass
-    const member = await Member.findOne({ uid });
-    if (!member)
-      throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
     const scheduledClass = await ScheduledClass.findById(scid).populate({
       path: "cid",
       populate: { path: "locations" },
     }).populate({ path: "locationId" });
     if (!scheduledClass)
       throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
+
+    const pendingMember = await isPendingMember(uid);
+    if (pendingMember) {
+      await assertMatchaSessionForPendingUser(scheduledClass);
+    }
+
+    let member = await Member.findOne({ uid });
+    if (!member) {
+      await ensureMemberForPendingPurchase(uid);
+      member = await Member.findOne({ uid });
+    }
+    if (!member)
+      throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
 
     // Enforce Waitlist Reservations
     if (!isAdminOverride) {
@@ -955,14 +969,24 @@ export class BookingsService {
     merchantReferenceId: string,
     promoCode?: string,
   ) {
-    const member = await Member.findOne({ uid });
-    if (!member)
-      throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
     const scheduledClass: any = await ScheduledClass.findById(scid).populate({
       path: "cid",
     });
     if (!scheduledClass)
       throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
+
+    const pendingMember = await isPendingMember(uid);
+    if (pendingMember) {
+      await assertMatchaSessionForPendingUser(scheduledClass);
+    }
+
+    let member = await Member.findOne({ uid });
+    if (!member) {
+      await ensureMemberForPendingPurchase(uid);
+      member = await Member.findOne({ uid });
+    }
+    if (!member)
+      throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
     if ((scheduledClass.cid as any).category === "WORKSPACE")
       throw new ConflictError(
         "DROP_IN_ADMIN_ONLY",
