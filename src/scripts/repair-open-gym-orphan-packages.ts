@@ -1,16 +1,22 @@
 /**
  * repair-open-gym-orphan-packages.ts
  *
- * Restores deleted open gym catalog packages (same _id) and repairs member
- * subscriptions that were orphaned when those packages were removed.
+ * Replaces orphaned member subscriptions (and related payments) that still
+ * reference deleted open gym catalog packages with similar packages that
+ * already exist in the database.
  *
- * Affected prod pkgIds (Jun 2026 incident):
- *   - 6a42867d94c393587ec93fbb  Open Gym Monthly — Cairo
- *   - 6a42867d94c393587ec91002  Open Gym Weekly — Cairo
+ * Prod incident (Jun 2026) — deleted orphans:
+ *   - 6a42867d94c393587ec93fbb  Open Gym Monthly — Cairo (2,750 EGP / 30 days)
+ *   - 6a42867d94c393587ec91002  Open Gym Weekly — Cairo (800 EGP / 7 days)
+ *
+ * Replacements on prod:
+ *   - 6a4382572ba8878c291be549  1 Month Space Membership New Cairo (2,750 / 30d)
+ *   - 6a3c196b3661ee212b42d808  The Ultimate Mind Spacer 1 Week (7d, space access)
  *
  * Usage:
  *   npx ts-node src/scripts/repair-open-gym-orphan-packages.ts --dry-run
  *   npx ts-node src/scripts/repair-open-gym-orphan-packages.ts
+ *   npx ts-node src/scripts/repair-open-gym-orphan-packages.ts --include-deleted
  */
 
 import dotenv from "dotenv";
@@ -22,68 +28,64 @@ import connectDB from "../config/db";
 import Package from "../models/package";
 import Member from "../models/member";
 import User from "../models/user";
+import Payment from "../models/payment";
 
 const CAIRO_LOCATION_ID = "69ec4abad8394559ce7ca77c";
 
-const RESTORED_PACKAGES = [
-  {
-    _id: "6a42867d94c393587ec93fbb",
-    name: "Open Gym Monthly — Cairo",
-    category: "OPEN_GYM" as const,
-    price: 2750,
-    expiryPeriod: 30,
-    numberOfSessions: 10000,
-    locationId: CAIRO_LOCATION_ID,
-    opensClasses: [] as Types.ObjectId[],
-  },
-  {
-    _id: "6a42867d94c393587ec91002",
-    name: "Open Gym Weekly — Cairo",
-    category: "OPEN_GYM" as const,
-    price: 800,
-    expiryPeriod: 7,
-    numberOfSessions: 10000,
-    locationId: CAIRO_LOCATION_ID,
-    opensClasses: [] as Types.ObjectId[],
-  },
-] as const;
+/** Orphan pkgId → existing catalog pkgId on prod */
+const REPLACEMENT_MAP: Record<string, string> = {
+  "6a42867d94c393587ec93fbb": "6a4382572ba8878c291be549",
+  "6a42867d94c393587ec91002": "6a3c196b3661ee212b42d808",
+};
 
-const ORPHAN_PKG_IDS = RESTORED_PACKAGES.map((p) => p._id);
+const ORPHAN_PKG_IDS = Object.keys(REPLACEMENT_MAP);
+
+const ORPHAN_LABELS: Record<string, string> = {
+  "6a42867d94c393587ec93fbb": "Open Gym Monthly — Cairo (deleted)",
+  "6a42867d94c393587ec91002": "Open Gym Weekly — Cairo (deleted)",
+};
 
 function isDryRun(): boolean {
   return process.argv.includes("--dry-run");
 }
 
-async function restoreCatalogPackages(dryRun: boolean) {
-  console.log("\n=== Restore catalog packages ===");
-  for (const spec of RESTORED_PACKAGES) {
-    const existing = await Package.findById(spec._id);
-    if (existing) {
-      console.log(`[SKIP] ${spec.name} (${spec._id}) already exists`);
-      continue;
-    }
+function includeDeleted(): boolean {
+  return process.argv.includes("--include-deleted");
+}
 
-    console.log(`[CREATE] ${spec.name} (${spec._id})`);
-    if (!dryRun) {
-      await Package.create({
-        _id: new Types.ObjectId(spec._id),
-        name: spec.name,
-        category: spec.category,
-        price: spec.price,
-        expiryPeriod: spec.expiryPeriod,
-        numberOfSessions: spec.numberOfSessions,
-        locationId: new Types.ObjectId(spec.locationId),
-        opensClasses: spec.opensClasses,
-      });
+async function validateReplacementPackages(): Promise<void> {
+  console.log("\n=== Validate replacement packages exist ===");
+  for (const [orphanId, replacementId] of Object.entries(REPLACEMENT_MAP)) {
+    const replacement = await Package.findById(replacementId);
+    if (!replacement) {
+      throw new Error(
+        `Replacement package ${replacementId} for orphan ${orphanId} was not found in the catalog.`,
+      );
     }
+    const orphanStillExists = await Package.findById(orphanId);
+    if (orphanStillExists) {
+      console.warn(
+        `[WARN] Orphan ${orphanId} still exists in catalog as "${orphanStillExists.name}" — remap may be unnecessary.`,
+      );
+    }
+    console.log(
+      `[OK] ${ORPHAN_LABELS[orphanId]}\n        → ${replacement.name} (${replacementId}) | ${replacement.price} EGP | ${replacement.expiryPeriod}d`,
+    );
   }
 }
 
-async function repairMemberSubscriptions(dryRun: boolean) {
-  console.log("\n=== Repair member subscriptions ===");
+async function replaceMemberSubscriptions(dryRun: boolean): Promise<number> {
+  console.log("\n=== Replace member subscriptions ===");
   const now = new Date();
+  const statuses = includeDeleted()
+    ? ["ACTIVE", "EXPIRED", "COMPLETED", "DELETED"]
+    : ["ACTIVE", "EXPIRED", "COMPLETED"];
+
+  let updated = 0;
   const members = await Member.find({
-    "packages.pkgId": { $in: ORPHAN_PKG_IDS.map((id) => new Types.ObjectId(id)) },
+    "packages.pkgId": {
+      $in: ORPHAN_PKG_IDS.map((id) => new Types.ObjectId(id)),
+    },
   });
 
   for (const member of members) {
@@ -91,66 +93,106 @@ async function repairMemberSubscriptions(dryRun: boolean) {
     let dirty = false;
 
     for (const pkg of member.packages) {
-      const pkgId = pkg.pkgId.toString();
-      if (!ORPHAN_PKG_IDS.includes(pkgId as (typeof ORPHAN_PKG_IDS)[number])) {
+      const orphanId = pkg.pkgId.toString();
+      const replacementId = REPLACEMENT_MAP[orphanId];
+      if (!replacementId) continue;
+      if (!statuses.includes(pkg.status)) {
+        console.log(
+          `[SKIP] ${user?.name ?? member.uid} — ${orphanId} status=${pkg.status}`,
+        );
         continue;
       }
 
+      const replacement = await Package.findById(replacementId);
+      console.log(
+        `[REMAP] ${user?.name ?? member.uid} | ${pkg.status} | ${ORPHAN_LABELS[orphanId]}\n        → ${replacement?.name} (${replacementId})\n        period: ${pkg.pkgStartDate.toISOString().slice(0, 10)} → ${pkg.pkgEndDate.toISOString().slice(0, 10)}`,
+      );
+
+      pkg.pkgId = new Types.ObjectId(replacementId);
+
       if (!pkg.locationId) {
-        console.log(
-          `[LOCATION] ${user?.name ?? member.uid}: set locationId → Cairo`,
-        );
         pkg.locationId = new Types.ObjectId(CAIRO_LOCATION_ID);
-        dirty = true;
+        console.log(`        + set locationId → Cairo New Cairo`);
       }
 
-      if (
-        pkg.status === "ACTIVE" &&
-        pkg.pkgEndDate < now
-      ) {
-        console.log(
-          `[EXPIRE] ${user?.name ?? member.uid}: ${pkgId} ended ${pkg.pkgEndDate.toISOString()}`,
-        );
+      if (pkg.status === "ACTIVE" && pkg.pkgEndDate < now) {
         pkg.status = "EXPIRED";
-        dirty = true;
+        console.log(`        + marked EXPIRED (end date passed)`);
       }
+
+      dirty = true;
+      updated++;
     }
 
-    if (dirty) {
-      if (!dryRun) {
-        await member.save();
-      }
-      console.log(`[SAVED] ${user?.name ?? member.uid}`);
-    } else {
-      console.log(`[OK] ${user?.name ?? member.uid} — no subscription fixes needed`);
+    if (dirty && !dryRun) {
+      await member.save();
+      console.log(`        ✓ saved`);
     }
   }
+
+  return updated;
 }
 
-async function printSummary() {
-  console.log("\n=== Post-repair summary ===");
-  for (const spec of RESTORED_PACKAGES) {
-    const inCatalog = await Package.findById(spec._id);
-    const subs = await Member.find({
-      "packages.pkgId": new Types.ObjectId(spec._id),
-    });
-    const active = subs.filter((m) =>
-      m.packages.some(
-        (p) => p.pkgId.toString() === spec._id && p.status === "ACTIVE",
-      ),
-    );
+async function replacePaymentReferences(dryRun: boolean): Promise<number> {
+  console.log("\n=== Replace payment package references ===");
+  let updated = 0;
 
-    console.log(`${spec.name}:`);
-    console.log(`  catalog: ${inCatalog ? "present" : "MISSING"}`);
-    console.log(`  members: ${subs.length} total, ${active.length} active`);
-    for (const m of subs) {
-      const u = await User.findById(m.uid);
-      const sub = m.packages.find((p) => p.pkgId.toString() === spec._id);
+  for (const [orphanId, replacementId] of Object.entries(REPLACEMENT_MAP)) {
+    const payments = await Payment.find({
+      pkgId: new Types.ObjectId(orphanId),
+      isRefunded: { $ne: true },
+    });
+
+    for (const payment of payments) {
+      const user = await User.findById(payment.uid);
       console.log(
-        `    - ${u?.name ?? m.uid} | ${sub?.status} | ${sub?.pkgStartDate?.toISOString?.()?.slice(0, 10)} → ${sub?.pkgEndDate?.toISOString?.()?.slice(0, 10)}`,
+        `[PAYMENT] ${user?.name ?? payment.uid} | ${payment.amount} ${payment.paymentMethod} | ${payment.note ?? "—"}\n          ${orphanId} → ${replacementId}`,
+      );
+      if (!dryRun) {
+        payment.pkgId = new Types.ObjectId(replacementId);
+        await payment.save();
+      }
+      updated++;
+    }
+  }
+
+  return updated;
+}
+
+async function printSummary(): Promise<void> {
+  console.log("\n=== Post-repair summary ===");
+
+  for (const orphanId of ORPHAN_PKG_IDS) {
+    const replacementId = REPLACEMENT_MAP[orphanId];
+    const remaining = await Member.countDocuments({
+      "packages.pkgId": new Types.ObjectId(orphanId),
+    });
+    const replacement = await Package.findById(replacementId);
+
+    const repairedPayments = await Payment.find({
+      pkgId: new Types.ObjectId(replacementId),
+      note: /open gym/i,
+    });
+
+    console.log(`\n${ORPHAN_LABELS[orphanId]}:`);
+    console.log(`  orphan references remaining: ${remaining}`);
+    console.log(`  replacement catalog entry: ${replacement?.name} (${replacementId})`);
+
+    for (const pay of repairedPayments) {
+      const u = await User.findById(pay.uid);
+      const m = await Member.findOne({ uid: pay.uid });
+      const sub = m?.packages.find((p) => p.pkgId.toString() === replacementId);
+      console.log(
+        `    - ${u?.name ?? pay.uid} | ${sub?.status ?? "—"} | ${sub?.pkgStartDate?.toISOString?.()?.slice(0, 10) ?? "—"} → ${sub?.pkgEndDate?.toISOString?.()?.slice(0, 10) ?? "—"} | payment ${pay.isRefunded ? "REFUNDED" : "OK"}`,
       );
     }
   }
+
+  const orphanPayments = await Payment.countDocuments({
+    pkgId: { $in: ORPHAN_PKG_IDS.map((id) => new Types.ObjectId(id)) },
+    isRefunded: { $ne: true },
+  });
+  console.log(`\nNon-refunded payments still pointing at orphan ids: ${orphanPayments}`);
 }
 
 async function main() {
@@ -158,14 +200,22 @@ async function main() {
   if (dryRun) {
     console.log("DRY RUN — no writes will be performed\n");
   }
+  if (includeDeleted()) {
+    console.log("Including DELETED subscriptions\n");
+  }
 
   await connectDB();
-  await restoreCatalogPackages(dryRun);
-  await repairMemberSubscriptions(dryRun);
+  await validateReplacementPackages();
+  const memberUpdates = await replaceMemberSubscriptions(dryRun);
+  const paymentUpdates = await replacePaymentReferences(dryRun);
   await printSummary();
 
   await mongoose.disconnect();
-  console.log(dryRun ? "\nDry run complete." : "\nRepair complete.");
+  console.log(
+    dryRun
+      ? `\nDry run complete. Would update ${memberUpdates} subscription(s) and ${paymentUpdates} payment(s).`
+      : `\nRepair complete. Updated ${memberUpdates} subscription(s) and ${paymentUpdates} payment(s).`,
+  );
 }
 
 main().catch((err) => {
