@@ -90,7 +90,6 @@ async function replaceMemberSubscriptions(dryRun: boolean): Promise<number> {
 
   for (const member of members) {
     const user = await User.findById(member.uid);
-    let dirty = false;
 
     for (const pkg of member.packages) {
       const orphanId = pkg.pkgId.toString();
@@ -104,29 +103,45 @@ async function replaceMemberSubscriptions(dryRun: boolean): Promise<number> {
       }
 
       const replacement = await Package.findById(replacementId);
+      const setExpired = pkg.status === "ACTIVE" && pkg.pkgEndDate < now;
+
       console.log(
         `[REMAP] ${user?.name ?? member.uid} | ${pkg.status} | ${ORPHAN_LABELS[orphanId]}\n        → ${replacement?.name} (${replacementId})\n        period: ${pkg.pkgStartDate.toISOString().slice(0, 10)} → ${pkg.pkgEndDate.toISOString().slice(0, 10)}`,
       );
 
-      pkg.pkgId = new Types.ObjectId(replacementId);
-
+      const $set: Record<string, unknown> = {
+        "packages.$[pkg].pkgId": new Types.ObjectId(replacementId),
+      };
       if (!pkg.locationId) {
-        pkg.locationId = new Types.ObjectId(CAIRO_LOCATION_ID);
+        $set["packages.$[pkg].locationId"] = new Types.ObjectId(
+          CAIRO_LOCATION_ID,
+        );
         console.log(`        + set locationId → Cairo New Cairo`);
       }
-
-      if (pkg.status === "ACTIVE" && pkg.pkgEndDate < now) {
-        pkg.status = "EXPIRED";
+      if (setExpired) {
+        $set["packages.$[pkg].status"] = "EXPIRED";
         console.log(`        + marked EXPIRED (end date passed)`);
       }
 
-      dirty = true;
-      updated++;
-    }
+      if (!dryRun) {
+        const result = await Member.updateOne(
+          {
+            _id: member._id,
+            "packages.pkgId": new Types.ObjectId(orphanId),
+          },
+          { $set },
+          {
+            arrayFilters: [{ "pkg.pkgId": new Types.ObjectId(orphanId) }],
+          },
+        );
+        if (result.modifiedCount === 0) {
+          console.warn(`        ! no documents modified`);
+        } else {
+          console.log(`        ✓ saved`);
+        }
+      }
 
-    if (dirty && !dryRun) {
-      await member.save();
-      console.log(`        ✓ saved`);
+      updated++;
     }
   }
 
@@ -149,8 +164,10 @@ async function replacePaymentReferences(dryRun: boolean): Promise<number> {
         `[PAYMENT] ${user?.name ?? payment.uid} | ${payment.amount} ${payment.paymentMethod} | ${payment.note ?? "—"}\n          ${orphanId} → ${replacementId}`,
       );
       if (!dryRun) {
-        payment.pkgId = new Types.ObjectId(replacementId);
-        await payment.save();
+        await Payment.updateOne(
+          { _id: payment._id },
+          { $set: { pkgId: new Types.ObjectId(replacementId) } },
+        );
       }
       updated++;
     }
