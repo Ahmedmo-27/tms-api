@@ -42,6 +42,7 @@ import {
   addPackage,
   getPackage,
   deletePackage,
+  getPackageDeletionImpactReport,
   updatePackage,
   subMemberToPackage,
   unsubMemberFromPackage,
@@ -361,6 +362,12 @@ adminRoutes.post(
   authenticateUser,
   authorizeUser(["admin", "fd"]),
   addPackage
+);
+adminRoutes.get(
+  "/packages/:id/deletion-impact",
+  authenticateUser,
+  authorizeUser(["admin", "fd"]),
+  getPackageDeletionImpactReport
 );
 adminRoutes.delete(
   "/packages/:id",

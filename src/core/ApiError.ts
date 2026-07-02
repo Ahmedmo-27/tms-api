@@ -51,7 +51,11 @@ export abstract class ApiError extends Error {
       case ErrorType.FORBIDDEN:
         return new ForbiddenResponse(error.message, error.code).send(res);
       case ErrorType.CONFLICT:
-        return new ConflictResponse(error.message, error.code).send(res);
+        return new ConflictResponse(
+          error.message,
+          error.code,
+          Object.keys(error.context).length > 0 ? error.context : undefined,
+        ).send(res);
       default:
         return new InternalErrorResponse(error.message, error.code).send(res);
     }
