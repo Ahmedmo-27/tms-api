@@ -240,7 +240,7 @@ const AdjustmentRecordSchema = new Schema<IAdjustmentRecord>({
   type:           { type: String, enum: ["ADD", "DEDUCT"], required: true },
   source:         {
     type: String,
-    enum: ["BOOKING", "PT_ATTENDANCE", "ADMIN", "MEMBER_CANCELLATION", "FRONTDESK_CANCELLATION"],
+    enum: ["BOOKING", "PT_ATTENDANCE", "SPACE_WALK", "ADMIN", "MEMBER_CANCELLATION", "FRONTDESK_CANCELLATION"],
     required: true,
   },
 });

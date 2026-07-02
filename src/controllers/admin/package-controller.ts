@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import Package from "../../models/package";
 import Member from "../../models/member";
-import { BadRequestError, NotFoundError } from "../../core/ApiError";
+import { BadRequestError, ConflictError, NotFoundError } from "../../core/ApiError";
 import { SuccessResponse } from "../../core/ApiResponse";
 import asyncHandler from "../../utils/asyncHandler";
 import { SubscriptionsService } from "../../services/subscriptions-service";
