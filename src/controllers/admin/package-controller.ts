@@ -13,6 +13,8 @@ import { resolveLocationFilter } from "../../utils/location-scope";
 import { normalizePhoneNumber } from "../../utils/phone";
 import { normalizeOpenGymPackageFields } from "../../utils/open-gym-package";
 import { Types } from "mongoose";
+import { getPackageDeletionImpact } from "../../services/package-deletion-guard";
+import logger from "../../config/logger";
 
 export const getPackage = asyncHandler(async function (
   req: Request,
@@ -95,14 +97,49 @@ export const addPackage = asyncHandler(
   }
 );
 
+export const getPackageDeletionImpactReport = asyncHandler(
+  async (req: Request, res: Response): Promise<void> => {
+    const { id } = req.params;
+    const impact = await getPackageDeletionImpact(id);
+    new SuccessResponse("Package deletion impact", impact).send(res);
+  },
+);
+
 export const deletePackage = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const { id } = req.params;
+    const force = req.query.force === "true";
+    const impact = await getPackageDeletionImpact(id);
+
+    const hasRisk =
+      impact.activeSubscriptions > 0 || impact.nonRefundedPaymentCount > 0;
+
+    if (hasRisk && !force) {
+      throw new ConflictError(
+        "PACKAGE_HAS_ACTIVE_SUBSCRIBERS",
+        impact.warningMessage,
+        {
+          impact,
+          hint: "Pass ?force=true to delete anyway. Member subscriptions and payments will keep referencing a missing package until repaired.",
+        },
+      );
+    }
+
+    if (hasRisk && force) {
+      logger.warn("Force-deleting package with active subscribers", {
+        packageId: id,
+        impact,
+      });
+    }
+
     const pkg = await Package.findByIdAndDelete(id);
     if (!pkg)
       throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found", { id });
-    new SuccessResponse("Package Deleted!", pkg).send(res);
-  }
+    new SuccessResponse("Package Deleted!", {
+      deletedPackage: pkg,
+      orphanedImpact: hasRisk ? impact : null,
+    }).send(res);
+  },
 );
 
 export const updatePackage = asyncHandler(
