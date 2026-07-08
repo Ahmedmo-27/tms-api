@@ -13,6 +13,8 @@ export const SCAN_ERROR_MESSAGES = {
     "This class check-in QR code is not valid. The class may have been cancelled or the QR may be out of date.",
   CLASS_NOT_BOOKED:
     "You are not booked for this class. Please book it in the app before checking in.",
+  CLASS_ALREADY_SCANNED:
+    "You have already checked in for this class.",
   PAST_ATTENDANCE_DEADLINE:
     "Check-in is closed. Attendance must be recorded within 30 minutes of class start.",
   INVALID_QR:

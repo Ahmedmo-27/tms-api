@@ -36,6 +36,18 @@ import {
   isPendingMember,
 } from "../utils/matcha-branch";
 
+/** Records a failed scan; duplicate failed-scan entries are ignored. */
+async function recordFailedClassScan(scid: string, uid: string): Promise<void> {
+  try {
+    await ScheduledClass.addMemberScan(scid, uid, false);
+  } catch (err) {
+    if (err instanceof ConflictError && err.code === "CLASS_ALREADY_SCANNED") {
+      return;
+    }
+    throw err;
+  }
+}
+
 export class BookingsService {
   static async addBooking(uid: string, scid: string, isAdminOverride: boolean = false) {
     const scheduledClass = await ScheduledClass.findById(scid).populate({
@@ -381,7 +393,7 @@ export class BookingsService {
         message: SCAN_ERROR_MESSAGES.PAST_ATTENDANCE_DEADLINE,
         member: (member.uid as any).name,
       });
-      ScheduledClass.addMemberScan(scid, uid, false);
+      await recordFailedClassScan(scid, uid);
       throw new ForbiddenError(
         "PAST_ATTENDANCE_DEADLINE",
         SCAN_ERROR_MESSAGES.PAST_ATTENDANCE_DEADLINE,
@@ -393,7 +405,7 @@ export class BookingsService {
       io,
     );
     if (!isBooked) {
-      ScheduledClass.addMemberScan(scid, uid, false);
+      await recordFailedClassScan(scid, uid);
       throw new NotFoundError(
         "CLASS_NOT_BOOKED",
         SCAN_ERROR_MESSAGES.CLASS_NOT_BOOKED,

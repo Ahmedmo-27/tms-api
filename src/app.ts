@@ -72,6 +72,15 @@ app.use(((err: Error, req: Request, res: Response, next: NextFunction) => {
     };
   }
 
+  if (res.headersSent) {
+    logger.error(`${apiError.type}: ${apiError.code} - ${apiError.message}`, {
+      context: apiError.context,
+      stack: apiError.stack,
+      note: "Response already sent; skipped sending error to client",
+    });
+    return;
+  }
+
   ApiError.handle(apiError, res);
 }) as ErrorRequestHandler);
 
