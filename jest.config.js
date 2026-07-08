@@ -11,5 +11,5 @@ module.exports = {
     '!src/types/**'
   ],
   coverageDirectory: 'coverage',
-  setupFilesAfterEnv: ['<rootDir>/src/tests/setup.ts']
+  setupFilesAfterEnv: ['<rootDir>/src/test/setup.ts']
 };
