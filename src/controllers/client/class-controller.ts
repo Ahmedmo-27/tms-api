@@ -10,6 +10,7 @@ import { SchedulerService } from "../../services/scheduler-service";
 import ScheduledClass from "../../models/scheduledClass";
 import Package from "../../models/package";
 import { parseScanPayload } from "../../utils/scan-payload";
+import { getInvalidQrCodeMessage } from "../../utils/error-messages";
 import { getMatchaBranchName, isPendingMember } from "../../utils/matcha-branch";
 
 export const getSchedule = asyncHandler(async function (
@@ -157,9 +158,19 @@ export const attendClass = asyncHandler(async function (
       new SuccessResponse("Class Attended!").send(res);
       return;
     }
+
+    throw new NotFoundError(
+      "CLASS_QR_NOT_FOUND",
+      getInvalidQrCodeMessage(attendanceId, "class_not_found"),
+      { attendanceId, scheduledClassId: payload.scheduledClassId },
+    );
   }
 
-  throw new NotFoundError("INVALID_QR_CODE", "Qr code is invalid");
+  throw new NotFoundError(
+    "INVALID_QR_CODE",
+    getInvalidQrCodeMessage(attendanceId, "unrecognized"),
+    { attendanceId },
+  );
 });
 
 // export const attendPt = asyncHandler(async function (

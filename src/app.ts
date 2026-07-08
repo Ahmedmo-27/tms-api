@@ -6,7 +6,8 @@ import express, {
 } from "express";
 import cookieParser from "cookie-parser";
 import router from "./routes";
-import { ApiError, InternalError } from "./core/ApiError";
+import { ApiError } from "./core/ApiError";
+import { normalizeToApiError } from "./utils/error-messages";
 import { defaultLimiter } from "./config/rateLimiter";
 import logger from "./config/logger";
 import { getRequestContext } from "./utils/requestContext";
@@ -60,31 +61,18 @@ app.use(((err: Error, req: Request, res: Response, next: NextFunction) => {
   // get request context
   const requestContext = getRequestContext(req);
 
-  // If it's not an ApiError or doesn't have context, convert it to InternalError with context
-  if (!(err instanceof ApiError)) {
-    const internalError = new InternalError("INTERNAL_ERROR", err.message, {
+  const apiError = normalizeToApiError(err, requestContext);
+
+  if (Object.keys(apiError.context).length === 0) {
+    apiError.context = requestContext;
+  } else {
+    apiError.context = {
       ...requestContext,
-      originalError: {
-        name: err.name,
-        message: err.message,
-      },
-    });
-    return ApiError.handle(internalError, res);
+      ...apiError.context,
+    };
   }
 
-  // If it's an ApiError but doesn't have context, add it
-  if (err instanceof ApiError && Object.keys(err.context).length === 0) {
-    err.context = requestContext;
-  }
-
-  // Merge request context with existing context
-  err.context = {
-    ...requestContext,
-    ...err.context, // This preserves specific context from constructor
-  };
-
-  // Handle the error
-  ApiError.handle(err, res);
+  ApiError.handle(apiError, res);
 }) as ErrorRequestHandler);
 
 app.use((req, res) => {

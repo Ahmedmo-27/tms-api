@@ -22,6 +22,7 @@ import {
   LEGACY_OPEN_GYM_PAYLOAD,
 } from "../utils/scan-payload";
 import { resolveLegacyOpenGymLocationId } from "../utils/open-gym-location";
+import { SCAN_ERROR_MESSAGES } from "../utils/error-messages";
 import NonUserBooking, { INonUserBooking } from "../models/nonUserBookings";
 import { sendPaymentToRentalSystem } from "./egygap-erp-service";
 import { NotificationsService } from "./notifications-service";
@@ -310,10 +311,16 @@ export class BookingsService {
   static async cancelDropIn(uid: string, scid: string): Promise<void> {
     const member = await Member.findOne({ uid });
     if (!member)
-      throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
+      throw new NotFoundError(
+        "MEMBER_NOT_FOUND",
+        SCAN_ERROR_MESSAGES.MEMBER_NOT_FOUND,
+      );
     const scheduledClass = await ScheduledClass.findById(scid);
     if (!scheduledClass)
-      throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
+      throw new NotFoundError(
+        "CLASS_NOT_FOUND",
+        SCAN_ERROR_MESSAGES.CLASS_NOT_FOUND,
+      );
     const cancellationDeadline = new Date(
       scheduledClass.startTime.getTime() - 3 * 60 * 60 * 1000,
     );
@@ -355,23 +362,29 @@ export class BookingsService {
   static async recordAttendance(uid: string, scid: string, io: Server) {
     const member = await Member.findOne({ uid }).populate({ path: "uid" });
     if (!member)
-      throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
+      throw new NotFoundError(
+        "MEMBER_NOT_FOUND",
+        SCAN_ERROR_MESSAGES.MEMBER_NOT_FOUND,
+      );
     const scheduledClass = await ScheduledClass.findById(scid);
     if (!scheduledClass)
-      throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
+      throw new NotFoundError(
+        "CLASS_NOT_FOUND",
+        SCAN_ERROR_MESSAGES.CLASS_NOT_FOUND,
+      );
     const attendanceDeadline = new Date(
       scheduledClass.startTime.getTime() + 30 * 60 * 1000,
     );
     if (new Date() > attendanceDeadline) {
       io.emit("FAILED-SCAN", {
         code: "PAST_ATTENDANCE_DEADLINE",
-        message: "Attendance deadline passed",
+        message: SCAN_ERROR_MESSAGES.PAST_ATTENDANCE_DEADLINE,
         member: (member.uid as any).name,
       });
       ScheduledClass.addMemberScan(scid, uid, false);
       throw new ForbiddenError(
         "PAST_ATTENDANCE_DEADLINE",
-        "Class has started 30mins ago",
+        SCAN_ERROR_MESSAGES.PAST_ATTENDANCE_DEADLINE,
       );
     }
     const isBooked = await scheduledClass.checkBookedMember(
@@ -381,7 +394,10 @@ export class BookingsService {
     );
     if (!isBooked) {
       ScheduledClass.addMemberScan(scid, uid, false);
-      throw new NotFoundError("CLASS_NOT_BOOKED", "Member not booked");
+      throw new NotFoundError(
+        "CLASS_NOT_BOOKED",
+        SCAN_ERROR_MESSAGES.CLASS_NOT_BOOKED,
+      );
     }
     await runInTransaction(async (session: ClientSession) => {
       await Member.recordAttendance(
@@ -407,10 +423,16 @@ export class BookingsService {
   ) {
     const member = await Member.findOne({ uid }).populate({ path: "uid" });
     if (!member)
-      throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
+      throw new NotFoundError(
+        "MEMBER_NOT_FOUND",
+        SCAN_ERROR_MESSAGES.MEMBER_NOT_FOUND,
+      );
     const scheduledClass = await ScheduledClass.findById(scid);
     if (!scheduledClass)
-      throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
+      throw new NotFoundError(
+        "CLASS_NOT_FOUND",
+        SCAN_ERROR_MESSAGES.CLASS_NOT_FOUND,
+      );
     const isBooked = scheduledClass.bookedMembers.some(
       (b) => b.uid.toString() === uid,
     );
@@ -473,7 +495,7 @@ export class BookingsService {
         );
         throw new ForbiddenError(
           "NO_ACTIVE_PACKAGE_FOUND",
-          "No active packages found",
+          SCAN_ERROR_MESSAGES.NO_ACTIVE_PT_PACKAGE,
         );
       }
       const pkg = await Package.findById(pid);
@@ -502,13 +524,12 @@ export class BookingsService {
       const memberName = member ? (member.uid as any).name : "";
       io.emit("FAILED-SCAN", {
         code: "LEGACY_OPEN_GYM_UNAVAILABLE",
-        message:
-          "Legacy open gym QR is not supported. Use branch QR code (opengym:locationId).",
+        message: SCAN_ERROR_MESSAGES.LEGACY_OPEN_GYM_UNAVAILABLE,
         member: memberName,
       });
       throw new BadRequestError(
         "LEGACY_OPEN_GYM_UNAVAILABLE",
-        "Legacy open gym QR is not supported. Use branch-specific QR code.",
+        SCAN_ERROR_MESSAGES.LEGACY_OPEN_GYM_UNAVAILABLE,
       );
     }
     await BookingsService.recordOpenGymAttendance(uid, io, locationId, {
@@ -524,24 +545,28 @@ export class BookingsService {
     if (!isValidOpenGymLocationId(locationId)) {
       io.emit("FAILED-SCAN", {
         code: "INVALID_LOCATION",
-        message: "Invalid location",
+        message: SCAN_ERROR_MESSAGES.MALFORMED_LOCATION_ID,
         member: memberName,
       });
-      throw new BadRequestError("INVALID_LOCATION", "Invalid location", {
-        locationId,
-      });
+      throw new BadRequestError(
+        "INVALID_LOCATION",
+        SCAN_ERROR_MESSAGES.MALFORMED_LOCATION_ID,
+        { locationId },
+      );
     }
 
     const location = await Location.findById(locationId).select("_id");
     if (!location) {
       io.emit("FAILED-SCAN", {
         code: "INVALID_LOCATION",
-        message: "Invalid location",
+        message: SCAN_ERROR_MESSAGES.INVALID_LOCATION,
         member: memberName,
       });
-      throw new BadRequestError("INVALID_LOCATION", "Invalid location", {
-        locationId,
-      });
+      throw new BadRequestError(
+        "INVALID_LOCATION",
+        SCAN_ERROR_MESSAGES.INVALID_LOCATION,
+        { locationId },
+      );
     }
   }
 
@@ -588,7 +613,10 @@ export class BookingsService {
   ) {
     const member = await Member.findOne({ uid }).populate({ path: "uid" });
     if (!member)
-      throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
+      throw new NotFoundError(
+        "MEMBER_NOT_FOUND",
+        SCAN_ERROR_MESSAGES.MEMBER_NOT_FOUND,
+      );
 
     const memberName = (member.uid as any).name;
 
@@ -604,7 +632,7 @@ export class BookingsService {
     if (!pkgIds.length)
       throw new NotFoundError(
         "PACKAGE_NOT_FOUND",
-        "No eligible space walk packages found",
+        SCAN_ERROR_MESSAGES.PACKAGE_NOT_FOUND,
       );
 
     if (
@@ -615,14 +643,16 @@ export class BookingsService {
     ) {
       io.emit("FAILED-SCAN", {
         code: "ATTENDANCE_ALREADY_RECORDED",
-        message: "Attendance was already recorded",
+        message: locationId
+          ? SCAN_ERROR_MESSAGES.ATTENDANCE_ALREADY_RECORDED
+          : SCAN_ERROR_MESSAGES.ATTENDANCE_ALREADY_RECORDED_GENERIC,
         member: memberName,
       });
       throw new ConflictError(
         "ATTENDANCE_ALREADY_RECORDED",
         locationId
-          ? "Open gym attendance already recorded today at this branch"
-          : "Open gym attendance already recorded today",
+          ? SCAN_ERROR_MESSAGES.ATTENDANCE_ALREADY_RECORDED
+          : SCAN_ERROR_MESSAGES.ATTENDANCE_ALREADY_RECORDED_GENERIC,
       );
     }
 
@@ -667,7 +697,7 @@ export class BookingsService {
         );
         throw new ForbiddenError(
           "NO_ACCESS_AT_LOCATION",
-          "Member does not have access at this location",
+          SCAN_ERROR_MESSAGES.NO_ACCESS_AT_LOCATION,
           { locationId },
         );
       }
@@ -683,7 +713,7 @@ export class BookingsService {
         );
         throw new ForbiddenError(
           "NO_ACTIVE_PACKAGE_FOUND",
-          "No active packages found",
+          SCAN_ERROR_MESSAGES.NO_ACTIVE_PACKAGE,
         );
       }
 
