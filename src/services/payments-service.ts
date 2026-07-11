@@ -343,7 +343,7 @@ export class PaymentsService {
       nonMemberPhone,
       locationId: locationId || undefined,
     });
-    await payment.save({ session });
+    await payment.save(session ? { session } : {});
     return payment;
   }
 

@@ -1,0 +1,14 @@
+ src/app/dashboard/page.tsx                         |  6 +-
+ src/components/coach/CoachDashboardShell.tsx       | 10 +--
+ src/components/coach/CoachScansMonitor.tsx         | 21 ++++--
+ src/components/ui/forms/login-form.tsx             |  7 +-
+ src/components/ui/member-requests/columns.tsx      | 82 +++++++++++++++------
+ .../member-requests/mobile-member-request-card.tsx | 36 ++++++---
+ .../member-requests/pending-members-container.tsx  | 17 ++---
+ src/components/ui/scans/attendance-container.tsx   | 23 ++++--
+ src/components/ui/scans/class-container.tsx        | 24 ++++--
+ src/components/ui/scans/scan-container.tsx         | 85 +++++++++++++++-------
+ src/lib/actions/member-actions.ts                  | 32 ++++++++
+ src/lib/socket.ts                                  | 33 +++++++++
+ src/lib/utils/parsers/scans-parser.ts              | 48 ++++++++++--
+ 13 files changed, 313 insertions(+), 111 deletions(-)

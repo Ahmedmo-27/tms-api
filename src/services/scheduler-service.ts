@@ -488,8 +488,11 @@ export class SchedulerService {
     })
       .populate({ path: "ptAttendance.uid" })
       .populate({ path: "openGymAttendance.uid" })
-      .populate({ path: "ptAttendance.locationId", select: "branchName location" })
-      .populate({ path: "openGymAttendance.locationId", select: "branchName location" });
+      .populate({
+        path: "openGymAttendance.locationId",
+        select: "branchName location",
+      })
+      .lean();
     return dailyAttendance;
   }
 }

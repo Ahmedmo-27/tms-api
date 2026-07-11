@@ -7,6 +7,10 @@ import { SuccessResponse } from "../../core/ApiResponse";
 import asyncHandler from "../../utils/asyncHandler";
 import logger from "../../config/logger";
 import { SubscriptionsService } from "../../services/subscriptions-service";
+import {
+  buildMatchaPackageFilter,
+  isPendingMember,
+} from "../../utils/matcha-branch";
 
 // GET all packages to subscribe
 export const getPackage = asyncHandler(async function (
@@ -26,6 +30,10 @@ export const getPackage = asyncHandler(async function (
   }
   query.hidden = {$ne: true}
 
+  if (await isPendingMember((req as AuthRequest).user._id as string)) {
+    Object.assign(query, await buildMatchaPackageFilter());
+  }
+
   let packages = await Package.find(query);
   if (!packages || packages.length === 0)
     throw new NotFoundError("PACKAGES_NOT_FOUND", "Packages not found");
@@ -40,7 +48,11 @@ export const getMemberPackages = asyncHandler(async function (
 ): Promise<void> {
   const authReq = req as AuthRequest;
   const _id = authReq.user._id;
-  const member = await Member.findOne({ uid: _id });
+  let member = await Member.findOne({ uid: _id });
+  if (!member && authReq.user.role === "user") {
+    new SuccessResponse("Packages Found!", []).send(res);
+    return;
+  }
   if (!member)
     throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found", { _id });
   logger.info(member.packages);

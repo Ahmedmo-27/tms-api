@@ -14,6 +14,13 @@ import { ChallengeService } from "./challenge-service";
 import User from "../models/user";
 import { Server as SocketIOServer } from "socket.io";
 import { resolveOpenGymPaymentNote } from "../utils/open-gym-payment-purpose";
+import { normalizePhoneNumber } from "../utils/phone";
+import {
+  assertMatchaPackageForPendingUser,
+  ensureMemberForPendingPurchase,
+  getMatchaLocationId,
+  isPendingMember,
+} from "../utils/matcha-branch";
 
 export class SubscriptionsService {
   static async frontDeskSubscribeToPackage(
@@ -69,7 +76,12 @@ export class SubscriptionsService {
 
     const resolvedNote =
       note ??
-      resolveOpenGymPaymentNote(pkg.category, pkg.renewalPeriod);
+      resolveOpenGymPaymentNote(
+        pkg.category,
+        pkg.renewalPeriod,
+        pkg.name,
+        pkg.expiryPeriod,
+      );
 
     await runInTransaction(async (session: ClientSession) => {
       const payment = await PaymentsService.savePayment(
@@ -126,16 +138,24 @@ export class SubscriptionsService {
     note?: string,
   ) {
     let orderId: string;
-    const member = await Member.findOne({ uid });
-    if (!member)
-      throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found", {
-        uid,
-      });
     const pkg = await Package.findById(pkgId);
     if (!pkg)
       throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found", {
         pkgId,
       });
+
+    const pendingMember = await isPendingMember(uid);
+    if (pendingMember) {
+      await assertMatchaPackageForPendingUser(pkg);
+    }
+
+    let member = await Member.findOne({ uid });
+    if (!member) {
+      await ensureMemberForPendingPurchase(uid);
+      member = await Member.findOne({ uid });
+    }
+    if (!member)
+      throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found", { uid });
 
     startDate = new Date(startDate).toISOString();
     const packageId = new Types.ObjectId(pkgId);
@@ -184,6 +204,9 @@ export class SubscriptionsService {
         packageId,
         undefined,
       );
+      const packageLocationId = pendingMember
+        ? (await getMatchaLocationId()) ?? undefined
+        : undefined;
       await Member.addPackage(
         uid,
         pkg._id.toString(),
@@ -193,7 +216,7 @@ export class SubscriptionsService {
         endDate,
         session,
         restrictions,
-        undefined
+        packageLocationId,
       );
       if (pkg.category !== "PERSONAL_TRAINING") {
         await sendPaymentToRentalSystem(payment);
@@ -207,13 +230,14 @@ export class SubscriptionsService {
     startDate: string,
     remainingClasses: number,
     savedEndDate?: string,
+    session?: ClientSession,
   ) {
-    const member = await Member.findOne({ uid });
+    const member = await Member.findOne({ uid }).session(session ?? null);
     if (!member)
       throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found", {
         uid,
       });
-    const pkg = await Package.findById(pkgId);
+    const pkg = await Package.findById(pkgId).session(session ?? null);
     if (!pkg)
       throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found", {
         pkgId,
@@ -234,7 +258,7 @@ export class SubscriptionsService {
       });
     }
 
-    await runInTransaction(async (session: ClientSession) => {
+    const addPackage = async (s: ClientSession) => {
       await Member.addPackage(
         uid,
         pkg._id.toString(),
@@ -242,12 +266,18 @@ export class SubscriptionsService {
         remainingClasses,
         startDate,
         endDate,
-        session,
+        s,
         restrictions,
         undefined
       );
       logger.info("Added pkg");
-    });
+    };
+
+    if (session) {
+      await addPackage(session);
+    } else {
+      await runInTransaction(addPackage);
+    }
   }
 
   static async unsubscribeFromPackage(
@@ -265,6 +295,36 @@ export class SubscriptionsService {
     });
   }
 
+  static async transferStagedPackagesToMember(
+    uid: string,
+    phoneNumber: string,
+    session?: ClientSession,
+  ) {
+    const cleanPhone = normalizePhoneNumber(phoneNumber);
+    const pkgQuery = NonUserPackage.find({
+      phoneNumber: cleanPhone,
+      added: false,
+    });
+    if (session) pkgQuery.session(session);
+    const savedPkgs = await pkgQuery;
+
+    for (const savedPkg of savedPkgs) {
+      await SubscriptionsService.addSavedPkgToMember(
+        uid,
+        savedPkg.pkgId.toString(),
+        savedPkg.pkgStartDate.toISOString(),
+        savedPkg.remainingClasses,
+        savedPkg.pkgEndDate.toISOString(),
+        session
+      );
+      await NonUserPackage.findByIdAndUpdate(
+        savedPkg._id,
+        { added: true },
+        session ? { session } : {}
+      );
+    }
+  }
+
   static async addNonUserPackage(
     name: string,
     phoneNumber: string,
@@ -276,6 +336,8 @@ export class SubscriptionsService {
     amount?: string,
     locationId?: string,
   ) {
+    name = name.trim();
+    phoneNumber = normalizePhoneNumber(phoneNumber);
     const pkg = await Package.findById(pkgId);
     if (!pkg)
       throw new NotFoundError("PACKAGE_NOT_FOUND", "The package was not found");
@@ -317,7 +379,7 @@ export class SubscriptionsService {
         paymentId: payment._id,
         createdAt: new Date(),
       });
-      await nonUserPackage.save({ session });
+      await nonUserPackage.save(session ? { session } : {});
       if (pkg.category !== "PERSONAL_TRAINING") {
         await sendPaymentToRentalSystem(payment);
       }

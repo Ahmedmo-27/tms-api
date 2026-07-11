@@ -17,6 +17,9 @@ import Package from "../../models/package";
 import ScheduledClass from "../../models/scheduledClass";
 import Location from "../../models/location";
 import { Types } from "mongoose";
+import { SubscriptionsService } from "../../services/subscriptions-service";
+import { runInTransaction } from "../../utils/transaction";
+import { normalizePhoneNumber } from "../../utils/phone";
 
 async function enrichUserWithBranch(user: any) {
   const plain = user.toObject ? user.toObject() : { ...user };
@@ -49,28 +52,38 @@ export const verifyToken = asyncHandler(
 export const registerUserManually = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const { name, phoneNumber, password } = req.body;
-    const cleanPhoneNumber = phoneNumber.replace(/\s/g, "");
+    const cleanPhoneNumber = normalizePhoneNumber(phoneNumber);
     if (await User.findOne({ phoneNumber: cleanPhoneNumber }))
       throw new ConflictError("USER_ALREADY_EXISTS", "User already exists", {
         phoneNumber,
       });
-    const userData = {
-      name,
-      email: `${name.toLowerCase().replace(/\s/g, "")}@devdefault.com`,
-      password,
-      phoneNumber: cleanPhoneNumber,
-      role: "member",
-    };
-    const user = new User(userData);
-    await user.save();
-    const member = new Member({
-      uid: user._id,
-      packages: [],
-      bookings: [],
-      attendance: [],
+
+    let user: InstanceType<typeof User>;
+    await runInTransaction(async (session) => {
+      const userData = {
+        name,
+        email: `${name.toLowerCase().replace(/\s/g, "")}@devdefault.com`,
+        password,
+        phoneNumber: cleanPhoneNumber,
+        role: "member",
+      };
+      user = new User(userData);
+      await user.save(session ? { session } : {});
+      const member = new Member({
+        uid: user._id,
+        packages: [],
+        bookings: [],
+        attendance: [],
+      });
+      await member.save(session ? { session } : {});
+      await SubscriptionsService.transferStagedPackagesToMember(
+        (user._id as Types.ObjectId).toString(),
+        cleanPhoneNumber,
+        session
+      );
     });
-    await member.save();
-    new SuccessResponse("User Added!", { user }).send(res);
+
+    new SuccessResponse("User Added!", { user: user! }).send(res);
   }
 );
 

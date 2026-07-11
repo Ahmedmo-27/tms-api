@@ -4,9 +4,8 @@ import User from "../../models/user";
 import { NotFoundError } from "../../core/ApiError";
 import { SuccessResponse } from "../../core/ApiResponse";
 import asyncHandler from "../../utils/asyncHandler";
-import NonUserPackage from "../../models/nonUserPackage";
 import { SubscriptionsService } from "../../services/subscriptions-service";
-import logger from "../../config/logger";
+import { runInTransaction } from "../../utils/transaction";
 
 export const addMember = asyncHandler(async function (
   req: Request,
@@ -16,29 +15,29 @@ export const addMember = asyncHandler(async function (
   const user = await User.findById(id);
   if (!user)
     throw new NotFoundError("USER_NOT_FOUND", "User not found", { id });
-  const member = new Member({
-    uid: id,
-    packages: [],
-    bookings: [],
-    attendance: [],
-  });
-  await member.save();
-  user.role = "member";
-  await user.save();
-  logger.info("User: ", user)
-  const savedPkgs = await NonUserPackage.find({ phoneNumber: user.phoneNumber, added: false });
-  logger.info("Packages: ", savedPkgs)
-  for (const savedPkg of savedPkgs) {
-    logger.info("Adding package", savedPkg)
-    await SubscriptionsService.addSavedPkgToMember(
+
+  await runInTransaction(async (session) => {
+    let member = await Member.findOne({ uid: id }).session(session ?? null);
+    if (!member) {
+      member = new Member({
+        uid: id,
+        packages: [],
+        bookings: [],
+        attendance: [],
+      });
+      await member.save(session ? { session } : {});
+    }
+    user.role = "member";
+    await user.save(session ? { session } : {});
+
+    await SubscriptionsService.transferStagedPackagesToMember(
       id,
-      savedPkg.pkgId.toString(),
-      savedPkg.pkgStartDate.toISOString(),
-      savedPkg.remainingClasses,
-      savedPkg.pkgEndDate.toISOString(),
+      user.phoneNumber,
+      session
     );
-    await NonUserPackage.findByIdAndUpdate(savedPkg._id, { added: true });
-  }
+  });
+
+  const member = await Member.findOne({ uid: id }).lean();
   new SuccessResponse("Member Added!", member).send(res);
 });
 

@@ -26,6 +26,22 @@ export interface AuthResponse extends Response {
 
 type UserRole = "member" | "user" | "admin" | "management" | "branch_admin" | "coach";
 
+const ADMIN_ROLE_ALIASES: UserRole[] = ["admin", "management", "branch_admin"];
+
+function roleIsAllowed(userRole: string, allowedRoles: UserRole[]): boolean {
+  const normalizedUserRole =
+    userRole === "admin" ? "management" : userRole;
+  const expandedRoles = new Set<UserRole>();
+  for (const role of allowedRoles) {
+    if (role === "admin") {
+      ADMIN_ROLE_ALIASES.forEach((alias) => expandedRoles.add(alias));
+    } else {
+      expandedRoles.add(role);
+    }
+  }
+  return expandedRoles.has(normalizedUserRole as UserRole);
+}
+
 // CHANGE ERROR CODES AFTER UPDATE
 export const authenticateUser = asyncHandler(
   async (req: Request, res: Response, next: NextFunction) => {
@@ -82,12 +98,7 @@ export const authorizeUser = (allowedRoles: UserRole[]): RequestHandler => {
       if (!authReq.user.role) {
         throw new AuthFailureError("AUTH_FAILURE", "Authentication required");
       }
-      const userRole = authReq.user.role as UserRole;
-      const normalizedRole = userRole === "admin" ? "management" : userRole;
-      const hasAccess = allowedRoles.some(
-        (role) => (role === "admin" ? "management" : role) === normalizedRole
-      );
-      if (!hasAccess)
+      if (!roleIsAllowed(authReq.user.role, allowedRoles))
         throw new ForbiddenError("INSUFFICIENT_PERMISSIONS", "Access denied - Insufficient permissions");
       next();
     }

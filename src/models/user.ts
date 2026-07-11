@@ -73,15 +73,7 @@ const UserSchema: Schema<IUser, UserModel, IUserMethods> = new Schema({
   password: {
     type: String,
     required: true,
-    minlength: 8,
     trim: true,
-    validate: {
-      validator: function (pass: string) {
-        return /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/.test(pass);
-      },
-      message:
-        "Password must contain at least one uppercase letter, one lowercase letter, and one number",
-    },
   },
   name: {
     type: String,

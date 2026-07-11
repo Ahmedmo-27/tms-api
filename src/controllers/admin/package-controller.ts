@@ -1,11 +1,7 @@
 import { Request, Response } from "express";
-import Package, {
-  getPackageEndDate,
-  OPEN_GYM_RENEWAL_DAYS,
-  OpenGymRenewalPeriod,
-} from "../../models/package";
+import Package from "../../models/package";
 import Member from "../../models/member";
-import { BadRequestError, NotFoundError } from "../../core/ApiError";
+import { BadRequestError, ConflictError, NotFoundError } from "../../core/ApiError";
 import { SuccessResponse } from "../../core/ApiResponse";
 import asyncHandler from "../../utils/asyncHandler";
 import { SubscriptionsService } from "../../services/subscriptions-service";
@@ -14,7 +10,11 @@ import NonUserPackage from "../../models/nonUserPackage";
 import { runInTransaction } from "../../utils/transaction";
 import { ClientSession } from "mongoose";
 import { resolveLocationFilter, resolveLocationIdForWrite } from "../../utils/location-scope";
+import { normalizePhoneNumber } from "../../utils/phone";
+import { normalizeOpenGymPackageFields } from "../../utils/open-gym-package";
 import { Types } from "mongoose";
+import { getPackageDeletionImpact } from "../../services/package-deletion-guard";
+import logger from "../../config/logger";
 
 export const getPackage = asyncHandler(async function (
   req: Request,
@@ -48,49 +48,6 @@ export const getPackage = asyncHandler(async function (
   new SuccessResponse("Packages Found!", packages).send(res);
 });
 
-function normalizeOpenGymPackageFields(body: {
-  category: string;
-  expiryPeriod?: number;
-  renewalPeriod?: OpenGymRenewalPeriod;
-  numberOfSessions?: number;
-}): { expiryPeriod: number; renewalPeriod?: OpenGymRenewalPeriod; numberOfSessions: number } {
-  if (body.category !== "OPEN_GYM") {
-    if (!body.expiryPeriod)
-      throw new BadRequestError("INVALID_REQUEST", "Invalid request");
-    return {
-      expiryPeriod: body.expiryPeriod,
-      numberOfSessions: body.numberOfSessions ?? 1000,
-    };
-  }
-
-  const renewalPeriod = body.renewalPeriod;
-  let expiryPeriod = body.expiryPeriod;
-
-  if (renewalPeriod) {
-    expiryPeriod = OPEN_GYM_RENEWAL_DAYS[renewalPeriod];
-  } else if (!expiryPeriod || ![7, 30].includes(expiryPeriod)) {
-    throw new BadRequestError(
-      "INVALID_OPEN_GYM_RENEWAL",
-      "Open gym packages require renewalPeriod (WEEKLY or MONTHLY) or expiryPeriod of 7 or 30 days",
-    );
-  } else {
-    expiryPeriod =
-      expiryPeriod === 7
-        ? OPEN_GYM_RENEWAL_DAYS.WEEKLY
-        : OPEN_GYM_RENEWAL_DAYS.MONTHLY;
-  }
-
-  const resolvedRenewal: OpenGymRenewalPeriod | undefined =
-    renewalPeriod ??
-    (expiryPeriod === OPEN_GYM_RENEWAL_DAYS.WEEKLY ? "WEEKLY" : "MONTHLY");
-
-  return {
-    expiryPeriod,
-    renewalPeriod: resolvedRenewal,
-    numberOfSessions: body.numberOfSessions ?? 10000,
-  };
-}
-
 export const addPackage = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const {
@@ -101,26 +58,19 @@ export const addPackage = asyncHandler(
       coachId,
       classRestrictions,
       expiryPeriod,
-      renewalPeriod,
       numberOfSessions,
-      locationId,
     } = req.body;
     if (!name || !category || !price)
       throw new BadRequestError("INVALID_REQUEST", "Invalid request");
-    if (category === "OPEN_GYM") {
-      if (!locationId || !Types.ObjectId.isValid(locationId)) {
-        throw new BadRequestError(
-          "LOCATION_REQUIRED",
-          "Open gym packages require a branch locationId",
-        );
-      }
-    }
+
+    const targetLocationId =
+      category === "OPEN_GYM" ? resolveLocationIdForWrite(req) : null;
 
     const normalized = normalizeOpenGymPackageFields({
       category,
       expiryPeriod,
-      renewalPeriod,
       numberOfSessions,
+      opensClasses,
     });
 
     const pkg = new Package({
@@ -129,12 +79,11 @@ export const addPackage = asyncHandler(
       category,
       price,
       expiryPeriod: normalized.expiryPeriod,
-      renewalPeriod: normalized.renewalPeriod,
       coachId,
       opensClasses,
       classRestrictions,
-      ...(locationId
-        ? { locationId: new Types.ObjectId(locationId) }
+      ...(targetLocationId
+        ? { locationId: new Types.ObjectId(targetLocationId) }
         : {}),
     });
     await pkg.save();
@@ -142,14 +91,49 @@ export const addPackage = asyncHandler(
   }
 );
 
+export const getPackageDeletionImpactReport = asyncHandler(
+  async (req: Request, res: Response): Promise<void> => {
+    const { id } = req.params;
+    const impact = await getPackageDeletionImpact(id);
+    new SuccessResponse("Package deletion impact", impact).send(res);
+  },
+);
+
 export const deletePackage = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const { id } = req.params;
+    const force = req.query.force === "true";
+    const impact = await getPackageDeletionImpact(id);
+
+    const hasRisk =
+      impact.activeSubscriptions > 0 || impact.nonRefundedPaymentCount > 0;
+
+    if (hasRisk && !force) {
+      throw new ConflictError(
+        "PACKAGE_HAS_ACTIVE_SUBSCRIBERS",
+        impact.warningMessage,
+        {
+          impact,
+          hint: "Pass ?force=true to delete anyway. Member subscriptions and payments will keep referencing a missing package until repaired.",
+        },
+      );
+    }
+
+    if (hasRisk && force) {
+      logger.warn("Force-deleting package with active subscribers", {
+        packageId: id,
+        impact,
+      });
+    }
+
     const pkg = await Package.findByIdAndDelete(id);
     if (!pkg)
       throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found", { id });
-    new SuccessResponse("Package Deleted!", pkg).send(res);
-  }
+    new SuccessResponse("Package Deleted!", {
+      deletedPackage: pkg,
+      orphanedImpact: hasRisk ? impact : null,
+    }).send(res);
+  },
 );
 
 export const updatePackage = asyncHandler(
@@ -181,14 +165,13 @@ export const updatePackage = asyncHandler(
     const merged = {
       category: req.body.category ?? existing.category,
       expiryPeriod: req.body.expiryPeriod ?? existing.expiryPeriod,
-      renewalPeriod: req.body.renewalPeriod ?? existing.renewalPeriod,
       numberOfSessions: req.body.numberOfSessions ?? existing.numberOfSessions,
+      opensClasses: req.body.opensClasses ?? existing.opensClasses,
     };
     const normalized = normalizeOpenGymPackageFields(merged);
     const updatePayload = {
       ...req.body,
       expiryPeriod: normalized.expiryPeriod,
-      renewalPeriod: normalized.renewalPeriod,
       numberOfSessions: normalized.numberOfSessions,
     };
 
@@ -334,12 +317,21 @@ export const addNonUserPackage = asyncHandler(async function (
     amount,
     locationId,
   } = req.body;
-  
+
   const targetLocationId = resolveLocationIdForWrite(req);
 
+  const trimmedName = (name as string)?.trim();
+  const cleanPhone = normalizePhoneNumber(phoneNumber as string);
+  if (!trimmedName) {
+    throw new BadRequestError("INVALID_NAME", "Name is required");
+  }
+  if (!/^[0-9]{11}$/.test(cleanPhone)) {
+    throw new BadRequestError("INVALID_PHONE", "Phone number must be 11 digits");
+  }
+
   await SubscriptionsService.addNonUserPackage(
-    name,
-    phoneNumber,
+    trimmedName,
+    cleanPhone,
     pkgId,
     pkgStartDate,
     paymentMethod,

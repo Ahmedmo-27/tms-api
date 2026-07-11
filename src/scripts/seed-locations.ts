@@ -19,6 +19,11 @@ const LOCATIONS = [
     location: "New Cairo",
     locationUrl: "https://maps.app.goo.gl/qKnnCbgJUUS4ViGd6",
   },
+  {
+    branchName: "Matcha",
+    location: "Matcha North Coast",
+    locationUrl: "",
+  },
 ];
 
 async function main() {

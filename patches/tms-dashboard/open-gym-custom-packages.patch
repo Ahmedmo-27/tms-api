@@ -1,0 +1,484 @@
+From 878f35fb947a54c157993296cceaabd2994c8190 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Wed, 1 Jul 2026 08:58:30 +0000
+Subject: [PATCH] Add combo open gym + sessions support in pricing dialog
+
+Extend open gym package manager with class multi-select and session count.
+Fetch catalog classes on Scans Monitor. Combo packages show combined
+labels in subscribe flow.
+---
+ src/app/dashboard/scans-monitor/page.tsx      |  19 ++-
+ .../open-gym/open-gym-pricing-dialog.tsx      | 135 ++++++++++++++++--
+ .../open-gym/open-gym-subscribe-dialog.tsx    |   3 +-
+ src/components/ui/scans/scan-container.tsx    |   5 +-
+ src/lib/data/open-gym.ts                      |  29 ++--
+ src/lib/utils/open-gym.ts                     |  11 ++
+ 6 files changed, 177 insertions(+), 25 deletions(-)
+
+diff --git a/src/app/dashboard/scans-monitor/page.tsx b/src/app/dashboard/scans-monitor/page.tsx
+index 91d2afa..d10c3da 100644
+--- a/src/app/dashboard/scans-monitor/page.tsx
++++ b/src/app/dashboard/scans-monitor/page.tsx
+@@ -11,6 +11,8 @@ import NetworkErrorPage from "@/components/ui/error-pages/network-error-fullpage
+ import { NetworkError, UnauthorizedError } from "@/core/api-error";
+ import UnauthorizedPage from "@/components/ui/error-pages/UnauthorizedPage";
+ import { getPackages } from "@/lib/data/package";
++import { getClasses } from "@/lib/data/class";
++import { Class } from "@/components/ui/classes/columns";
+ 
+ export default async function Page({
+   searchParams,
+@@ -20,6 +22,7 @@ export default async function Page({
+   let scans: any = [];
+   let checkIns: any = [];
+   let packages: any = [];
++  let classes: Class[] = [];
+ 
+   const params = await searchParams;
+   const dateParam = params.date ? new Date(params.date) : new Date();
+@@ -27,8 +30,13 @@ export default async function Page({
+     ? new Date(params.checkInsDate)
+     : new Date();
+   try {
+-    const scheduledClasses = await getScheduledClasses();
+-    packages = await getPackages();     // Get packages
++    const [scheduledClasses, packagesData, classesData] = await Promise.all([
++      getScheduledClasses(),
++      getPackages(),
++      getClasses(),
++    ]);
++    packages = packagesData;
++    classes = classesData;
+     if (scheduledClasses.length > 0) {
+       scans = parseScans(scheduledClasses, dateParam);
+     } else {
+@@ -42,7 +50,12 @@ export default async function Page({
+     }
+     return (
+       <div>
+-        <ScanContainer scans={scans} dailyAttendance={checkIns} packages={packages} />
++        <ScanContainer
++          scans={scans}
++          dailyAttendance={checkIns}
++          packages={packages}
++          classes={classes}
++        />
+       </div>
+     );
+   } catch (error) {
+diff --git a/src/components/ui/dialogs/open-gym/open-gym-pricing-dialog.tsx b/src/components/ui/dialogs/open-gym/open-gym-pricing-dialog.tsx
+index 5127f06..1305292 100644
+--- a/src/components/ui/dialogs/open-gym/open-gym-pricing-dialog.tsx
++++ b/src/components/ui/dialogs/open-gym/open-gym-pricing-dialog.tsx
+@@ -20,6 +20,8 @@ import {
+ } from "@/components/ui/select";
+ import { OpenGymBranchSelect } from "@/components/ui/open-gym/branch-select";
+ import { Package } from "@/components/ui/packages/columns";
++import { Class } from "@/components/ui/classes/columns";
++import { MultiSelect } from "@/components/ui/multiselect";
+ import {
+   createOpenGymPackage,
+   deleteOpenGymPackage,
+@@ -45,6 +47,9 @@ type PackageRow = {
+   durationValue: string;
+   durationUnit: DurationUnit;
+   price: string;
++  sessions: string;
++  selectedClassTitles: string[];
++  selectedClassIds: string[];
+ };
+ 
+ function packageLocationId(pkg: Package): string {
+@@ -61,11 +66,19 @@ function newPackageRow(): PackageRow {
+     durationValue: "1",
+     durationUnit: "weeks",
+     price: "",
++    sessions: "",
++    selectedClassTitles: [],
++    selectedClassIds: [],
+   };
+ }
+ 
+ function packageToRow(pkg: Package): PackageRow {
+   const { value, unit } = daysToDuration(pkg.expiryPeriod);
++  const validClasses = (pkg.opensClasses ?? []).filter((c) => c?._id);
++  const sessions = Number(pkg.numberOfSessions);
++  const hasClassBundle =
++    validClasses.length > 0 && Number.isFinite(sessions) && sessions < 1000;
++
+   return {
+     key: pkg._id,
+     pkgId: pkg._id,
+@@ -73,6 +86,9 @@ function packageToRow(pkg: Package): PackageRow {
+     durationValue: value,
+     durationUnit: unit,
+     price: String(pkg.price ?? ""),
++    sessions: hasClassBundle ? String(sessions) : "",
++    selectedClassTitles: validClasses.map((c) => c.title),
++    selectedClassIds: validClasses.map((c) => c._id),
+   };
+ }
+ 
+@@ -83,9 +99,11 @@ function isPositiveNumber(value: string): boolean {
+ 
+ export function OpenGymPricingDialog({
+   packages = [],
++  classes = [],
+   triggerLabel = "Open gym pricing",
+ }: {
+   packages?: Package[];
++  classes?: Class[];
+   triggerLabel?: string;
+ }) {
+   const router = useRouter();
+@@ -97,6 +115,19 @@ export function OpenGymPricingDialog({
+   const [deletedPkgIds, setDeletedPkgIds] = useState<string[]>([]);
+   const [saving, setSaving] = useState(false);
+ 
++  const bookableClasses = useMemo(
++    () => classes.filter((cls) => cls.category !== "WORKSPACE"),
++    [classes],
++  );
++  const classMap = useMemo(
++    () => new Map(bookableClasses.map((cls) => [cls.title, cls._id])),
++    [bookableClasses],
++  );
++  const classOptions = useMemo(
++    () => bookableClasses.map((cls) => cls.title),
++    [bookableClasses],
++  );
++
+   const branchPackages = useMemo(() => {
+     if (!locationId) return [];
+     return packages
+@@ -138,16 +169,30 @@ export function OpenGymPricingDialog({
+     setDeletedPkgIds([]);
+   }, [locationId, prices, branchPackages]);
+ 
+-  const updateRow = (
++  const updateRow = <K extends keyof PackageRow>(
+     key: string,
+-    field: keyof Omit<PackageRow, "key" | "pkgId">,
+-    value: string,
++    field: K,
++    value: PackageRow[K],
+   ) => {
+     setRows((prev) =>
+       prev.map((row) => (row.key === key ? { ...row, [field]: value } : row)),
+     );
+   };
+ 
++  const updateRowClasses = (key: string, titles: string[]) => {
++    setRows((prev) =>
++      prev.map((row) =>
++        row.key === key
++          ? {
++              ...row,
++              selectedClassTitles: titles,
++              selectedClassIds: titles.map((title) => classMap.get(title) ?? ""),
++            }
++          : row,
++      ),
++    );
++  };
++
+   const addRow = () => {
+     setRows((prev) => [...prev, newPackageRow()]);
+   };
+@@ -179,7 +224,11 @@ export function OpenGymPricingDialog({
+         (!row.pkgId || !deletedPkgIds.includes(row.pkgId)),
+     );
+ 
+-    if (!isPositiveNumber(dropInPrice) && rowsToSave.length === 0 && deletedPkgIds.length === 0) {
++    if (
++      !isPositiveNumber(dropInPrice) &&
++      rowsToSave.length === 0 &&
++      deletedPkgIds.length === 0
++    ) {
+       toast.error("Add at least one package or drop-in price");
+       return;
+     }
+@@ -193,6 +242,21 @@ export function OpenGymPricingDialog({
+         toast.error(`Invalid duration for "${row.name || "package"}"`);
+         return;
+       }
++      if (row.selectedClassIds.length > 0 && !isPositiveNumber(row.sessions)) {
++        toast.error(
++          `Enter how many class sessions are included in "${row.name || "package"}"`,
++        );
++        return;
++      }
++      if (
++        row.selectedClassIds.length === 0 &&
++        row.sessions.trim().length > 0
++      ) {
++        toast.error(
++          `Select classes for "${row.name || "package"}" or clear the session count`,
++        );
++        return;
++      }
+     }
+ 
+     setSaving(true);
+@@ -208,6 +272,7 @@ export function OpenGymPricingDialog({
+       }
+ 
+       for (const row of rowsToSave) {
++        const hasClasses = row.selectedClassIds.length > 0;
+         const payload = {
+           name: row.name.trim(),
+           price: Number(row.price),
+@@ -216,6 +281,13 @@ export function OpenGymPricingDialog({
+             row.durationUnit,
+           ),
+           locationId,
++          ...(hasClasses
++            ? {
++                opensClasses: row.selectedClassIds,
++                numberOfSessions: Number(row.sessions),
++                classRestrictions: [],
++              }
++            : { opensClasses: [] }),
+         };
+ 
+         if (row.pkgId) {
+@@ -248,9 +320,9 @@ export function OpenGymPricingDialog({
+           <DialogHeader>
+             <DialogTitle>Open gym pricing</DialogTitle>
+             <DialogDescription>
+-              Choose a branch, then create as many open gym packages as you
+-              need. Each package has its own name, duration (weeks or months),
+-              and price.
++              Create open gym packages per branch. Each package can be gym-only,
++              or a combo with class sessions — set the duration, price, name,
++              and optionally pick which classes are included.
+             </DialogDescription>
+           </DialogHeader>
+ 
+@@ -296,6 +368,7 @@ export function OpenGymPricingDialog({
+                         row.durationUnit,
+                       )
+                     : null;
++                  const isCombo = row.selectedClassIds.length > 0;
+ 
+                   return (
+                     <div
+@@ -306,10 +379,18 @@ export function OpenGymPricingDialog({
+                         <div>
+                           <p className="text-sm font-medium">
+                             {row.pkgId ? "Existing package" : "New package"}
++                            {isCombo ? (
++                              <span className="ml-2 text-xs font-normal text-muted-foreground">
++                                combo
++                              </span>
++                            ) : null}
+                           </p>
+                           {durationPreview ? (
+                             <p className="text-xs text-muted-foreground">
+-                              Duration: {durationPreview}
++                              Open gym: {durationPreview}
++                              {isCombo && isPositiveNumber(row.sessions)
++                                ? ` • ${row.sessions} class sessions`
++                                : ""}
+                             </p>
+                           ) : null}
+                         </div>
+@@ -335,14 +416,14 @@ export function OpenGymPricingDialog({
+                             onChange={(e) =>
+                               updateRow(row.key, "name", e.target.value)
+                             }
+-                            placeholder="e.g. Open Gym 2 Months — Maadi"
++                            placeholder="e.g. Open Gym + 8 Studio Sessions"
+                             disabled={!locationId}
+                           />
+                         </div>
+ 
+                         <div className="space-y-1.5">
+                           <Label className="text-xs text-muted-foreground">
+-                            Duration
++                            Open gym duration
+                           </Label>
+                           <div className="flex gap-2">
+                             <Input
+@@ -392,6 +473,40 @@ export function OpenGymPricingDialog({
+                             disabled={!locationId}
+                           />
+                         </div>
++
++                        <div className="space-y-1.5 sm:col-span-2">
++                          <Label className="text-xs text-muted-foreground">
++                            Included class sessions (optional)
++                          </Label>
++                          <Input
++                            type="number"
++                            min={1}
++                            value={row.sessions}
++                            onChange={(e) =>
++                              updateRow(row.key, "sessions", e.target.value)
++                            }
++                            placeholder="Leave empty for gym-only package"
++                            disabled={!locationId}
++                          />
++                          <p className="text-xs text-muted-foreground">
++                            Open gym visits stay unlimited for the package
++                            duration. This count is only for booking classes.
++                          </p>
++                        </div>
++
++                        <div className="space-y-1.5 sm:col-span-2">
++                          <Label className="text-xs text-muted-foreground">
++                            Classes included (optional)
++                          </Label>
++                          <MultiSelect
++                            placeholder="Select classes for combo packages"
++                            options={classOptions}
++                            selected={row.selectedClassTitles}
++                            onChange={(titles) =>
++                              updateRowClasses(row.key, titles)
++                            }
++                          />
++                        </div>
+                       </div>
+                     </div>
+                   );
+diff --git a/src/components/ui/dialogs/open-gym/open-gym-subscribe-dialog.tsx b/src/components/ui/dialogs/open-gym/open-gym-subscribe-dialog.tsx
+index e591430..5fe55d9 100644
+--- a/src/components/ui/dialogs/open-gym/open-gym-subscribe-dialog.tsx
++++ b/src/components/ui/dialogs/open-gym/open-gym-subscribe-dialog.tsx
+@@ -26,7 +26,6 @@ import { subscribePackageAction } from "@/lib/actions/member-actions";
+ import {
+   formatCatalogPackageLabel,
+   getPackageEndDateFromStart,
+-  isOpenGymPackage,
+ } from "@/lib/utils/open-gym";
+ import { tms } from "@/lib/tms-api";
+ import { Search } from "lucide-react";
+@@ -58,7 +57,7 @@ export function OpenGymSubscribeDialog({
+   const [effectiveLocationId, setEffectiveLocationId] = useState("");
+   const isViewingAllBranches = !effectiveLocationId;
+   const openGymPackages = packages
+-    .filter((p) => isOpenGymPackage(p.category))
++    .filter((p) => p.category === "OPEN_GYM")
+     .filter((p) => {
+       if (!effectiveLocationId || !p.locationId) return true;
+       const pkgLocationId =
+diff --git a/src/components/ui/scans/scan-container.tsx b/src/components/ui/scans/scan-container.tsx
+index a706af1..742cbfb 100644
+--- a/src/components/ui/scans/scan-container.tsx
++++ b/src/components/ui/scans/scan-container.tsx
+@@ -15,6 +15,7 @@ import { OpenGymDropInDialog } from "../dialogs/open-gym/open-gym-drop-in-dialog
+ import { OpenGymSubscribeDialog } from "../dialogs/open-gym/open-gym-subscribe-dialog";
+ import { OpenGymPricingDialog } from "../dialogs/open-gym/open-gym-pricing-dialog";
+ import { fetchScansMonitorData } from "@/lib/data/scans";
++import { Class } from "../classes/columns";
+ import {
+   createTmsSocket,
+   formatFailedScanToast,
+@@ -42,10 +43,12 @@ export function ScanContainer({
+   scans: initialScans,
+   dailyAttendance: initialDailyAttendance,
+   packages,
++  classes = [],
+ }: {
+   scans: ClassContainerProps[];
+   dailyAttendance: { pt: ClassScan[]; openGym: ClassScan[] };
+   packages: any;
++  classes?: Class[];
+ }) {
+   const searchParams = useSearchParams();
+ 
+@@ -160,7 +163,7 @@ export function ScanContainer({
+             </span>
+           </div>
+           <div className="flex flex-wrap items-center gap-2">
+-            <OpenGymPricingDialog packages={packages} />
++            <OpenGymPricingDialog packages={packages} classes={classes} />
+             <OpenGymDropInDialog />
+             <OpenGymSubscribeDialog packages={packages} />
+             <AddGuestPackage packages={packages} />
+diff --git a/src/lib/data/open-gym.ts b/src/lib/data/open-gym.ts
+index 974e839..9d215f5 100644
+--- a/src/lib/data/open-gym.ts
++++ b/src/lib/data/open-gym.ts
+@@ -38,36 +38,47 @@ export const setOpenGymDropInPrice = async (
+   return response.data.data;
+ };
+ 
+-export const createOpenGymPackage = async (params: {
++export type OpenGymPackagePayload = {
+   name: string;
+   price: number;
+   expiryPeriod: number;
+   locationId: string;
+-}) => {
++  numberOfSessions?: number;
++  opensClasses?: string[];
++  classRestrictions?: { cid: string; limit: number }[];
++};
++
++export const createOpenGymPackage = async (params: OpenGymPackagePayload) => {
+   const response = await tms.post("/admin/packages", {
+     name: params.name,
+     category: "OPEN_GYM",
+     price: params.price,
+     expiryPeriod: params.expiryPeriod,
+     locationId: params.locationId,
++    ...(params.numberOfSessions != null
++      ? { numberOfSessions: params.numberOfSessions }
++      : {}),
++    ...(params.opensClasses ? { opensClasses: params.opensClasses } : {}),
++    ...(params.classRestrictions
++      ? { classRestrictions: params.classRestrictions }
++      : {}),
+   });
+   revalidatePath("/dashboard/catalog");
+   revalidatePath("/dashboard/scans-monitor");
+   return response.data.data;
+ };
+ 
+-export const updateOpenGymPackage = async (params: {
+-  pkgId: string;
+-  name: string;
+-  price: number;
+-  expiryPeriod: number;
+-  locationId: string;
+-}) => {
++export const updateOpenGymPackage = async (
++  params: OpenGymPackagePayload & { pkgId: string },
++) => {
+   const response = await tms.patch(`/admin/packages/${params.pkgId}`, {
+     name: params.name,
+     price: String(params.price),
+     expiryPeriod: params.expiryPeriod,
+     locationId: params.locationId,
++    numberOfSessions: params.numberOfSessions,
++    opensClasses: params.opensClasses ?? [],
++    classRestrictions: params.classRestrictions ?? [],
+   });
+   revalidatePath("/dashboard/catalog");
+   revalidatePath("/dashboard/scans-monitor");
+diff --git a/src/lib/utils/open-gym.ts b/src/lib/utils/open-gym.ts
+index 1d679ed..b1e8a72 100644
+--- a/src/lib/utils/open-gym.ts
++++ b/src/lib/utils/open-gym.ts
+@@ -24,6 +24,17 @@ export function formatRenewalLabel(
+ }
+ 
+ export function formatCatalogPackageLabel(pkg: Package): string {
++  if (pkg.category === "OPEN_GYM") {
++    const duration = formatRenewalLabel(pkg);
++    const classIds = pkg.opensClasses?.filter(Boolean) ?? [];
++    const sessions = Number(pkg.numberOfSessions);
++    const hasClassBundle =
++      classIds.length > 0 && Number.isFinite(sessions) && sessions < 1000;
++    if (hasClassBundle) {
++      return `${pkg.name}: ${duration} open gym + ${sessions} class sessions • EGP${pkg.price}`;
++    }
++    return `${pkg.name}: ${duration} open gym access • EGP${pkg.price}`;
++  }
+   if (isOpenGymPackage(pkg.category)) {
+     return `${pkg.name}: ${formatRenewalLabel(pkg)} access • EGP${pkg.price}`;
+   }
+-- 
+2.43.0
+

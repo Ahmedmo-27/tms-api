@@ -6,6 +6,7 @@ import mongoose, {
   ClientSession,
 } from "mongoose";
 import { ConflictError, NotFoundError } from "../core/ApiError";
+import { SCAN_ERROR_MESSAGES } from "../utils/error-messages";
 import { Server } from "http";
 import logger from "../config/logger";
 
@@ -350,7 +351,7 @@ ScheduledClassSchema.static(
     if (!result)
       throw new ConflictError(
         "CLASS_ALREADY_SCANNED",
-        "User already scanned for this class",
+        SCAN_ERROR_MESSAGES.CLASS_ALREADY_SCANNED,
       );
   },
 );

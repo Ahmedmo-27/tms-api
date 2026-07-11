@@ -14,6 +14,7 @@
     "sync-db": "npx ts-node ./src/scripts/sync-prod-to-test.ts",
     "generate-docs": "npx ts-node ./src/scripts/generate-docs.ts",
     "test": "jest --runInBand --changedSince=master",
+    "test:matcha-flow": "node scripts/test-matcha-pending-booking-flow.js",
     "coverage": "jest --runInBand --coverage",
     "seed": "npx ts-node ./src/seed/seed.ts",
     "seed:tickets": "npx ts-node -r dotenv/config ./src/seeders/seed-ticket-categories.ts dotenv_config_path=./dev.env",

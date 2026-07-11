@@ -1,5 +1,6 @@
 import mongoose, { Schema, Model, Types } from "mongoose";
 import logger from "../config/logger";
+import Class from "./class";
 
 const UNLIMITED_SPACE_CATEGORIES = new Set([
   "OPEN_GYM",
@@ -26,29 +27,15 @@ export function spaceAccessPriority(category: string): number {
   }
 }
 
-export type OpenGymRenewalPeriod = "WEEKLY" | "MONTHLY";
-
-export const OPEN_GYM_RENEWAL_DAYS: Record<OpenGymRenewalPeriod, number> = {
-  WEEKLY: 7,
-  MONTHLY: 30,
-};
-
 export function resolvePackageExpiryDays(pkg: {
-  category: string;
-  renewalPeriod?: OpenGymRenewalPeriod;
   expiryPeriod: number;
 }): number {
-  if (pkg.category === "OPEN_GYM" && pkg.renewalPeriod) {
-    return OPEN_GYM_RENEWAL_DAYS[pkg.renewalPeriod];
-  }
   return pkg.expiryPeriod;
 }
 
 export function getPackageEndDate(
   startDate: string | Date,
   pkg: {
-    category: string;
-    renewalPeriod?: OpenGymRenewalPeriod;
     expiryPeriod: number;
   },
 ): Date {
@@ -67,7 +54,7 @@ export interface IPackage {
   category: string;
   price: number;
   expiryPeriod: number;
-  renewalPeriod?: OpenGymRenewalPeriod;
+  renewalPeriod?: string;
   locationId?: Types.ObjectId;
   coachId?: string;
   hidden?: boolean;
@@ -114,7 +101,6 @@ const PackageSchema = new Schema<IPackage, IPackageModel, IPackageMethods>({
   },
   renewalPeriod: {
     type: String,
-    enum: ["WEEKLY", "MONTHLY"],
     required: false,
   },
   category: {
@@ -156,15 +142,23 @@ const PackageSchema = new Schema<IPackage, IPackageModel, IPackageMethods>({
 PackageSchema.static(
   "getSpaceWalkPackageIds",
   async function (): Promise<string[]> {
-    const pkgs = await Package.find({
-      $or: [
-        { category: "ULTIMATE_MINDSPACER" },
-        { category: "SPACE_MEMBERSHIP" },
-        { category: "OPEN_GYM" },
-        { category: "MIXED", name: /space/i },
-      ],
-    });
-    return pkgs.map((pkg) => pkg._id.toString());
+    const workspaceClasses = await Class.find({ category: "WORKSPACE" }).select(
+      "_id",
+    );
+    const workspaceClassIds = workspaceClasses.map((cls) => cls._id);
+
+    const eligibility: Record<string, unknown>[] = [
+      { category: "ULTIMATE_MINDSPACER" },
+      { category: "SPACE_MEMBERSHIP" },
+      { category: "OPEN_GYM" },
+      { category: "MIXED", name: /space/i },
+    ];
+    if (workspaceClassIds.length > 0) {
+      eligibility.push({ opensClasses: { $in: workspaceClassIds } });
+    }
+
+    const pkgs = await Package.find({ $or: eligibility });
+    return [...new Set(pkgs.map((pkg) => pkg._id.toString()))];
   }
 );
 

@@ -1,9 +1,9 @@
 import { Request, Response } from "express";
 import { SuccessResponse } from "../../core/ApiResponse";
 import User from "../../models/user";
-import { InternalError, NotFoundError } from "../../core/ApiError";
+import { NotFoundError } from "../../core/ApiError";
 import asyncHandler from "../../utils/asyncHandler";
-import Member from "../../models/member";
+import NonUserPackage from "../../models/nonUserPackage";
 
 export const getUser = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
@@ -46,7 +46,28 @@ export const getPendingMembers = asyncHandler(
       new SuccessResponse("No pending members found", {users: [], total: 0}).send(res);
       return;
     }
-    new SuccessResponse("Pending Members Found!", {users, total}).send(res);
+
+    const phoneNumbers = users.map((user) => user.phoneNumber);
+    const pendingPackages = await NonUserPackage.find({
+      phoneNumber: { $in: phoneNumbers },
+      added: { $ne: true },
+    }).populate({ path: "pkgId" });
+
+    const usersWithPackages = users.map((user) => {
+      const userObj = user.toObject();
+      const packagesForUser = pendingPackages.filter(
+        (pkg) => pkg.phoneNumber === user.phoneNumber
+      );
+      return {
+        ...userObj,
+        pendingPackages: packagesForUser.map((pkg) => ({
+          pkgName: (pkg.pkgId as { name?: string })?.name ?? "Unknown",
+          remainingClasses: pkg.remainingClasses,
+        })),
+      };
+    });
+
+    new SuccessResponse("Pending Members Found!", { users: usersWithPackages, total }).send(res);
   }
 );
 
