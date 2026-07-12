@@ -18,6 +18,13 @@ describe("getInvalidQrCodeMessage", () => {
     );
   });
 
+  it("returns PT guidance for branch PT QR payloads", () => {
+    const locationId = new Types.ObjectId().toString();
+    expect(getInvalidQrCodeMessage(`pt:${locationId}`, "unrecognized")).toBe(
+      SCAN_ERROR_MESSAGES.INVALID_PT_QR,
+    );
+  });
+
   it("returns class-specific guidance when a class QR is not found", () => {
     expect(
       getInvalidQrCodeMessage(new Types.ObjectId().toString(), "class_not_found"),

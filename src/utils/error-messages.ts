@@ -7,6 +7,7 @@ import {
 } from "../core/ApiError";
 
 const OPEN_GYM_QR_PREFIX = /^opengym:/i;
+const PT_QR_PREFIX = /^pt:/i;
 
 export const SCAN_ERROR_MESSAGES = {
   CLASS_NOT_FOUND:
@@ -18,13 +19,15 @@ export const SCAN_ERROR_MESSAGES = {
   PAST_ATTENDANCE_DEADLINE:
     "Check-in is closed. Attendance must be recorded within 30 minutes of class start.",
   INVALID_QR:
-    "This QR code is not recognized. Please scan a valid class or open gym check-in code.",
+    "This QR code is not recognized. Please scan a valid class, PT, or open gym check-in code.",
   INVALID_OPEN_GYM_QR:
     "This open gym QR code could not be checked in. Ask staff to confirm you are scanning the branch QR posted at this location.",
+  INVALID_PT_QR:
+    "This personal training QR code could not be checked in. Ask staff to confirm you are scanning the branch PT QR posted at this location.",
   INVALID_LOCATION:
-    "This open gym QR code points to an unknown branch. Please ask staff for a current QR code.",
+    "This QR code points to an unknown branch. Please ask staff for a current QR code.",
   MALFORMED_LOCATION_ID:
-    "This open gym QR code is not formatted correctly. Please ask staff for a current branch QR code.",
+    "This branch QR code is not formatted correctly. Please ask staff for a current branch QR code.",
   LEGACY_OPEN_GYM_UNAVAILABLE:
     "This open gym QR code is outdated. Please scan the branch-specific QR code posted at this location.",
   NO_ACCESS_AT_LOCATION:
@@ -53,6 +56,10 @@ export function getInvalidQrCodeMessage(
 ): string {
   if (OPEN_GYM_QR_PREFIX.test(attendanceId)) {
     return SCAN_ERROR_MESSAGES.INVALID_OPEN_GYM_QR;
+  }
+
+  if (PT_QR_PREFIX.test(attendanceId)) {
+    return SCAN_ERROR_MESSAGES.INVALID_PT_QR;
   }
 
   switch (reason) {
@@ -94,6 +101,17 @@ function castErrorToApiError(
     return new BadRequestError(
       "INVALID_OPEN_GYM_QR",
       SCAN_ERROR_MESSAGES.INVALID_OPEN_GYM_QR,
+      { ...context, attendanceId: value },
+    );
+  }
+
+  if (
+    (modelName === "ScheduledClass" || err.path === "_id") &&
+    PT_QR_PREFIX.test(value)
+  ) {
+    return new BadRequestError(
+      "INVALID_PT_QR",
+      SCAN_ERROR_MESSAGES.INVALID_PT_QR,
       { ...context, attendanceId: value },
     );
   }

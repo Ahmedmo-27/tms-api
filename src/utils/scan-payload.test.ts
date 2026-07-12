@@ -1,6 +1,7 @@
 import { Types } from "mongoose";
 import {
   LEGACY_OPEN_GYM_PAYLOAD,
+  LEGACY_PT_PAYLOAD,
   parseScanPayload,
   isValidOpenGymLocationId,
 } from "../utils/scan-payload";
@@ -11,8 +12,20 @@ import {
 describe("parseScanPayload", () => {
   const scheduledClassId = new Types.ObjectId().toString();
 
-  it("detects PT scans", () => {
-    expect(parseScanPayload("pt")).toEqual({ type: "pt" });
+  it("detects legacy PT scans", () => {
+    expect(parseScanPayload(LEGACY_PT_PAYLOAD)).toEqual({ type: "pt" });
+  });
+
+  it("detects branch PT scans", () => {
+    const locationId = new Types.ObjectId().toString();
+    expect(parseScanPayload(`pt:${locationId}`)).toEqual({
+      type: "branch_pt",
+      locationId,
+    });
+  });
+
+  it("does not treat legacy PT as branch format", () => {
+    expect(parseScanPayload("pt").type).toBe("pt");
   });
 
   it("detects legacy open gym scans", () => {
