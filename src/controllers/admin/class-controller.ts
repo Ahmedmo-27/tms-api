@@ -106,10 +106,12 @@ export const getClass = asyncHandler(async function (
   }
 
   const classes = await Class.find(query).populate("locations");
-  if (!classes || classes.length === 0)
-    throw new NotFoundError("CLASSES_NOT_FOUND", "Classes not found", {
-      query,
-    });
+  if (!classes || classes.length === 0) {
+    // Branch admins may have scheduled sessions before catalog Class.locations
+    // is backfilled — return [] instead of 404 so Scans Monitor can still load.
+    new SuccessResponse("Classes Found!", []).send(res);
+    return;
+  }
 
   const mappedClasses = classes.map((cls) => {
     const clsObj = cls.toObject() as any;

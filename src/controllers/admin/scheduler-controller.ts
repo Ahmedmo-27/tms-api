@@ -89,11 +89,25 @@ export const getDailyAttendnace = asyncHandler(async function (
   let record = await SchedulerService.getDayAttendance(date);
 
   if (targetLocationId && Array.isArray(record)) {
+    const entryLocationId = (entry: {
+      locationId?: { _id?: { toString(): string }; toString(): string } | string;
+    }) => {
+      const loc = entry.locationId;
+      if (!loc) return null;
+      if (typeof loc === "string") return loc;
+      if (loc._id) return loc._id.toString();
+      return loc.toString();
+    };
+    const matchesLocation = (entry: {
+      locationId?: { _id?: { toString(): string }; toString(): string } | string;
+    }) => {
+      const id = entryLocationId(entry);
+      // Keep legacy rows with no location; otherwise require exact branch match.
+      return !id || id === targetLocationId;
+    };
+
     record = record.map((doc: any) => {
       const plain = typeof doc.toObject === "function" ? doc.toObject() : { ...doc };
-      const matchesLocation = (entry: { locationId?: { toString(): string } }) =>
-        !entry.locationId || entry.locationId.toString() === targetLocationId;
-
       plain.ptAttendance = (plain.ptAttendance || []).filter(matchesLocation);
       plain.openGymAttendance = (plain.openGymAttendance || []).filter(matchesLocation);
       return plain;
