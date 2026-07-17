@@ -2,10 +2,13 @@ import mongoose, { Schema, Model, Types } from "mongoose";
 import logger from "../config/logger";
 import Class from "./class";
 
+// Mix packages include finite scheduled-class credits plus time-based open gym.
+// Open gym scans must not debit remainingClasses (those are for booked classes only).
 const UNLIMITED_SPACE_CATEGORIES = new Set([
   "OPEN_GYM",
   "SPACE_MEMBERSHIP",
   "ULTIMATE_MINDSPACER",
+  "MIXED",
 ]);
 
 export function isUnlimitedSpaceAccess(category: string): boolean {
