@@ -1,10 +1,26 @@
 import {
   getPackageEndDate,
+  isUnlimitedSpaceAccess,
   resolvePackageExpiryDays,
 } from "./package";
 
 // re-import from payment util for duration label tests
 import { formatOpenGymDurationLabel as formatDuration } from "../utils/open-gym-payment-purpose";
+
+describe("isUnlimitedSpaceAccess", () => {
+  it("treats mix packages as time-based open gym (no session debit)", () => {
+    expect(isUnlimitedSpaceAccess("MIXED")).toBe(true);
+    expect(isUnlimitedSpaceAccess("OPEN_GYM")).toBe(true);
+    expect(isUnlimitedSpaceAccess("SPACE_MEMBERSHIP")).toBe(true);
+    expect(isUnlimitedSpaceAccess("ULTIMATE_MINDSPACER")).toBe(true);
+  });
+
+  it("does not treat class-only categories as unlimited space", () => {
+    expect(isUnlimitedSpaceAccess("STUDIO")).toBe(false);
+    expect(isUnlimitedSpaceAccess("FUNCTIONAL_TRAINING")).toBe(false);
+    expect(isUnlimitedSpaceAccess("PERSONAL_TRAINING")).toBe(false);
+  });
+});
 
 describe("resolvePackageExpiryDays", () => {
   it("uses expiryPeriod as the source of truth", () => {
