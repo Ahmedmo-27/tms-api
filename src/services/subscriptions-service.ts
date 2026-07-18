@@ -3,7 +3,7 @@ import Package, { getPackageEndDate } from "../models/package";
 import PromoCode from "../models/promoCode";
 import { Types } from "mongoose";
 import { PaymentsService } from "./payments-service";
-import { NotFoundError, BadRequestError } from "../core/ApiError";
+import { NotFoundError, BadRequestError, ConflictError } from "../core/ApiError";
 import { runInTransaction } from "../utils/transaction";
 import { ClientSession } from "mongoose";
 import logger from "../config/logger";
@@ -15,6 +15,7 @@ import User from "../models/user";
 import { Server as SocketIOServer } from "socket.io";
 import { resolveOpenGymPaymentNote } from "../utils/open-gym-payment-purpose";
 import { normalizePhoneNumber } from "../utils/phone";
+import { cairoDayRange } from "../utils/timezone";
 import {
   assertMatchaPackageForPendingUser,
   ensureMemberForPendingPurchase,
@@ -23,6 +24,55 @@ import {
 } from "../utils/matcha-branch";
 
 export class SubscriptionsService {
+  /** Same catalog package + Cairo start day already on the member. */
+  static async assertNoDuplicateMemberPackage(
+    uid: string,
+    pkgId: string,
+    startDate: string,
+    session?: ClientSession | null,
+  ) {
+    const exists = await Member.hasPackageOnStartDay(
+      uid,
+      pkgId,
+      startDate,
+      session,
+    );
+    if (exists) {
+      throw new ConflictError("PACKAGE_ALREADY_ADDED", "Package already added", {
+        uid,
+        pkgId,
+        startDate,
+      });
+    }
+  }
+
+  /** Unused staged NonUserPackage already exists for phone + package + Cairo start day. */
+  static async assertNoDuplicateNonUserPackage(
+    phoneNumber: string,
+    pkgId: string,
+    startDate: string,
+    session?: ClientSession | null,
+  ) {
+    const cleanPhone = normalizePhoneNumber(phoneNumber);
+    const { start, end } = cairoDayRange(startDate);
+    const existingQuery = NonUserPackage.findOne({
+      phoneNumber: cleanPhone,
+      pkgId: new Types.ObjectId(pkgId),
+      added: false,
+      pkgStartDate: { $gte: start, $lt: end },
+    });
+    if (session) existingQuery.session(session);
+    const existing = await existingQuery;
+    if (existing) {
+      throw new ConflictError("PACKAGE_ALREADY_ADDED", "Package already added", {
+        phoneNumber: cleanPhone,
+        pkgId,
+        startDate,
+        nonUserPackageId: String(existing._id),
+      });
+    }
+  }
+
   static async frontDeskSubscribeToPackage(
     uid: string,
     pkgId: string,
@@ -84,6 +134,23 @@ export class SubscriptionsService {
       );
 
     await runInTransaction(async (session: ClientSession) => {
+      await SubscriptionsService.assertNoDuplicateMemberPackage(
+        uid,
+        pkg._id.toString(),
+        startDate,
+        session,
+      );
+      const user = await User.findOne({ _id: new Types.ObjectId(uid) }).session(
+        session,
+      );
+      if (user?.phoneNumber) {
+        await SubscriptionsService.assertNoDuplicateNonUserPackage(
+          user.phoneNumber,
+          pkg._id.toString(),
+          startDate,
+          session,
+        );
+      }
       const payment = await PaymentsService.savePayment(
         uid,
         amount || pkg.price,
@@ -112,7 +179,6 @@ export class SubscriptionsService {
         locationId
       );
       if (io && pkg.coachId) {
-        const user = await User.findOne({ _id: new Types.ObjectId(uid) }).session(session);
         io.to(`coach:${pkg.coachId.toString()}`).emit("coach:newPackage", {
           memberName: user?.name ?? "",
           packageName: pkg.name,
@@ -192,6 +258,21 @@ export class SubscriptionsService {
     }
 
     await runInTransaction(async (session: ClientSession) => {
+      await SubscriptionsService.assertNoDuplicateMemberPackage(
+        uid,
+        pkg._id.toString(),
+        startDate,
+        session,
+      );
+      const user = await User.findById(uid).session(session);
+      if (user?.phoneNumber) {
+        await SubscriptionsService.assertNoDuplicateNonUserPackage(
+          user.phoneNumber,
+          pkg._id.toString(),
+          startDate,
+          session,
+        );
+      }
       const payment = await PaymentsService.savePayment(
         uid,
         price,
@@ -375,6 +456,23 @@ export class SubscriptionsService {
     }
     const endDate = getPackageEndDate(pkgStartDate, pkg).toISOString();
     await runInTransaction(async (session: ClientSession) => {
+      await SubscriptionsService.assertNoDuplicateNonUserPackage(
+        phoneNumber,
+        pkgId,
+        pkgStartDate,
+        session,
+      );
+      const existingUser = await User.findOne({ phoneNumber }).session(
+        session ?? null,
+      );
+      if (existingUser) {
+        await SubscriptionsService.assertNoDuplicateMemberPackage(
+          String(existingUser._id),
+          pkgId,
+          pkgStartDate,
+          session,
+        );
+      }
       const payment = await PaymentsService.savePayment(
         undefined,
         amount || (pkg as any).price,

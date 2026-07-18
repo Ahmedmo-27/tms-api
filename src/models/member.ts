@@ -175,6 +175,12 @@ interface IMemberstatics {
     classRestrictions?: IClassRestrictionRecord[],
     locationId?: string
   ): Promise<boolean>;
+  hasPackageOnStartDay(
+    uid: string,
+    pkgId: string,
+    startDate: string,
+    session?: ClientSession | null
+  ): Promise<boolean>;
   removePackage(
     uid: string,
     pkgId: string,
@@ -1312,6 +1318,29 @@ MemberSchema.static(
 );
 
 MemberSchema.static(
+  "hasPackageOnStartDay",
+  async function (
+    uid: string,
+    pkgId: string,
+    startDate: string,
+    session?: ClientSession | null
+  ): Promise<boolean> {
+    const { cairoDayRange } = await import("../utils/timezone");
+    const { start, end } = cairoDayRange(startDate);
+    const existing = await this.findOne({
+      uid,
+      packages: {
+        $elemMatch: {
+          pkgId: new Types.ObjectId(pkgId),
+          pkgStartDate: { $gte: start, $lt: end },
+        },
+      },
+    }).session(session ?? null);
+    return !!existing;
+  }
+);
+
+MemberSchema.static(
   "addPackageIfAbsent",
   async function (
     uid: string,
@@ -1324,10 +1353,8 @@ MemberSchema.static(
     classRestrictions?: IClassRestrictionRecord[],
     locationId?: string
   ): Promise<boolean> {
-    const { startOfDateCairo } = await import("../utils/timezone");
-    const pkgStartDay = startOfDateCairo(startDate);
-    const pkgStartDayEnd = new Date(pkgStartDay);
-    pkgStartDayEnd.setDate(pkgStartDayEnd.getDate() + 1);
+    const { cairoDayRange } = await import("../utils/timezone");
+    const { start, end } = cairoDayRange(startDate);
     const result = await this.findOneAndUpdate(
       {
         uid,
@@ -1335,7 +1362,7 @@ MemberSchema.static(
           $not: {
             $elemMatch: {
               pkgId: new Types.ObjectId(pkgId),
-              pkgStartDate: { $gte: pkgStartDay, $lt: pkgStartDayEnd },
+              pkgStartDate: { $gte: start, $lt: end },
             },
           },
         },
