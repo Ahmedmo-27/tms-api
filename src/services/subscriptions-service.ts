@@ -259,7 +259,7 @@ export class SubscriptionsService {
     }
 
     const addPackage = async (s: ClientSession) => {
-      await Member.addPackage(
+      const added = await Member.addPackageIfAbsent(
         uid,
         pkg._id.toString(),
         pkg.name,
@@ -270,7 +270,15 @@ export class SubscriptionsService {
         restrictions,
         undefined
       );
-      logger.info("Added pkg");
+      if (added) {
+        logger.info("Added pkg", { uid, pkgId: pkg._id.toString(), startDate });
+      } else {
+        logger.info("Skipped duplicate staged package", {
+          uid,
+          pkgId: pkg._id.toString(),
+          startDate,
+        });
+      }
     };
 
     if (session) {
@@ -304,21 +312,41 @@ export class SubscriptionsService {
     const pkgQuery = NonUserPackage.find({
       phoneNumber: cleanPhone,
       added: false,
-    });
+    }).sort({ createdAt: 1 });
     if (session) pkgQuery.session(session);
     const savedPkgs = await pkgQuery;
 
+    // Prefer the first staged record per pkgId + start day; later duplicates are
+    // still marked added so accept/register does not fail with PACKAGE_ALREADY_ADDED.
+    const seenKeys = new Set<string>();
+
     for (const savedPkg of savedPkgs) {
-      await SubscriptionsService.addSavedPkgToMember(
-        uid,
-        savedPkg.pkgId.toString(),
-        savedPkg.pkgStartDate.toISOString(),
-        savedPkg.remainingClasses,
-        savedPkg.pkgEndDate.toISOString(),
-        session
-      );
+      const startDayKey = new Date(savedPkg.pkgStartDate)
+        .toISOString()
+        .slice(0, 10);
+      const dedupeKey = `${savedPkg.pkgId.toString()}:${startDayKey}`;
+
+      if (!seenKeys.has(dedupeKey)) {
+        seenKeys.add(dedupeKey);
+        await SubscriptionsService.addSavedPkgToMember(
+          uid,
+          savedPkg.pkgId.toString(),
+          savedPkg.pkgStartDate.toISOString(),
+          savedPkg.remainingClasses,
+          savedPkg.pkgEndDate.toISOString(),
+          session
+        );
+      } else {
+        logger.info("Skipping duplicate staged NonUserPackage", {
+          uid,
+          nonUserPackageId: String(savedPkg._id),
+          pkgId: savedPkg.pkgId.toString(),
+          pkgStartDate: savedPkg.pkgStartDate,
+        });
+      }
+
       await NonUserPackage.findByIdAndUpdate(
-        savedPkg._id,
+        savedPkg._id as Types.ObjectId,
         { added: true },
         session ? { session } : {}
       );

@@ -160,6 +160,21 @@ interface IMemberstatics {
     classRestrictions?: IClassRestrictionRecord[],
     locationId?: string
   ): Promise<void>;
+  /**
+   * Idempotent package attach for staged/transfer flows.
+   * Returns true when the package was newly added, false when it was already present.
+   */
+  addPackageIfAbsent(
+    uid: string,
+    pkgId: string,
+    pkgName: string,
+    numberOfSessions: number,
+    startDate: string,
+    endDate: string,
+    session: ClientSession,
+    classRestrictions?: IClassRestrictionRecord[],
+    locationId?: string
+  ): Promise<boolean>;
   removePackage(
     uid: string,
     pkgId: string,
@@ -1279,6 +1294,36 @@ MemberSchema.static(
     classRestrictions?: IClassRestrictionRecord[],
     locationId?: string
   ): Promise<void> {
+    const added = await (this as IMemberModel).addPackageIfAbsent(
+      uid,
+      pkgId,
+      pkgName,
+      numberOfSessions,
+      startDate,
+      endDate,
+      session,
+      classRestrictions,
+      locationId
+    );
+    if (!added) {
+      throw new ConflictError("PACKAGE_ALREADY_ADDED", "Package already added");
+    }
+  }
+);
+
+MemberSchema.static(
+  "addPackageIfAbsent",
+  async function (
+    uid: string,
+    pkgId: string,
+    pkgName: string,
+    numberOfSessions: number,
+    startDate: string,
+    endDate: string,
+    session: ClientSession,
+    classRestrictions?: IClassRestrictionRecord[],
+    locationId?: string
+  ): Promise<boolean> {
     const { startOfDateCairo } = await import("../utils/timezone");
     const pkgStartDay = startOfDateCairo(startDate);
     const pkgStartDayEnd = new Date(pkgStartDay);
@@ -1311,9 +1356,7 @@ MemberSchema.static(
       },
       { ...(session ? { session } : {}), new: true }
     );
-    if (!result) {
-      throw new ConflictError("PACKAGE_ALREADY_ADDED", "Package already added");
-    }
+    return !!result;
   }
 );
 
