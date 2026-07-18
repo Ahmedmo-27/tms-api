@@ -7,6 +7,7 @@ import { IPayment } from "../models/payment";
 import logger from "../config/logger";
 import { refundPaymentToRentalSystem } from "./egygap-erp-service";
 import { startOfDay, endOfDay, startOfMonth, endOfMonth } from "date-fns";
+import { resolveOpenGymPaymentPurposeLabel } from "../utils/open-gym-payment-purpose";
 
 export type PaymentListEntry = IPayment & {
   entryType?: "REFUND" | "CASHOUT";
@@ -69,6 +70,7 @@ function mapRefundToPaymentEntry(refund: IRefund): PaymentListEntry {
     isMoneyOut: true,
     refundId: refund._id as Types.ObjectId,
     linkedPaymentId: refund.paymentId,
+    locationId: refund.locationId ?? undefined,
   } as PaymentListEntry;
 }
 
@@ -88,7 +90,8 @@ export class PaymentsService {
   static async getPayments(
     dateString?: string,
     month?: number,
-    year?: number
+    year?: number,
+    locationId?: string | null
   ): Promise<PaymentListEntry[]> {
     const paymentQuery = buildDateRangeQuery(
       "paymentTime",
@@ -102,9 +105,15 @@ export class PaymentsService {
       // refund appears as its own negative row alongside the original purchase.
     };
 
+    if (locationId) {
+      paymentQuery.locationId = locationId;
+      refundQuery.locationId = locationId;
+    }
+
     const [payments, refunds] = await Promise.all([
       Payment.find(paymentQuery)
         .populate("uid")
+        .populate("locationId")
         .populate({
           path: "scid",
           populate: [
@@ -112,9 +121,14 @@ export class PaymentsService {
             { path: "locationId" },
           ],
         })
-        .populate("pkgId"),
+        .populate({
+          path: "pkgId",
+          select: "name category renewalPeriod locationId",
+          populate: { path: "locationId" },
+        }),
       Refund.find(refundQuery)
         .populate("memberId", "name phoneNumber email")
+        .populate("locationId")
         .sort({ createdAt: -1 }),
     ]);
 
@@ -128,11 +142,13 @@ export class PaymentsService {
     };
 
     function buildPaymentLabel(p: IPayment): string {
-      let itemName: string = purposeLabels[p.purpose] ?? p.purpose;
-      if (p.purpose === "PACKAGE" && p.pkgId) {
+      const openGymPurpose = resolveOpenGymPaymentPurposeLabel(p);
+      let itemName: string =
+        openGymPurpose ?? purposeLabels[p.purpose] ?? p.purpose;
+      if (!openGymPurpose && p.purpose === "PACKAGE" && p.pkgId) {
         const pkg = p.pkgId as unknown as { name: string };
         itemName = pkg.name;
-      } else if (p.scid) {
+      } else if (!openGymPurpose && p.scid) {
         const sc = p.scid as unknown as { cid?: { title?: string } };
         if (sc.cid?.title) itemName = sc.cid.title;
       }

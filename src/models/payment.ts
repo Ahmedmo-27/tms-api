@@ -21,7 +21,7 @@ export interface IPayment extends Document {
   note?: string;
   isRefunded: boolean;
   refundReason?: string;
-  locationId?: Types.ObjectId;
+  locationId: Types.ObjectId;
 }
 
 const PaymentSchema = new Schema({
@@ -93,8 +93,7 @@ const PaymentSchema = new Schema({
   locationId: {
     type: Schema.Types.ObjectId,
     ref: "Location",
-    required: false,
-    default: null,
+    required: true,
   },
 });
 

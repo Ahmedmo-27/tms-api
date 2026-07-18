@@ -2,47 +2,73 @@ import { Request } from "express";
 import { Types } from "mongoose";
 import { BadRequestError } from "../core/ApiError";
 
-/**
- * Branch (location) scoping helpers for admin/fd staff.
- *
- * This deployment does not assign a branch to staff users, so the target
- * branch is always taken explicitly from the request (body or query
- * `locationId`). Management-style scoping by `user.locationId` is intentionally
- * not used here.
- */
+export function normalizeRole(role: string | undefined): string {
+  if (!role) return "";
+  return role === "admin" ? "management" : role;
+}
 
-function readLocationId(req: Request): string | undefined {
-  const fromBody = (req.body && (req.body as any).locationId) as
-    | string
-    | undefined;
-  const fromQuery = req.query?.locationId as string | undefined;
-  return fromBody || fromQuery;
+export function isBranchScopedRole(role: string | undefined): boolean {
+  const normalized = normalizeRole(role);
+  return normalized === "branch_admin";
+}
+
+export function isManagementRole(role: string | undefined): boolean {
+  return normalizeRole(role) === "management";
 }
 
 /**
- * Resolves an optional location filter for list/query endpoints.
- * Returns the validated `locationId` when provided, otherwise `null`
- * (meaning: all branches).
+ * Resolves location filter for list/query endpoints.
+ * branch_admin: always forced to their user.locationId (client cannot override).
+ * management: optional ?locationId= or body.locationId; null = all branches.
  */
 export function resolveLocationFilter(req: Request): string | null {
-  const locationId = readLocationId(req);
-  if (locationId && Types.ObjectId.isValid(locationId)) {
-    return locationId;
+  const user = (req as any).user;
+  const role = normalizeRole(user?.role);
+  const userLocationId = user?.locationId?.toString() ?? null;
+
+  if (isBranchScopedRole(role)) {
+    return userLocationId;
   }
+
+  if (role === "management") {
+    const queryLocationId =
+      (req.query.locationId as string) || (req.body?.locationId as string);
+    if (queryLocationId && Types.ObjectId.isValid(queryLocationId)) {
+      return queryLocationId;
+    }
+  }
+
   return null;
 }
 
+/** branch_admin only — their assigned branch, or null for management. */
+export function getAssignedBranchLocationId(req: Request): string | null {
+  if (!isBranchScopedRole((req as any).user?.role)) return null;
+  return (req as any).user?.locationId?.toString() ?? null;
+}
+
 /**
- * Resolves the branch for a write action. The caller must supply a valid
- * `locationId` (body or query); otherwise a `BRANCH_REQUIRED` error is thrown.
+ * branch_admin: uses their assigned locationId.
+ * management: must pass locationId (body or query) — same branch-scoped abilities as branch_admin.
  */
 export function resolveLocationIdForWrite(req: Request): string {
-  const locationId = readLocationId(req);
-  if (locationId && Types.ObjectId.isValid(locationId)) {
-    return locationId;
+  const assigned = getAssignedBranchLocationId(req);
+  if (assigned) return assigned;
+
+  if (isManagementRole((req as any).user?.role)) {
+    const locationId =
+      (req.body?.locationId as string) || (req.query.locationId as string);
+    if (locationId && Types.ObjectId.isValid(locationId)) {
+      return locationId;
+    }
+    throw new BadRequestError(
+      "BRANCH_REQUIRED",
+      "Select a branch (locationId) to perform this action"
+    );
   }
+
   throw new BadRequestError(
     "BRANCH_REQUIRED",
-    "Select a branch (locationId) to perform this action"
+    "A branch locationId is required for this action"
   );
 }

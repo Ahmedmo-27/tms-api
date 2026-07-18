@@ -482,15 +482,30 @@ export class BookingsService {
     });
   }
 
-  static async recordPtAttendance(uid: string, io: Server) {
+  static async recordPtAttendance(
+    uid: string,
+    io: Server,
+    locationId?: string,
+  ) {
     const member = await Member.findOne({ uid }).populate({ path: "uid" });
     if (!member)
       throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
+
+    const memberName = (member.uid as any).name ?? "";
+
+    if (locationId) {
+      await BookingsService.assertOpenGymBranchExists(
+        locationId,
+        memberName,
+        io,
+      );
+    }
+
     const pkgs = await Package.find({
       category: "PERSONAL_TRAINING",
     });
     const pkgIds = pkgs.map((p) => p._id.toString());
-    if (!pkgIds) {
+    if (!pkgIds.length) {
       throw new NotFoundError("PACKAGE_NOT_FOUND", "Pt Package not found");
     }
     const pkgName = pkgs[0]?.name ?? "Personal Training";
@@ -504,6 +519,7 @@ export class BookingsService {
           session,
           "FAILED",
           io,
+          locationId,
         );
         throw new ForbiddenError(
           "NO_ACTIVE_PACKAGE_FOUND",
@@ -519,12 +535,14 @@ export class BookingsService {
         session,
         "SUCCESS",
         io,
+        locationId,
       );
       io.emit("SUCCESS-SCAN", {
         code: "PT_CLASS_ATTENDED",
         message: "Success",
-        member: (member.uid as any).name,
+        member: memberName,
         coach: pkg.name,
+        ...(locationId ? { locationId } : {}),
       });
     });
   }

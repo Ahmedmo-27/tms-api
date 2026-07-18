@@ -18,6 +18,7 @@ export interface IUser extends Document {
   name: string;
   phoneNumber: string;
   role: string;
+  locationId?: mongoose.Types.ObjectId;
   tokens: Itoken[];
   resetCode: string;
   fcmTokens: string[];
@@ -92,9 +93,14 @@ const UserSchema: Schema<IUser, UserModel, IUserMethods> = new Schema({
     type: String,
     required: true,
     enum: {
-      values: ["member", "user", "admin", "fd", "coach", "management", "branch_admin"],
+      values: ["member", "user", "admin", "management", "branch_admin", "coach"],
       message: "{VALUE} is not a valid role",
     },
+  },
+  locationId: {
+    type: Schema.Types.ObjectId,
+    ref: "Location",
+    required: false,
   },
   tokens: [TokenSchema],
   resetCode: {

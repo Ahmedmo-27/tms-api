@@ -21,10 +21,13 @@
     "test:package-flows": "npm run test:package-duplicates && npm run test:package-categories && npm run test:package-branches",
     "coverage": "jest --runInBand --coverage",
     "seed": "npx ts-node ./src/seed/seed.ts",
+    "seed:tickets": "npx ts-node -r dotenv/config ./src/seeders/seed-ticket-categories.ts dotenv_config_path=./dev.env",
     "dev": "nodemon",
     "build": "tsc",
     "start": "node dist/index.js",
-    "debug": "node --inspect-brk -r ts-node/register src/app.ts"
+    "debug": "node --inspect-brk -r ts-node/register src/app.ts",
+    "backfill-locations": "npx ts-node ./src/scripts/backfill-scheduled-class-locations.ts",
+    "backfill-locations:apply": "npx ts-node ./src/scripts/backfill-scheduled-class-locations.ts --apply"
   },
   "repository": {
     "type": "git",
@@ -48,7 +51,6 @@
     "@types/mailparser": "^3.4.6",
     "@types/mongoose": "^5.11.97",
     "@types/node": "^22.13.10",
-    "@types/nodemailer": "^6.4.17",
     "@types/socket.io": "^3.0.2",
     "@types/supertest": "^6.0.3",
     "@types/swagger-jsdoc": "^6.0.4",
@@ -65,6 +67,7 @@
     "typescript-eslint": "^8.26.1"
   },
   "dependencies": {
+    "@getbrevo/brevo": "^5.0.4",
     "axios": "^1.10.0",
     "bcryptjs": "^3.0.2",
     "cookie-parser": "^1.4.7",
@@ -79,7 +82,6 @@
     "jsonwebtoken": "^9.0.2",
     "mailparser": "^3.9.9",
     "mongoose": "^8.12.1",
-    "nodemailer": "^7.0.3",
     "resend": "^6.0.2",
     "socket.io": "^4.8.3",
     "swagger-jsdoc": "^6.2.8",

@@ -24,18 +24,13 @@ export interface AuthResponse extends Response {
   deviceType: "web" | "mobile";
 }
 
-type UserRole =
-  | "member"
-  | "user"
-  | "admin"
-  | "fd"
-  | "coach"
-  | "management"
-  | "branch_admin";
+type UserRole = "member" | "user" | "admin" | "management" | "branch_admin" | "coach";
 
 const ADMIN_ROLE_ALIASES: UserRole[] = ["admin", "management", "branch_admin"];
 
 function roleIsAllowed(userRole: string, allowedRoles: UserRole[]): boolean {
+  const normalizedUserRole =
+    userRole === "admin" ? "management" : userRole;
   const expandedRoles = new Set<UserRole>();
   for (const role of allowedRoles) {
     if (role === "admin") {
@@ -44,7 +39,7 @@ function roleIsAllowed(userRole: string, allowedRoles: UserRole[]): boolean {
       expandedRoles.add(role);
     }
   }
-  return expandedRoles.has(userRole as UserRole);
+  return expandedRoles.has(normalizedUserRole as UserRole);
 }
 
 // CHANGE ERROR CODES AFTER UPDATE

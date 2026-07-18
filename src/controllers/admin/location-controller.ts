@@ -3,6 +3,7 @@ import Location from "../../models/location";
 import { NotFoundError } from "../../core/ApiError";
 import { SuccessResponse } from "../../core/ApiResponse";
 import asyncHandler from "../../utils/asyncHandler";
+import { getAssignedBranchLocationId } from "../../utils/location-scope";
 
 export const addLocation = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
@@ -15,6 +16,15 @@ export const addLocation = asyncHandler(
 
 export const getLocation = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
+    const branchLocationId = getAssignedBranchLocationId(req);
+    if (branchLocationId) {
+      const location = await Location.findById(branchLocationId);
+      new SuccessResponse(
+        "Locations Found!",
+        location ? [location] : []
+      ).send(res);
+      return;
+    }
     const locations = await Location.find();
     new SuccessResponse("Locations Found!", locations).send(res);
   }
