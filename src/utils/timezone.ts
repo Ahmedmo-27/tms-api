@@ -26,6 +26,14 @@ export function endOfDateCairo(date: Date | string): Date {
   return fromZonedTime(cairoDate, CAIRO_TZ);
 }
 
+/** Half-open [start, end) Cairo calendar-day bounds for package start-day matching. */
+export function cairoDayRange(date: Date | string): { start: Date; end: Date } {
+  const start = startOfDateCairo(date);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return { start, end };
+}
+
 export function nowInCairo(): Date {
   return toZonedTime(new Date(), CAIRO_TZ);
 }

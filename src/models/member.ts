@@ -160,6 +160,27 @@ interface IMemberstatics {
     classRestrictions?: IClassRestrictionRecord[],
     locationId?: string
   ): Promise<void>;
+  /**
+   * Idempotent package attach for staged/transfer flows.
+   * Returns true when the package was newly added, false when it was already present.
+   */
+  addPackageIfAbsent(
+    uid: string,
+    pkgId: string,
+    pkgName: string,
+    numberOfSessions: number,
+    startDate: string,
+    endDate: string,
+    session: ClientSession,
+    classRestrictions?: IClassRestrictionRecord[],
+    locationId?: string
+  ): Promise<boolean>;
+  hasPackageOnStartDay(
+    uid: string,
+    pkgId: string,
+    startDate: string,
+    session?: ClientSession | null
+  ): Promise<boolean>;
   removePackage(
     uid: string,
     pkgId: string,
@@ -1279,10 +1300,61 @@ MemberSchema.static(
     classRestrictions?: IClassRestrictionRecord[],
     locationId?: string
   ): Promise<void> {
-    const { startOfDateCairo } = await import("../utils/timezone");
-    const pkgStartDay = startOfDateCairo(startDate);
-    const pkgStartDayEnd = new Date(pkgStartDay);
-    pkgStartDayEnd.setDate(pkgStartDayEnd.getDate() + 1);
+    const added = await (this as IMemberModel).addPackageIfAbsent(
+      uid,
+      pkgId,
+      pkgName,
+      numberOfSessions,
+      startDate,
+      endDate,
+      session,
+      classRestrictions,
+      locationId
+    );
+    if (!added) {
+      throw new ConflictError("PACKAGE_ALREADY_ADDED", "Package already added");
+    }
+  }
+);
+
+MemberSchema.static(
+  "hasPackageOnStartDay",
+  async function (
+    uid: string,
+    pkgId: string,
+    startDate: string,
+    session?: ClientSession | null
+  ): Promise<boolean> {
+    const { cairoDayRange } = await import("../utils/timezone");
+    const { start, end } = cairoDayRange(startDate);
+    const existing = await this.findOne({
+      uid,
+      packages: {
+        $elemMatch: {
+          pkgId: new Types.ObjectId(pkgId),
+          pkgStartDate: { $gte: start, $lt: end },
+        },
+      },
+    }).session(session ?? null);
+    return !!existing;
+  }
+);
+
+MemberSchema.static(
+  "addPackageIfAbsent",
+  async function (
+    uid: string,
+    pkgId: string,
+    pkgName: string,
+    numberOfSessions: number,
+    startDate: string,
+    endDate: string,
+    session: ClientSession,
+    classRestrictions?: IClassRestrictionRecord[],
+    locationId?: string
+  ): Promise<boolean> {
+    const { cairoDayRange } = await import("../utils/timezone");
+    const { start, end } = cairoDayRange(startDate);
     const result = await this.findOneAndUpdate(
       {
         uid,
@@ -1290,7 +1362,7 @@ MemberSchema.static(
           $not: {
             $elemMatch: {
               pkgId: new Types.ObjectId(pkgId),
-              pkgStartDate: { $gte: pkgStartDay, $lt: pkgStartDayEnd },
+              pkgStartDate: { $gte: start, $lt: end },
             },
           },
         },
@@ -1311,9 +1383,7 @@ MemberSchema.static(
       },
       { ...(session ? { session } : {}), new: true }
     );
-    if (!result) {
-      throw new ConflictError("PACKAGE_ALREADY_ADDED", "Package already added");
-    }
+    return !!result;
   }
 );
 
