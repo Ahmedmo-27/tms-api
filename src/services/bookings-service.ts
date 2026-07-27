@@ -460,13 +460,7 @@ export class BookingsService {
         (member.uid as any).name,
         io,
       );
-      await ScheduledClass.addMemberScan(
-        scid,
-        uid,
-        true,
-        session,
-        "MANUAL",
-      );
+      await ScheduledClass.addMemberScan(scid, uid, true, session);
     });
     io.emit("SUCCESS-SCAN", {
       code: "CLASS_ATTENDED",
