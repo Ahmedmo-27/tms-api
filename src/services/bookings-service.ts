@@ -48,6 +48,27 @@ async function recordFailedClassScan(scid: string, uid: string): Promise<void> {
   }
 }
 
+/**
+ * Members may book until halfway through the session duration.
+ * After the midpoint, booking is blocked (admins bypass via isAdminOverride).
+ */
+function assertMemberBookingWindow(scheduledClass: {
+  startTime: Date;
+  endTime: Date;
+}): void {
+  const durationMs =
+    scheduledClass.endTime.getTime() - scheduledClass.startTime.getTime();
+  const midpoint = new Date(
+    scheduledClass.startTime.getTime() + durationMs / 2,
+  );
+  if (new Date() > midpoint) {
+    throw new ConflictError(
+      "CLASS_ALREADY_STARTED",
+      "Booking is only allowed until halfway through the session",
+    );
+  }
+}
+
 export class BookingsService {
   static async addBooking(uid: string, scid: string, isAdminOverride: boolean = false) {
     const scheduledClass = await ScheduledClass.findById(scid).populate({
@@ -106,16 +127,9 @@ export class BookingsService {
       }
     }
 
-    // Apply booking policy restriction (30 mins after class start time)
+    // Members may book until halfway through the session; admins can override
     if (!isAdminOverride && (scheduledClass.cid as any).category !== "WORKSPACE") {
-      if (
-        new Date() >
-        new Date(scheduledClass.startTime.getTime() + 30 * 60 * 1000)
-      )
-        throw new ConflictError(
-          "CLASS_ALREADY_STARTED",
-          "Class already started",
-        );
+      assertMemberBookingWindow(scheduledClass);
     }
 
     // get location and class specific data
@@ -763,12 +777,7 @@ export class BookingsService {
     if ((scheduledClass.cid as any).allowDropIn === false)
       throw new ConflictError("DROP_IN_DISABLED", "Drop-ins are not allowed for this class");
 
-    const isWorkSpace = (scheduledClass.cid as any).category === "WORKSPACE";
-    if (
-      !isWorkSpace &&
-      new Date() > new Date(scheduledClass.startTime.getTime() + 30 * 60 * 1000)
-    )
-      throw new ConflictError("CLASS_ALREADY_STARTED", "Class already started");
+    // Admins/FD can book drop-ins even after the session has ended
     let price = scheduledClass.cid.price;
     const scId = new Types.ObjectId(scid);
     await runInTransaction(async (session: ClientSession) => {
@@ -1031,10 +1040,8 @@ export class BookingsService {
     if ((scheduledClass.cid as any).allowDropIn === false)
       throw new ConflictError("DROP_IN_DISABLED", "Drop-ins are not allowed for this class");
 
-    if (
-      new Date() > new Date(scheduledClass.startTime.getTime() + 30 * 60 * 1000)
-    )
-      throw new ConflictError("CLASS_ALREADY_STARTED", "Class already started");
+    // Members may book drop-ins until halfway through the session
+    assertMemberBookingWindow(scheduledClass);
     let price = scheduledClass.cid.price;
     if (promoCode) {
       const discountedPrice = await PromoCode.getDiscountedPrice(
