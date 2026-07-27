@@ -130,6 +130,52 @@ describe("BookingsService branch open gym scans", () => {
     );
   });
 
+  it("allows sequential scans at Cairo then Matcha when each branch has its own package", async () => {
+    (Location.findById as jest.Mock).mockImplementation((id: string) => ({
+      select: jest.fn().mockResolvedValue({ _id: id }),
+    }));
+    (Member.recordSpaceWalkAttendance as jest.Mock)
+      .mockResolvedValueOnce(new Types.ObjectId().toString())
+      .mockResolvedValueOnce(new Types.ObjectId().toString());
+    (Package.findById as jest.Mock)
+      .mockResolvedValueOnce({ name: "Open Gym Cairo" })
+      .mockResolvedValueOnce({ name: "Open Gym Matcha" });
+    (DailyAttendance.recordOpenGymAttendance as jest.Mock).mockResolvedValue(
+      undefined,
+    );
+    (DailyAttendance.hasSuccessfulOpenGymToday as jest.Mock).mockResolvedValue(
+      false,
+    );
+
+    await BookingsService.recordOpenGymAttendance(uid, io, branchA);
+    await BookingsService.recordOpenGymAttendance(uid, io, branchB);
+
+    expect(Member.recordSpaceWalkAttendance).toHaveBeenNthCalledWith(
+      1,
+      uid,
+      expect.any(Array),
+      mockSession,
+      io,
+      branchA,
+    );
+    expect(Member.recordSpaceWalkAttendance).toHaveBeenNthCalledWith(
+      2,
+      uid,
+      expect.any(Array),
+      mockSession,
+      io,
+      branchB,
+    );
+    expect(io.emit).toHaveBeenCalledWith(
+      "SUCCESS-SCAN",
+      expect.objectContaining({ locationId: branchA }),
+    );
+    expect(io.emit).toHaveBeenCalledWith(
+      "SUCCESS-SCAN",
+      expect.objectContaining({ locationId: branchB }),
+    );
+  });
+
   it("rejects legacy open gym when multiple branches exist and no default is configured", async () => {
     const openGymLocation = await import("../utils/open-gym-location");
     jest
