@@ -3,6 +3,8 @@ import { IRefund } from "../models/refund";
 import { IUser } from "../models/user";
 import { IPayment } from "../models/payment";
 import { IPackage } from "../models/package";
+import { ILocation } from "../models/location";
+import { resolveOpenGymPaymentPurposeLabel } from "../utils/open-gym-payment-purpose";
 
 // ---------------------------------------------------------------------------
 // Request DTOs
@@ -25,6 +27,12 @@ export interface CreateCashOutDto {
 // Response DTOs
 // ---------------------------------------------------------------------------
 
+export interface RefundLocationDto {
+  _id: string;
+  branchName: string;
+  location: string;
+}
+
 export interface RefundResponseDto {
   _id: string;
   type: "REFUND" | "CASHOUT";
@@ -34,6 +42,7 @@ export interface RefundResponseDto {
   memberId: string | null;
   paymentId: string | null;
   paymentLabel: string | null;
+  locationId: RefundLocationDto | string | null;
   recordedBy: { _id: string; name: string };
   createdAt: Date;
 }
@@ -74,6 +83,9 @@ function formatPaymentDate(date: Date): string {
 }
 
 function getPaymentItemName(payment: IPayment): string {
+  const openGymPurpose = resolveOpenGymPaymentPurposeLabel(payment);
+  if (openGymPurpose) return openGymPurpose;
+
   if (payment.purpose === "PACKAGE" && payment.pkgId) {
     return (payment.pkgId as unknown as IPackage).name;
   }
@@ -110,6 +122,25 @@ export function mapMemberRecentPaymentDto(payment: IPayment): MemberRecentPaymen
 // Mapper functions
 // ---------------------------------------------------------------------------
 
+function mapRefundLocationDto(
+  locationId: IRefund["locationId"]
+): RefundLocationDto | string | null {
+  if (!locationId) return null;
+  if (
+    typeof locationId === "object" &&
+    "branchName" in locationId &&
+    typeof (locationId as unknown as ILocation).branchName === "string"
+  ) {
+    const populated = locationId as unknown as ILocation;
+    return {
+      _id: (populated._id as Types.ObjectId).toString(),
+      branchName: populated.branchName,
+      location: populated.location,
+    };
+  }
+  return locationId.toString();
+}
+
 export function mapRefundResponseDto(refund: IRefund, paymentLabel?: string | null): RefundResponseDto {
   const recordedBy = refund.recordedBy as unknown as {
     _id: Types.ObjectId;
@@ -125,6 +156,7 @@ export function mapRefundResponseDto(refund: IRefund, paymentLabel?: string | nu
     memberId: refund.memberId ? refund.memberId.toString() : null,
     paymentId: refund.paymentId ? refund.paymentId.toString() : null,
     paymentLabel: paymentLabel ?? null,
+    locationId: mapRefundLocationDto(refund.locationId),
     recordedBy: {
       _id: recordedBy._id.toString(),
       name: recordedBy.name,

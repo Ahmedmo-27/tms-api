@@ -129,6 +129,12 @@ export const attendClass = asyncHandler(async function (
     return;
   }
 
+  if (payload.type === "branch_pt") {
+    await BookingsService.recordPtAttendance(_id, io, payload.locationId);
+    new SuccessResponse("Class Attended!").send(res);
+    return;
+  }
+
   if (payload.type === "legacy_open_gym") {
     await BookingsService.recordLegacyOpenGymAttendance(_id, io);
     new SuccessResponse("Class Attended!").send(res);

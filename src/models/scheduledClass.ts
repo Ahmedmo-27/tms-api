@@ -20,14 +20,9 @@ interface IWaitlistedMember {
   addedAt: Date;
 }
 
-interface IWaitlistedMember {
-  uid: Types.ObjectId;
-  addedAt: Date;
-}
-
 export interface IScheduledClass extends Document {
   cid: Types.ObjectId;
-  locationId?: Types.ObjectId;
+  locationId: Types.ObjectId;
   startTime: Date;
   endTime: Date;
   availableSlots: number;
@@ -123,7 +118,7 @@ const ScheduledClassSchema = new Schema<
   locationId: {
     type: Schema.Types.ObjectId,
     ref: "Location",
-    required: false,
+    required: true,
   },
   startTime: {
     type: Date,

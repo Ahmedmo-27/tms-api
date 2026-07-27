@@ -45,6 +45,7 @@ export const getMember = asyncHandler(async function (
   req: Request,
   res: Response
 ): Promise<void> {
+  // Our Members is intentionally global — all staff roles see members across branches.
   const { uid, limit = "10", page = "1", name, phone } = req.query;
 
   const userQuery: any = {};
@@ -59,8 +60,10 @@ export const getMember = asyncHandler(async function (
   }
 
   const users = await User.find(userQuery);
-  if (!users || users.length === 0)
-    throw new NotFoundError("MEMBER_NOT_FOUND", "No members found");
+  if (!users || users.length === 0) {
+    new SuccessResponse("No members found", { members: [], total: 0 }).send(res);
+    return;
+  }
 
   const uids = users.map((user) => user._id);
 

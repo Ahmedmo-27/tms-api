@@ -21,6 +21,7 @@ import logger from "../../config/logger";
 import { IRefund } from "../../models/refund";
 import { IPayment } from "../../models/payment";
 import { startOfDateCairo, endOfDateCairo } from "../../utils/timezone";
+import { resolveLocationFilter, resolveLocationIdForWrite } from "../../utils/location-scope";
 
 async function syncRefundToErp(
   refund: IRefund,
@@ -63,6 +64,17 @@ export const createMemberRefund = asyncHandler(
 
     let linkedPayment: IPayment | null = null;
 
+    // Resolve locationId: prefer the linked payment's location so that
+    // management users (who have no locationId of their own) get the
+    // correct branch stamped on the refund.
+    let resolvedLocationId = (authReq.user as any).locationId ?? null;
+    if (paymentId) {
+      const sourcePayment = await Payment.findById(paymentId).select("locationId");
+      if (sourcePayment && (sourcePayment as any).locationId) {
+        resolvedLocationId = (sourcePayment as any).locationId;
+      }
+    }
+
     const refund = await runInTransaction(async (session: ClientSession) => {
       const [created] = await Refund.create(
         [
@@ -74,6 +86,7 @@ export const createMemberRefund = asyncHandler(
             memberId: memberId ? new Types.ObjectId(memberId) : null,
             paymentId: paymentId ? new Types.ObjectId(paymentId) : null,
             recordedBy: authReq.user._id,
+            locationId: resolvedLocationId,
             createdAt: new Date(),
           },
         ],
@@ -170,6 +183,8 @@ export const createCashOut = asyncHandler(
       throw new BadRequestError("INVALID_AMOUNT", "Amount must be greater than 0");
     }
 
+    const branchLocationId = resolveLocationIdForWrite(req);
+
     const refund = await Refund.create({
       type: "CASHOUT",
       reason: reason.trim(),
@@ -178,6 +193,7 @@ export const createCashOut = asyncHandler(
       memberId: null,
       paymentId: null,
       recordedBy: authReq.user._id,
+      locationId: branchLocationId,
       createdAt: new Date(),
     });
 
@@ -193,6 +209,11 @@ export const listRefunds = asyncHandler(
 
     const filter: Record<string, unknown> = { type: "REFUND" };
 
+    const targetLocationId = resolveLocationFilter(req);
+    if (targetLocationId) {
+      filter.locationId = targetLocationId;
+    }
+
     if (date) {
       const parsed = new Date(date as string);
       if (!isNaN(parsed.getTime())) {
@@ -206,6 +227,7 @@ export const listRefunds = asyncHandler(
     const refunds = await Refund.find(filter)
       .sort({ createdAt: -1 })
       .populate("recordedBy", "name")
+      .populate("locationId")
       .populate({
         path: "paymentId",
         select: "purpose amount paymentTime pkgId scid",
@@ -236,6 +258,11 @@ export const listCashOuts = asyncHandler(
 
     const filter: Record<string, unknown> = { type: "CASHOUT" };
 
+    const targetLocationId = resolveLocationFilter(req);
+    if (targetLocationId) {
+      filter.locationId = targetLocationId;
+    }
+
     if (date) {
       const parsed = new Date(date as string);
       if (!isNaN(parsed.getTime())) {
@@ -249,6 +276,7 @@ export const listCashOuts = asyncHandler(
     const cashouts = await Refund.find(filter)
       .sort({ createdAt: -1 })
       .populate("recordedBy", "name")
+      .populate("locationId")
       .populate({
         path: "paymentId",
         select: "purpose amount paymentTime pkgId scid",
@@ -363,7 +391,7 @@ export const getMemberRecentPayments = asyncHandler(
     })
       .sort({ paymentTime: -1 })
       .limit(15)
-      .populate("pkgId", "name")
+      .populate("pkgId", "name category renewalPeriod")
       .populate({
         path: "scid",
         populate: { path: "cid", select: "title" },

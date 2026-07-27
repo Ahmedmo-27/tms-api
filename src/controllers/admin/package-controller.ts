@@ -9,7 +9,7 @@ import { logoutUser } from "../auth/auth-controller";
 import NonUserPackage from "../../models/nonUserPackage";
 import { runInTransaction } from "../../utils/transaction";
 import { ClientSession } from "mongoose";
-import { resolveLocationFilter } from "../../utils/location-scope";
+import { resolveLocationFilter, resolveLocationIdForWrite } from "../../utils/location-scope";
 import { normalizePhoneNumber } from "../../utils/phone";
 import { normalizeOpenGymPackageFields } from "../../utils/open-gym-package";
 import { Types } from "mongoose";
@@ -59,18 +59,12 @@ export const addPackage = asyncHandler(
       classRestrictions,
       expiryPeriod,
       numberOfSessions,
-      locationId,
     } = req.body;
     if (!name || !category || !price)
       throw new BadRequestError("INVALID_REQUEST", "Invalid request");
-    if (category === "OPEN_GYM") {
-      if (!locationId || !Types.ObjectId.isValid(locationId)) {
-        throw new BadRequestError(
-          "LOCATION_REQUIRED",
-          "Open gym packages require a branch locationId",
-        );
-      }
-    }
+
+    const targetLocationId =
+      category === "OPEN_GYM" ? resolveLocationIdForWrite(req) : null;
 
     const normalized = normalizeOpenGymPackageFields({
       category,
@@ -88,8 +82,8 @@ export const addPackage = asyncHandler(
       coachId,
       opensClasses,
       classRestrictions,
-      ...(locationId
-        ? { locationId: new Types.ObjectId(locationId) }
+      ...(targetLocationId
+        ? { locationId: new Types.ObjectId(targetLocationId) }
         : {}),
     });
     await pkg.save();
@@ -194,7 +188,7 @@ export const subMemberToPackage = asyncHandler(async function (
 ): Promise<void> {
   const { uid, pkgId, pkgStartDate, paymentMethod, paymentDate, amount, note } =
     req.body;
-  const targetLocationId = resolveLocationFilter(req) ?? undefined;
+  const targetLocationId = resolveLocationIdForWrite(req);
   const io = req.app.get("io");
   await SubscriptionsService.frontDeskSubscribeToPackage(
     uid,
@@ -324,7 +318,7 @@ export const addNonUserPackage = asyncHandler(async function (
     locationId,
   } = req.body;
 
-  const targetLocationId = resolveLocationFilter(req) ?? undefined;
+  const targetLocationId = resolveLocationIdForWrite(req);
 
   const trimmedName = (name as string)?.trim();
   const cleanPhone = normalizePhoneNumber(phoneNumber as string);
