@@ -19,9 +19,9 @@ import { cairoDayRange } from "../utils/timezone";
 import {
   assertMatchaPackageForPendingUser,
   ensureMemberForPendingPurchase,
-  getMatchaLocationId,
   isPendingMember,
 } from "../utils/matcha-branch";
+import { resolveAppPackageLocationId } from "../utils/app-package-location";
 
 export class SubscriptionsService {
   /** Same catalog package + Cairo start day already on the member. */
@@ -257,6 +257,11 @@ export class SubscriptionsService {
       );
     }
 
+    const packageLocationId = await resolveAppPackageLocationId(
+      pkg,
+      pendingMember,
+    );
+
     await runInTransaction(async (session: ClientSession) => {
       await SubscriptionsService.assertNoDuplicateMemberPackage(
         uid,
@@ -284,10 +289,11 @@ export class SubscriptionsService {
         undefined,
         packageId,
         undefined,
+        undefined,
+        undefined,
+        undefined,
+        packageLocationId,
       );
-      const packageLocationId = pendingMember
-        ? (await getMatchaLocationId()) ?? undefined
-        : undefined;
       await Member.addPackage(
         uid,
         pkg._id.toString(),
