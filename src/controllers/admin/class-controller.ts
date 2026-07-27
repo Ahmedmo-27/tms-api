@@ -210,6 +210,7 @@ export const bookClass = asyncHandler(async function (
   res: Response
 ): Promise<void> {
   const { uid, scid } = req.body;
+  await BookingsService.addBooking(uid, scid, true);
   await assertSessionAccess(req, scid);
   await BookingsService.addBooking(uid, scid);
   new SuccessResponse("Class Booked!").send(res);
