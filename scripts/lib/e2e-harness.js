@@ -89,7 +89,9 @@ async function compileTypeScript(env) {
       cwd: ROOT,
       stdio: "inherit",
       env,
+      shell: process.platform === "win32",
     });
+    build.on("error", reject);
     build.on("exit", (code) =>
       code === 0 ? resolve() : reject(new Error(`tsc failed: ${code}`)),
     );
@@ -383,6 +385,69 @@ function todayDateOnly() {
   return new Date().toISOString().split("T")[0];
 }
 
+/**
+ * Local Geidea stand-in for APP payment confirms.
+ * Responds to GET /order?MerchantReferenceId=... with Success/EGP orders.
+ * Unknown refs return { orders: [] } so checkPayment throws INVALID_PAYMENT.
+ */
+function startGeideaStub({ amountByRef } = {}) {
+  const http = require("http");
+  const amounts =
+    amountByRef instanceof Map ? amountByRef : new Map(Object.entries(amountByRef || {}));
+
+  const server = http.createServer((req, res) => {
+    try {
+      const url = new URL(req.url || "/", "http://127.0.0.1");
+      if (req.method === "GET" && url.pathname === "/order") {
+        const ref = url.searchParams.get("MerchantReferenceId");
+        const amount = ref != null ? amounts.get(ref) : undefined;
+        if (amount == null) {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ orders: [] }));
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            orders: [
+              {
+                orderId: `geidea-e2e-${ref}`,
+                currency: "EGP",
+                totalAmount: amount,
+                status: "Success",
+              },
+            ],
+          }),
+        );
+        return;
+      }
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "not found" }));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: String(err) }));
+    }
+  });
+
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const addr = server.address();
+      const port = typeof addr === "object" && addr ? addr.port : 0;
+      resolve({
+        baseUrl: `http://127.0.0.1:${port}`,
+        amountByRef: amounts,
+        setAmount(ref, amount) {
+          amounts.set(ref, amount);
+        },
+        close() {
+          return new Promise((r) => server.close(() => r()));
+        },
+      });
+    });
+  });
+}
+
 module.exports = {
   ROOT,
   JWT_SECRET,
@@ -399,4 +464,5 @@ module.exports = {
   loginAdmin,
   uniquePhone,
   todayDateOnly,
+  startGeideaStub,
 };

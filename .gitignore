@@ -11,3 +11,5 @@ launch.json
 x.json
 src/tests
 migration/
+dev.env
+prod.env

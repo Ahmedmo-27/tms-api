@@ -799,7 +799,7 @@ export class BookingsService {
     const scId = new Types.ObjectId(scid);
     const resolvedLocationId =
       locationId ??
-      (await resolveSessionPaymentLocationId(scheduledClass));
+      (await resolveSessionPaymentLocationId(scheduledClass as any));
     await runInTransaction(async (session: ClientSession) => {
       const payment = await PaymentsService.savePayment(
         uid,
@@ -810,6 +810,7 @@ export class BookingsService {
         undefined,
         undefined,
         scId,
+        undefined,
         undefined,
         undefined,
         undefined,
@@ -1117,7 +1118,7 @@ export class BookingsService {
     );
     const scId = new Types.ObjectId(scid);
     const resolvedLocationId =
-      await resolveSessionPaymentLocationId(scheduledClass);
+      await resolveSessionPaymentLocationId(scheduledClass as any);
     await runInTransaction(async (session: ClientSession) => {
       const payment = await PaymentsService.savePayment(
         uid,
@@ -1128,6 +1129,7 @@ export class BookingsService {
         orderId,
         merchantReferenceId,
         scId,
+        undefined,
         undefined,
         undefined,
         undefined,
@@ -1335,7 +1337,7 @@ export class BookingsService {
       const paymentAmount = amount !== undefined ? amount : (scheduledClass.cid as any).price;
       const resolvedLocationId =
         locationId ??
-        (await resolveSessionPaymentLocationId(scheduledClass));
+        (await resolveSessionPaymentLocationId(scheduledClass as any));
       const payment = await PaymentsService.savePayment(
         undefined,
         paymentAmount,
