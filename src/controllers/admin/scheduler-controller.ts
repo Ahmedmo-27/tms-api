@@ -5,6 +5,7 @@ import asyncHandler from "../../utils/asyncHandler";
 import { SchedulerService } from "../../services/scheduler-service";
 import {
   attendanceEntryMatchesLocation,
+  LocationIdRef,
   resolveLocationFilter,
   resolveLocationIdForWrite,
 } from "../../utils/location-scope";
@@ -92,11 +93,13 @@ export const getDailyAttendnace = asyncHandler(async function (
   if (targetLocationId && Array.isArray(record)) {
     record = record.map((doc: any) => {
       const plain = typeof doc.toObject === "function" ? doc.toObject() : { ...doc };
-      plain.ptAttendance = (plain.ptAttendance || []).filter((entry) =>
-        attendanceEntryMatchesLocation(entry, targetLocationId),
+      plain.ptAttendance = (plain.ptAttendance || []).filter(
+        (entry: { locationId?: LocationIdRef }) =>
+          attendanceEntryMatchesLocation(entry, targetLocationId),
       );
       plain.openGymAttendance = (plain.openGymAttendance || []).filter(
-        (entry) => attendanceEntryMatchesLocation(entry, targetLocationId),
+        (entry: { locationId?: LocationIdRef }) =>
+          attendanceEntryMatchesLocation(entry, targetLocationId),
       );
       return plain;
     });
