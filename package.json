@@ -19,6 +19,7 @@
     "test:package-categories": "node scripts/test-package-categories-flows.js",
     "test:package-branches": "node scripts/test-package-branch-flows.js",
     "test:package-flows": "npm run test:package-duplicates && npm run test:package-categories && npm run test:package-branches",
+    "test:member-payment-flow": "node scripts/test-member-booking-payment-flow.js",
     "coverage": "jest --runInBand --coverage",
     "seed": "npx ts-node ./src/seed/seed.ts",
     "seed:tickets": "npx ts-node -r dotenv/config ./src/seeders/seed-ticket-categories.ts dotenv_config_path=./dev.env",

@@ -35,6 +35,7 @@ import {
   ensureMemberForPendingPurchase,
   isPendingMember,
 } from "../utils/matcha-branch";
+import { resolveSessionPaymentLocationId } from "../utils/app-package-location";
 
 /** Records a failed scan; duplicate failed-scan entries are ignored. */
 async function recordFailedClassScan(scid: string, uid: string): Promise<void> {
@@ -242,17 +243,15 @@ export class BookingsService {
               (d) => d.completed,
             );
 
-            // Save changes in transaction
-            await runInTransaction(async (session: ClientSession) => {
-              await ChallengeRecord.updateWorkoutDay(
-                uid,
-                weekNumber,
-                nextDay.dayNumber,
-                true,
-                (scheduledClass._id as Types.ObjectId).toString(),
-                session,
-              );
-            });
+            // Use the outer booking session — nested transactions cause WriteConflicts
+            await ChallengeRecord.updateWorkoutDay(
+              uid,
+              weekNumber,
+              nextDay.dayNumber,
+              true,
+              (scheduledClass._id as Types.ObjectId).toString(),
+              session,
+            );
           } else {
           }
         }
@@ -798,6 +797,9 @@ export class BookingsService {
     // Admins/FD can book drop-ins even after the session has ended
     let price = scheduledClass.cid.price;
     const scId = new Types.ObjectId(scid);
+    const resolvedLocationId =
+      locationId ??
+      (await resolveSessionPaymentLocationId(scheduledClass as any));
     await runInTransaction(async (session: ClientSession) => {
       const payment = await PaymentsService.savePayment(
         uid,
@@ -812,7 +814,8 @@ export class BookingsService {
         undefined,
         undefined,
         undefined,
-        locationId ?? (scheduledClass as any).locationId?.toString()
+        undefined,
+        resolvedLocationId
       );
       const paymentIdStr = (payment._id as Types.ObjectId).toString();
       
@@ -1114,6 +1117,8 @@ export class BookingsService {
       price,
     );
     const scId = new Types.ObjectId(scid);
+    const resolvedLocationId =
+      await resolveSessionPaymentLocationId(scheduledClass as any);
     await runInTransaction(async (session: ClientSession) => {
       const payment = await PaymentsService.savePayment(
         uid,
@@ -1128,7 +1133,8 @@ export class BookingsService {
         undefined,
         undefined,
         undefined,
-        (scheduledClass as any).locationId?.toString()
+        undefined,
+        resolvedLocationId
       );
       await Member.saveDropIn(
         uid,
@@ -1329,6 +1335,9 @@ export class BookingsService {
       if (!scheduledClass)
         throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
       const paymentAmount = amount !== undefined ? amount : (scheduledClass.cid as any).price;
+      const resolvedLocationId =
+        locationId ??
+        (await resolveSessionPaymentLocationId(scheduledClass as any));
       const payment = await PaymentsService.savePayment(
         undefined,
         paymentAmount,
@@ -1343,7 +1352,7 @@ export class BookingsService {
         undefined,
         booking.name,
         booking.phoneNumber,
-        locationId ?? (scheduledClass as any).locationId?.toString()
+        resolvedLocationId
       );
       const paidBooking = await NonUserBooking.recordPayment(
         bookingId,

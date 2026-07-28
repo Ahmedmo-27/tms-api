@@ -440,7 +440,9 @@ async function main() {
         cwd: ROOT,
         stdio: "inherit",
         env: serverEnv,
+        shell: process.platform === "win32",
       });
+      build.on("error", reject);
       build.on("exit", (code) =>
         code === 0 ? resolve() : reject(new Error(`tsc failed: ${code}`)),
       );
