@@ -174,12 +174,9 @@ export class SchedulerService {
     locationId?: string,
   ): Promise<IScheduledClass[]> {
     const scheduledClassesIds = await Schedule.getClasses(date as string);
-    if (!scheduledClassesIds || scheduledClassesIds.length === 0)
-      throw new NotFoundError(
-        "CLASSES_NOT_FOUND",
-        "No classes scheduled for this day",
-        { date },
-      );
+    if (!scheduledClassesIds || scheduledClassesIds.length === 0) {
+      return [];
+    }
     const query = this.applyLocationFilter(
       { _id: { $in: scheduledClassesIds } },
       locationId,
@@ -201,11 +198,9 @@ export class SchedulerService {
     locationId?: string | Types.ObjectId | null,
   ) {
     const scheduledClassesIds = await Schedule.getNextClasses();
-    if (!scheduledClassesIds || scheduledClassesIds.length === 0)
-      throw new NotFoundError(
-        "CLASSES_NOT_FOUND",
-        "No classes scheduled for this week",
-      );
+    if (!scheduledClassesIds || scheduledClassesIds.length === 0) {
+      return [];
+    }
     const objectIds = scheduledClassesIds.map((id) => new Types.ObjectId(id));
     const query = this.applyLocationFilter({ _id: { $in: objectIds } }, locationId);
 

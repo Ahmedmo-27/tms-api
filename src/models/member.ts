@@ -446,8 +446,8 @@ MemberSchema.static(
                 "pkg.pkgStartDate": new Date(pkg.pkgStartDate),
               },
             ],
+            session,
           }
-          // Session is removed to presist package status change even though booking failed
         );
         continue;
       }

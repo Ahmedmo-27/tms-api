@@ -87,3 +87,40 @@ export async function resolveAppPackageLocationId(
   }
   return mainId;
 }
+
+/**
+ * Branch for session drop-in / non-user payments.
+ * Order: session.locationId → first class.locations entry → main (Cairo) branch.
+ */
+export async function resolveSessionPaymentLocationId(scheduledClass: {
+  locationId?: Types.ObjectId | { _id?: Types.ObjectId } | string | null;
+  cid?: {
+    locations?: Array<Types.ObjectId | { _id?: Types.ObjectId } | string>;
+  } | null;
+}): Promise<string> {
+  const raw = scheduledClass.locationId;
+  if (raw) {
+    if (typeof raw === "object" && "_id" in raw && raw._id) {
+      return raw._id.toString();
+    }
+    return raw.toString();
+  }
+
+  const locations = scheduledClass.cid?.locations;
+  if (locations?.length) {
+    const first = locations[0];
+    if (typeof first === "object" && first && "_id" in first && first._id) {
+      return first._id.toString();
+    }
+    return first.toString();
+  }
+
+  const mainId = await getMainBranchLocationId();
+  if (!mainId) {
+    throw new BadRequestError(
+      "BRANCH_REQUIRED",
+      "Unable to resolve a branch for this session payment",
+    );
+  }
+  return mainId;
+}

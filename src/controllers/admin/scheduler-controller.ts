@@ -1,6 +1,5 @@
 import { Request, Response } from "express";
 import Schedule from "../../models/schedule";
-import { NotFoundError } from "../../core/ApiError";
 import { SuccessResponse } from "../../core/ApiResponse";
 import asyncHandler from "../../utils/asyncHandler";
 import { SchedulerService } from "../../services/scheduler-service";
@@ -34,8 +33,6 @@ export const getNextScheduledClasses = asyncHandler(async function (
   const targetLocationId = resolveLocationFilter(req) ?? undefined;
 
   const scheduledClasses = await SchedulerService.getNextSchedule(targetLocationId);
-  if (!scheduledClasses || scheduledClasses.length === 0)
-    throw new NotFoundError("CLASSES_NOT_FOUND", "No classes scheduled");
   new SuccessResponse("Scheduled Classes Found!", scheduledClasses).send(res);
 });
 
