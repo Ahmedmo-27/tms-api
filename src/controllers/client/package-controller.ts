@@ -34,7 +34,11 @@ export const getPackage = asyncHandler(async function (
     Object.assign(query, await buildMatchaPackageFilter());
   }
 
-  let packages = await Package.find(query);
+  // Mobile PT flow expects populated coach objects ({ _id, coachName }), not raw ObjectIds.
+  let packages = await Package.find(query).populate({
+    path: "coachId",
+    select: "_id coachName",
+  });
   if (!packages || packages.length === 0)
     throw new NotFoundError("PACKAGES_NOT_FOUND", "Packages not found");
   new SuccessResponse("Packages Found!", packages).send(res);
