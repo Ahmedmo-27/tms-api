@@ -1,6 +1,8 @@
 import mongoose, { Schema, Model, Types } from "mongoose";
 import logger from "../config/logger";
 import Class from "./class";
+import { CAIRO_TZ, startOfDateCairo } from "../utils/timezone";
+import { fromZonedTime, toZonedTime } from "date-fns-tz";
 
 // Mix packages include finite scheduled-class credits plus time-based open gym.
 // Open gym scans must not debit remainingClasses (those are for booked classes only).
@@ -43,7 +45,11 @@ export function getPackageEndDate(
   },
 ): Date {
   const days = resolvePackageExpiryDays(pkg);
-  return new Date(new Date(startDate).getTime() + days * 24 * 60 * 60 * 1000);
+  // Add expiry days on the Cairo calendar so DST / UTC shifts cannot move the day.
+  const start = startOfDateCairo(startDate);
+  const cairo = toZonedTime(start, CAIRO_TZ);
+  cairo.setDate(cairo.getDate() + days);
+  return fromZonedTime(cairo, CAIRO_TZ);
 }
 
 export interface IClassRestriction {
