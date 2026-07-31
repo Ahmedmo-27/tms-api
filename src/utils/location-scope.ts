@@ -2,6 +2,35 @@ import { Request } from "express";
 import { Types } from "mongoose";
 import { BadRequestError } from "../core/ApiError";
 
+export type LocationIdRef =
+  | Types.ObjectId
+  | { _id?: Types.ObjectId }
+  | string
+  | null
+  | undefined;
+
+/** Normalize ObjectId, populated Location doc, or string to a location id string. */
+export function normalizeLocationIdRef(
+  locationId: LocationIdRef,
+): string | null {
+  if (!locationId) return null;
+  if (typeof locationId === "string") return locationId;
+  if (locationId instanceof Types.ObjectId) return locationId.toString();
+  if (typeof locationId === "object" && "_id" in locationId && locationId._id) {
+    return locationId._id.toString();
+  }
+  return null;
+}
+
+/** Match daily attendance rows to a branch filter (legacy rows without location pass through). */
+export function attendanceEntryMatchesLocation(
+  entry: { locationId?: LocationIdRef },
+  targetLocationId: string,
+): boolean {
+  const entryLocationId = normalizeLocationIdRef(entry.locationId);
+  return !entryLocationId || entryLocationId === targetLocationId;
+}
+
 export function normalizeRole(role: string | undefined): string {
   if (!role) return "";
   return role === "admin" ? "management" : role;

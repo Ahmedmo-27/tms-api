@@ -3,7 +3,12 @@ import Schedule from "../../models/schedule";
 import { SuccessResponse } from "../../core/ApiResponse";
 import asyncHandler from "../../utils/asyncHandler";
 import { SchedulerService } from "../../services/scheduler-service";
-import { resolveLocationFilter, resolveLocationIdForWrite } from "../../utils/location-scope";
+import {
+  attendanceEntryMatchesLocation,
+  LocationIdRef,
+  resolveLocationFilter,
+  resolveLocationIdForWrite,
+} from "../../utils/location-scope";
 
 const getRestrictToLocationId = (req: Request): string | null => {
   return resolveLocationFilter(req);
@@ -88,11 +93,14 @@ export const getDailyAttendnace = asyncHandler(async function (
   if (targetLocationId && Array.isArray(record)) {
     record = record.map((doc: any) => {
       const plain = typeof doc.toObject === "function" ? doc.toObject() : { ...doc };
-      const matchesLocation = (entry: { locationId?: { toString(): string } }) =>
-        !entry.locationId || entry.locationId.toString() === targetLocationId;
-
-      plain.ptAttendance = (plain.ptAttendance || []).filter(matchesLocation);
-      plain.openGymAttendance = (plain.openGymAttendance || []).filter(matchesLocation);
+      plain.ptAttendance = (plain.ptAttendance || []).filter(
+        (entry: { locationId?: LocationIdRef }) =>
+          attendanceEntryMatchesLocation(entry, targetLocationId),
+      );
+      plain.openGymAttendance = (plain.openGymAttendance || []).filter(
+        (entry: { locationId?: LocationIdRef }) =>
+          attendanceEntryMatchesLocation(entry, targetLocationId),
+      );
       return plain;
     });
   }
