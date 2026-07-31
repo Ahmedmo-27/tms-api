@@ -33,12 +33,11 @@ describe("resolvePackageExpiryDays", () => {
 
 describe("getPackageEndDate", () => {
   it("computes end date from custom expiryPeriod days on the Cairo calendar", () => {
-    // "2026-01-01" is Cairo Jan 1 → stored as 2025-12-31T22:00:00.000Z (UTC+2 winter)
-    // or 2025-12-31T21:00:00.000Z (UTC+3 summer). +60 Cairo days → March 2 Cairo.
     const end = getPackageEndDate("2026-01-01", { expiryPeriod: 60 });
     expect(formatInTimeZone(end, "Africa/Cairo", "yyyy-MM-dd")).toBe(
       "2026-03-02",
     );
+    expect(end.toISOString()).toBe("2026-03-02T12:00:00.000Z");
   });
 
   it("does not shift a June 2 start back to June 1 when computing end", () => {
@@ -46,6 +45,7 @@ describe("getPackageEndDate", () => {
     expect(formatInTimeZone(end, "Africa/Cairo", "yyyy-MM-dd")).toBe(
       "2025-07-02",
     );
+    expect(end.toISOString().slice(0, 10)).toBe("2025-07-02");
   });
 });
 

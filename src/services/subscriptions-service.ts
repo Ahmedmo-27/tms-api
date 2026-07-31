@@ -15,7 +15,7 @@ import User from "../models/user";
 import { Server as SocketIOServer } from "socket.io";
 import { resolveOpenGymPaymentNote } from "../utils/open-gym-payment-purpose";
 import { normalizePhoneNumber } from "../utils/phone";
-import { cairoDayRange, startOfDateCairo } from "../utils/timezone";
+import { cairoDayRange, toStoredPackageDate } from "../utils/timezone";
 import {
   assertMatchaPackageForPendingUser,
   ensureMemberForPendingPurchase,
@@ -105,11 +105,11 @@ export class SubscriptionsService {
         "This open gym package is not available at the selected branch",
       );
     }
-    // Normalize to Cairo calendar-day start so a picked "June 2" is not stored
-    // as the previous UTC calendar day (local midnight → toISOString shift).
-    startDate = startOfDateCairo(startDate).toISOString();
+    // Persist UTC noon of the Cairo calendar day so naive UTC formatters do not
+    // show the previous day (Cairo midnight == previous evening in UTC).
+    startDate = toStoredPackageDate(startDate).toISOString();
     if (paymentDate) {
-      paymentDate = startOfDateCairo(paymentDate).toISOString();
+      paymentDate = toStoredPackageDate(paymentDate).toISOString();
     }
     const packageId = new Types.ObjectId(pkgId);
     const endDate = getPackageEndDate(startDate, pkg).toISOString();
@@ -225,7 +225,7 @@ export class SubscriptionsService {
     if (!member)
       throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found", { uid });
 
-    startDate = startOfDateCairo(startDate).toISOString();
+    startDate = toStoredPackageDate(startDate).toISOString();
     const packageId = new Types.ObjectId(pkgId);
     const endDate = getPackageEndDate(startDate, pkg).toISOString();
 
@@ -331,9 +331,9 @@ export class SubscriptionsService {
       throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found", {
         pkgId,
       });
-    startDate = startOfDateCairo(startDate).toISOString();
+    startDate = toStoredPackageDate(startDate).toISOString();
     const endDate = savedEndDate
-      ? startOfDateCairo(savedEndDate).toISOString()
+      ? toStoredPackageDate(savedEndDate).toISOString()
       : getPackageEndDate(startDate, pkg).toISOString();
 
     let restrictions: IClassRestrictionRecord[];
@@ -458,9 +458,9 @@ export class SubscriptionsService {
     const pkg = await Package.findById(pkgId);
     if (!pkg)
       throw new NotFoundError("PACKAGE_NOT_FOUND", "The package was not found");
-    pkgStartDate = startOfDateCairo(pkgStartDate).toISOString();
+    pkgStartDate = toStoredPackageDate(pkgStartDate).toISOString();
     if (paymentDate) {
-      paymentDate = startOfDateCairo(paymentDate).toISOString();
+      paymentDate = toStoredPackageDate(paymentDate).toISOString();
     }
     const endDate = getPackageEndDate(pkgStartDate, pkg).toISOString();
     await runInTransaction(async (session: ClientSession) => {

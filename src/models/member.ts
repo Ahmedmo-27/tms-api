@@ -1519,7 +1519,7 @@ MemberSchema.static(
     logger.info("Data", { pkgId, pkgStartDate });
     const member = await this.findOne({ uid });
     if (!member) throw new NotFoundError("ERROR");
-    const { isSameCairoDay, startOfDateCairo, startOfTodayCairo } =
+    const { isSameCairoDay, toStoredPackageDate, startOfTodayCairo } =
       await import("../utils/timezone");
     const p = member.packages.find((pkg) => {
       return (
@@ -1530,7 +1530,7 @@ MemberSchema.static(
     logger.info("Package Matched", p);
     if (!p) throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found");
     const storedStart = p.pkgStartDate;
-    const normalizedEnd = startOfDateCairo(newDate);
+    const normalizedEnd = toStoredPackageDate(newDate);
     if (normalizedEnd < startOfTodayCairo()) {
       await this.updateOne(
         {

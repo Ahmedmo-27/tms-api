@@ -17,8 +17,8 @@ import { getPackageDeletionImpact } from "../../services/package-deletion-guard"
 import logger from "../../config/logger";
 import {
   isSameCairoDay,
-  startOfDateCairo,
   startOfTodayCairo,
+  toStoredPackageDate,
 } from "../../utils/timezone";
 
 export const getPackage = asyncHandler(async function (
@@ -239,9 +239,9 @@ export const editMemberPackage = asyncHandler(async function (
     });
 
   if (pkgEndDate) {
-    pkg.pkgEndDate = startOfDateCairo(pkgEndDate);
+    pkg.pkgEndDate = toStoredPackageDate(pkgEndDate);
 
-    if (startOfDateCairo(pkgEndDate) < startOfTodayCairo()) {
+    if (toStoredPackageDate(pkgEndDate) < startOfTodayCairo()) {
       pkg.status = "EXPIRED";
     } else {
       pkg.status = "ACTIVE";

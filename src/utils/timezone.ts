@@ -54,7 +54,21 @@ export function cairoDayRange(date: Date | string): { start: Date; end: Date } {
 
 /** yyyy-MM-dd key for the Cairo calendar day of an instant. */
 export function cairoDateKey(date: Date | string): string {
+  if (typeof date === "string") {
+    const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date.trim());
+    if (dateOnly) return dateOnly[0];
+  }
   return formatInTimeZone(new Date(date), CAIRO_TZ, "yyyy-MM-dd");
+}
+
+/**
+ * Persist a calendar day as UTC noon of that Africa/Cairo day.
+ * Avoids the classic off-by-one where Cairo local midnight (e.g. June 2 00:00
+ * = June 1 21:00Z) is shown as the previous day by UTC-naive formatters.
+ */
+export function toStoredPackageDate(date: Date | string): Date {
+  const [y, m, d] = cairoDateKey(date).split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d, 12, 0, 0, 0));
 }
 
 /** True when both values fall on the same Africa/Cairo calendar day. */
