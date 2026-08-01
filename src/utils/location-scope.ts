@@ -22,6 +22,59 @@ export function normalizeLocationIdRef(
   return null;
 }
 
+/** Convert a valid id ref to Types.ObjectId for writes. Returns null when invalid. */
+export function toObjectId(locationId: LocationIdRef): Types.ObjectId | null {
+  const normalized = normalizeLocationIdRef(locationId);
+  if (!normalized || !Types.ObjectId.isValid(normalized)) return null;
+  return new Types.ObjectId(normalized);
+}
+
+/**
+ * Match a scalar ObjectId field (e.g. locationId) stored as string or ObjectId.
+ * Uses $expr because Mongoose casts $in values and won't match legacy strings.
+ */
+export function locationIdScalarQuery(
+  locationId: string,
+  field = "locationId",
+): Record<string, unknown> {
+  return {
+    $expr: { $eq: [{ $toString: `$${field}` }, locationId] },
+  };
+}
+
+/**
+ * Match an array of location refs (e.g. classes.locations) containing the branch id.
+ * Uses $expr because Mongoose casts $in values and won't match legacy strings.
+ */
+export function locationIdsArrayQuery(
+  locationId: string,
+  field = "locations",
+): Record<string, unknown> {
+  return {
+    $expr: {
+      $gt: [
+        {
+          $size: {
+            $filter: {
+              input: { $ifNull: [`$${field}`, []] },
+              as: "loc",
+              cond: { $eq: [{ $toString: "$$loc" }, locationId] },
+            },
+          },
+        },
+        0,
+      ],
+    },
+  };
+}
+
+/** @deprecated Use locationIdScalarQuery or locationIdsArrayQuery */
+export function objectIdFieldQuery(
+  locationId: string,
+): { $in: [Types.ObjectId, string] } {
+  return { $in: [new Types.ObjectId(locationId), locationId] };
+}
+
 /** Match daily attendance rows to a branch filter (legacy rows without location pass through). */
 export function attendanceEntryMatchesLocation(
   entry: { locationId?: LocationIdRef },

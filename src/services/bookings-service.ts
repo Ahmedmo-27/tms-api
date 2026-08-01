@@ -37,6 +37,7 @@ import {
 } from "../utils/matcha-branch";
 import { resolveSessionPaymentLocationId } from "../utils/app-package-location";
 import Payment from "../models/payment";
+import { locationIdScalarQuery, locationIdsArrayQuery } from "../utils/location-scope";
 
 /** Records a failed scan; duplicate failed-scan entries are ignored. */
 async function recordFailedClassScan(scid: string, uid: string): Promise<void> {
@@ -833,7 +834,7 @@ export class BookingsService {
   static async resolveOpenGymDropInPrice(locationId: string): Promise<number> {
     const workspaceClass = await Class.findOne({
       category: "WORKSPACE",
-      locations: new Types.ObjectId(locationId),
+      ...locationIdsArrayQuery(locationId),
     });
     if (!workspaceClass) {
       throw new NotFoundError(
@@ -860,7 +861,7 @@ export class BookingsService {
 
     let workspaceClass = await Class.findOne({
       category: "WORKSPACE",
-      locations: new Types.ObjectId(locationId),
+      ...locationIdsArrayQuery(locationId),
     });
 
     if (workspaceClass) {
@@ -1293,12 +1294,9 @@ export class BookingsService {
     if (scid) query.scid = scid;
     
     if (locationId) {
-      const locationObjectId = Types.ObjectId.isValid(locationId)
-        ? new Types.ObjectId(locationId)
-        : locationId;
-      const scheduledClasses = await ScheduledClass.find({
-        locationId: locationObjectId,
-      }).select("_id");
+      const scheduledClasses = await ScheduledClass.find(
+        locationIdScalarQuery(locationId),
+      ).select("_id");
       const validScids = scheduledClasses.map(sc => (sc as any)._id.toString());
       if (scid) {
         if (!validScids.includes(scid)) return [];

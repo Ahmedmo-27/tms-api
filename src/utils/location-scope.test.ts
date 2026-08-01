@@ -1,7 +1,10 @@
 import { Types } from "mongoose";
 import {
   attendanceEntryMatchesLocation,
+  locationIdScalarQuery,
+  locationIdsArrayQuery,
   normalizeLocationIdRef,
+  toObjectId,
 } from "./location-scope";
 
 describe("normalizeLocationIdRef", () => {
@@ -23,6 +26,39 @@ describe("normalizeLocationIdRef", () => {
       branchName: "Cairo",
     } as { _id: Types.ObjectId };
     expect(normalizeLocationIdRef(populated)).toBe(cairoId);
+  });
+});
+
+describe("toObjectId", () => {
+  const cairoId = new Types.ObjectId().toString();
+
+  it("returns ObjectId for valid refs", () => {
+    const fromString = toObjectId(cairoId);
+    expect(fromString).toBeInstanceOf(Types.ObjectId);
+    expect(fromString?.toString()).toBe(cairoId);
+  });
+
+  it("returns null for invalid refs", () => {
+    expect(toObjectId(null)).toBeNull();
+    expect(toObjectId("not-an-id")).toBeNull();
+  });
+});
+
+describe("locationIdsArrayQuery", () => {
+  const cairoId = new Types.ObjectId().toString();
+
+  it("builds $expr filter for array location fields", () => {
+    expect(locationIdsArrayQuery(cairoId)).toHaveProperty("$expr");
+  });
+});
+
+describe("locationIdScalarQuery", () => {
+  const cairoId = new Types.ObjectId().toString();
+
+  it("builds $expr filter for scalar location fields", () => {
+    expect(locationIdScalarQuery(cairoId)).toEqual({
+      $expr: { $eq: [{ $toString: "$locationId" }, cairoId] },
+    });
   });
 });
 

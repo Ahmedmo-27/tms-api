@@ -28,7 +28,11 @@
     "start": "node dist/index.js",
     "debug": "node --inspect-brk -r ts-node/register src/app.ts",
     "backfill-locations": "npx ts-node ./src/scripts/backfill-scheduled-class-locations.ts",
-    "backfill-locations:apply": "npx ts-node ./src/scripts/backfill-scheduled-class-locations.ts --apply"
+    "backfill-locations:apply": "npx ts-node ./src/scripts/backfill-scheduled-class-locations.ts --apply",
+    "normalize-location-ids": "npx ts-node ./src/scripts/normalize-location-object-ids.ts --dry-run",
+    "normalize-location-ids:apply": "npx ts-node ./src/scripts/normalize-location-object-ids.ts",
+    "verify-location-fix": "npx ts-node ./src/scripts/verify-location-fix-local.ts",
+    "verify-location-fix:tms-test": "npx ts-node ./src/scripts/verify-location-fix-tms-test.ts"
   },
   "repository": {
     "type": "git",
