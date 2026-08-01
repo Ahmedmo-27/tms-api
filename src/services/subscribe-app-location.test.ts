@@ -26,6 +26,14 @@ jest.mock("../models/promoCode", () => ({
   default: { getDiscountedPrice: jest.fn() },
 }));
 jest.mock("./payments-service");
+jest.mock("../models/payment", () => ({
+  __esModule: true,
+  default: {
+    findOne: jest.fn(() => ({
+      session: jest.fn().mockResolvedValue(null),
+    })),
+  },
+}));
 jest.mock("./egygap-erp-service", () => ({
   sendPaymentToRentalSystem: jest.fn(),
 }));
@@ -75,6 +83,9 @@ describe("APP subscribeToPackage locationId fix", () => {
       session: jest.fn().mockResolvedValue({ _id: uid, phoneNumber: null }),
     });
     (PaymentsService.checkPayment as jest.Mock).mockResolvedValue("order-1");
+    (PaymentsService.findPaymentByMerchantReference as jest.Mock).mockResolvedValue(
+      null,
+    );
     (PaymentsService.savePayment as jest.Mock).mockResolvedValue({
       _id: new Types.ObjectId(),
       amount: 2500,

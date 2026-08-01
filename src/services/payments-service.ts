@@ -2,7 +2,7 @@ import Payment from "../models/payment";
 import Refund, { IRefund } from "../models/refund";
 import { ClientSession, Types } from "mongoose";
 import axios from "axios";
-import { BadRequestError, NotFoundError } from "../core/ApiError";
+import { BadRequestError, ConflictError, NotFoundError } from "../core/ApiError";
 import { IPayment } from "../models/payment";
 import logger from "../config/logger";
 import { refundPaymentToRentalSystem } from "./egygap-erp-service";
@@ -294,21 +294,84 @@ export class PaymentsService {
       `/order?MerchantReferenceId=${merchantReferenceId}`
     );
     logger.info(`Geidea response for reference ${merchantReferenceId}:`, response.data);
-    const order = response.data.orders[0];
-    if (!order) throw new NotFoundError("INVALID_PAYMENT", "Payment not found");
-    if (order.currency && order.currency !== "EGP")
-      throw new BadRequestError(
-        "UNSUPPORTED_CURRENCY",
-        "All payments should be in egyptian pounds"
+    const orders: Array<{
+      orderId?: string;
+      currency?: string;
+      totalAmount?: number;
+      status?: string;
+      detailedStatus?: string;
+    }> = response.data?.orders || [];
+
+    if (orders.length > 1) {
+      logger.warn(
+        `Multiple Geidea orders for merchantReferenceId ${merchantReferenceId}: count=${orders.length} totalAmount=${response.data?.totalAmount}`,
       );
-    if (order.totalAmount !== amount)
-      throw new BadRequestError(
-        "INVALID_PAYMENT_AMOUNT",
-        "Payment amount doesn't match required amount"
-      );
-    if (order.status !== "Success")
+    }
+
+    if (orders.length === 0) {
+      throw new NotFoundError("INVALID_PAYMENT", "Payment not found");
+    }
+
+    const matchingSuccess = orders.filter((order) => {
+      if (order.currency && order.currency !== "EGP") return false;
+      if (order.totalAmount !== amount) return false;
+      return order.status === "Success";
+    });
+
+    if (matchingSuccess.length === 0) {
+      const first = orders[0];
+      if (first.currency && first.currency !== "EGP") {
+        throw new BadRequestError(
+          "UNSUPPORTED_CURRENCY",
+          "All payments should be in egyptian pounds",
+        );
+      }
+      if (first.totalAmount !== amount) {
+        throw new BadRequestError(
+          "INVALID_PAYMENT_AMOUNT",
+          "Payment amount doesn't match required amount",
+        );
+      }
       throw new BadRequestError("PAYMENT_FAILED", "Payment is not completed");
-    return order.orderId;
+    }
+
+    const orderIds = matchingSuccess
+      .map((o) => o.orderId)
+      .filter((id): id is string => !!id);
+
+    const alreadySaved = await Payment.find({
+      orderId: { $in: orderIds },
+    }).select("orderId");
+    const usedOrderIds = new Set(
+      alreadySaved.map((p) => p.orderId).filter((id): id is string => !!id),
+    );
+
+    const unused = matchingSuccess.find(
+      (o) => o.orderId && !usedOrderIds.has(o.orderId),
+    );
+    if (unused?.orderId) {
+      return unused.orderId;
+    }
+
+    // Every matching Success order is already recorded — caller should fulfill idempotently
+    throw new ConflictError(
+      "PAYMENT_ALREADY_RECORDED",
+      "Payment already recorded for this merchant reference",
+      { merchantReferenceId, orderIds },
+    );
+  }
+
+  /** Non-refunded APP payment already saved for this Geidea merchant reference. */
+  static async findPaymentByMerchantReference(
+    merchantReferenceId: string,
+    purpose?: string,
+  ): Promise<IPayment | null> {
+    const query: Record<string, unknown> = {
+      merchantReferenceId,
+      isRefunded: { $ne: true },
+    };
+    if (purpose) query.purpose = purpose;
+    return Payment.findOne(query).sort({ paymentTime: 1 });
   }
 
   static async savePayment(
