@@ -21,7 +21,7 @@ import logger from "../../config/logger";
 import { IRefund } from "../../models/refund";
 import { IPayment } from "../../models/payment";
 import { startOfDateCairo, endOfDateCairo } from "../../utils/timezone";
-import { resolveLocationFilter, resolveLocationIdForWrite } from "../../utils/location-scope";
+import { resolveLocationFilter, resolveLocationIdForWrite, locationIdScalarQuery } from "../../utils/location-scope";
 
 async function syncRefundToErp(
   refund: IRefund,
@@ -211,7 +211,7 @@ export const listRefunds = asyncHandler(
 
     const targetLocationId = resolveLocationFilter(req);
     if (targetLocationId) {
-      filter.locationId = targetLocationId;
+      Object.assign(filter, locationIdScalarQuery(targetLocationId));
     }
 
     if (date) {
@@ -260,7 +260,7 @@ export const listCashOuts = asyncHandler(
 
     const targetLocationId = resolveLocationFilter(req);
     if (targetLocationId) {
-      filter.locationId = targetLocationId;
+      Object.assign(filter, locationIdScalarQuery(targetLocationId));
     }
 
     if (date) {

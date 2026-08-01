@@ -8,6 +8,7 @@ import logger from "../config/logger";
 import { refundPaymentToRentalSystem } from "./egygap-erp-service";
 import { startOfDay, endOfDay, startOfMonth, endOfMonth } from "date-fns";
 import { resolveOpenGymPaymentPurposeLabel } from "../utils/open-gym-payment-purpose";
+import { locationIdScalarQuery, locationIdsArrayQuery, toObjectId } from "../utils/location-scope";
 
 export type PaymentListEntry = IPayment & {
   entryType?: "REFUND" | "CASHOUT";
@@ -106,8 +107,8 @@ export class PaymentsService {
     };
 
     if (locationId) {
-      paymentQuery.locationId = locationId;
-      refundQuery.locationId = locationId;
+      Object.assign(paymentQuery, locationIdScalarQuery(locationId));
+      Object.assign(refundQuery, locationIdScalarQuery(locationId));
     }
 
     const [payments, refunds] = await Promise.all([
@@ -404,7 +405,7 @@ export class PaymentsService {
       isRefunded: false,
       nonMemberName,
       nonMemberPhone,
-      locationId: locationId || undefined,
+      locationId: locationId ? (toObjectId(locationId) ?? undefined) : undefined,
     });
     await payment.save(session ? { session } : {});
     return payment;

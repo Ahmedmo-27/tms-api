@@ -4,7 +4,7 @@ import { SuccessResponse } from "../../core/ApiResponse";
 import { Request, Response } from "express";
 import { OrdersService } from "../../services/orders-service";
 import { BadRequestError } from "../../core/ApiError";
-import { resolveLocationFilter, resolveLocationIdForWrite } from "../../utils/location-scope";
+import { resolveLocationFilter, resolveLocationIdForWrite, locationIdScalarQuery, toObjectId } from "../../utils/location-scope";
 
 export const getOrders = asyncHandler(async function (
   req: Request,
@@ -17,7 +17,7 @@ export const getOrders = asyncHandler(async function (
   }
   const targetLocationId = resolveLocationFilter(req);
   if (targetLocationId) {
-    query.locationId = targetLocationId;
+    Object.assign(query, locationIdScalarQuery(targetLocationId));
   }
   const orders = await Order.find(query)
     .populate("locationId", "branchName location")
@@ -31,7 +31,15 @@ export const createOrder = asyncHandler(async (req: Request, res: Response): Pro
     throw new BadRequestError("INVALID_REQUEST", "Items are required");
   }
   const targetLocationId = resolveLocationIdForWrite(req);
-  const order = new Order({ memberId, memberName, items, totalAmount, paymentMethod, note, locationId: targetLocationId });
+  const order = new Order({
+    memberId,
+    memberName,
+    items,
+    totalAmount,
+    paymentMethod,
+    note,
+    locationId: toObjectId(targetLocationId) ?? undefined,
+  });
   await order.save();
   new SuccessResponse("Order Created!", order).send(res);
 });

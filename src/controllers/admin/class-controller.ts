@@ -18,7 +18,12 @@ import { Types } from "mongoose";
 import { runInTransaction } from "../../utils/transaction";
 import { ClientSession } from "mongoose";
 import logger from "../../config/logger";
-import { resolveLocationFilter, resolveLocationIdForWrite } from "../../utils/location-scope";
+import {
+  locationIdsArrayQuery,
+  resolveLocationFilter,
+  resolveLocationIdForWrite,
+  toObjectId,
+} from "../../utils/location-scope";
 
 /** Escapes special regex characters so user-supplied strings are treated as literals. */
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -39,8 +44,9 @@ const processLocations = async (locationsRaw: any) => {
   if (locs.length === 0) return undefined;
   const mappedLocations = [];
   for (const loc of locs) {
-    if (Types.ObjectId.isValid(loc)) {
-      mappedLocations.push(loc);
+    const objectId = toObjectId(loc);
+    if (objectId) {
+      mappedLocations.push(objectId);
     } else {
       const escaped = escapeRegex(loc);
       const foundLoc = await Location.findOne({
@@ -102,7 +108,7 @@ export const getClass = asyncHandler(async function (
     query.category = category;
   }
   if (targetLocationId && Types.ObjectId.isValid(targetLocationId)) {
-    query.locations = new Types.ObjectId(targetLocationId);
+    Object.assign(query, locationIdsArrayQuery(targetLocationId));
   }
 
   const classes = await Class.find(query).populate("locations");

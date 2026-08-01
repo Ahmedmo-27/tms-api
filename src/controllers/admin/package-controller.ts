@@ -9,7 +9,7 @@ import { logoutUser } from "../auth/auth-controller";
 import NonUserPackage from "../../models/nonUserPackage";
 import { runInTransaction } from "../../utils/transaction";
 import { ClientSession } from "mongoose";
-import { resolveLocationFilter, resolveLocationIdForWrite } from "../../utils/location-scope";
+import { resolveLocationFilter, resolveLocationIdForWrite, locationIdScalarQuery, toObjectId } from "../../utils/location-scope";
 import { normalizePhoneNumber } from "../../utils/phone";
 import { normalizeOpenGymPackageFields } from "../../utils/open-gym-package";
 import { Types } from "mongoose";
@@ -41,7 +41,7 @@ export const getPackage = asyncHandler(async function (
     query.$or = [
       { locationId: { $exists: false } },
       { locationId: null },
-      { locationId: new Types.ObjectId(targetLocationId) },
+      locationIdScalarQuery(targetLocationId),
     ];
   }
   let packages = await Package.find(query)
@@ -174,11 +174,18 @@ export const updatePackage = asyncHandler(
       opensClasses: req.body.opensClasses ?? existing.opensClasses,
     };
     const normalized = normalizeOpenGymPackageFields(merged);
-    const updatePayload = {
+    const updatePayload: Record<string, unknown> = {
       ...req.body,
       expiryPeriod: normalized.expiryPeriod,
       numberOfSessions: normalized.numberOfSessions,
     };
+    if (updatePayload.locationId !== undefined && updatePayload.locationId !== null) {
+      const locationObjectId = toObjectId(updatePayload.locationId as string);
+      if (!locationObjectId) {
+        throw new BadRequestError("INVALID_LOCATION", "Invalid locationId");
+      }
+      updatePayload.locationId = locationObjectId;
+    }
 
     const pkg = await Package.findByIdAndUpdate(id, updatePayload, { new: true });
     if (!pkg)
