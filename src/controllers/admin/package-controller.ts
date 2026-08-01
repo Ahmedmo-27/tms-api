@@ -15,6 +15,11 @@ import { normalizeOpenGymPackageFields } from "../../utils/open-gym-package";
 import { Types } from "mongoose";
 import { getPackageDeletionImpact } from "../../services/package-deletion-guard";
 import logger from "../../config/logger";
+import {
+  isSameCairoDay,
+  startOfTodayCairo,
+  toStoredPackageDate,
+} from "../../utils/timezone";
 
 export const getPackage = asyncHandler(async function (
   req: Request,
@@ -235,7 +240,7 @@ export const editMemberPackage = asyncHandler(async function (
   const pkg = member.packages.find(
     (p) =>
       p.pkgId.toString() === pkgId &&
-      p.pkgStartDate.toDateString() === new Date(pkgStartDate).toDateString()
+      isSameCairoDay(p.pkgStartDate, pkgStartDate)
   );
   if (!pkg)
     throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found", {
@@ -243,9 +248,9 @@ export const editMemberPackage = asyncHandler(async function (
     });
 
   if (pkgEndDate) {
-    pkg.pkgEndDate = new Date(pkgEndDate);
+    pkg.pkgEndDate = toStoredPackageDate(pkgEndDate);
 
-    if (new Date(pkgEndDate) < new Date()) {
+    if (toStoredPackageDate(pkgEndDate) < startOfTodayCairo()) {
       pkg.status = "EXPIRED";
     } else {
       pkg.status = "ACTIVE";
@@ -275,7 +280,7 @@ export const adjustMemberPackageClasses = asyncHandler(async function (
   const pkg = member.packages.find(
     (p) =>
       p.pkgId.toString() === pkgId &&
-      p.pkgStartDate.toDateString() === new Date(pkgStartDate).toDateString()
+      isSameCairoDay(p.pkgStartDate, pkgStartDate)
   );
   if (!pkg)
     throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found", { pkgId });

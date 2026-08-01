@@ -1435,13 +1435,16 @@ MemberSchema.static(
     logger.info("Data", { pkgId, pkgStartDate });
     const member = await this.findOne({ uid });
     if (!member) throw new NotFoundError("ERROR");
-    const p = member.packages.find((p) => {
+    const { isSameCairoDay } = await import("../utils/timezone");
+    const p = member.packages.find((pkg) => {
       return (
-        p.pkgId.toString() === pkgId &&
-        p.pkgStartDate.toDateString() === new Date(pkgStartDate).toDateString()
+        pkg.pkgId.toString() === pkgId &&
+        isSameCairoDay(pkg.pkgStartDate, pkgStartDate)
       );
     });
     logger.info("Package Matched", p);
+    if (!p) throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found");
+    const storedStart = p.pkgStartDate;
     if (newClasses < 0)
       throw new BadRequestError(
         "INVALID_CLASSES_NUMBER",
@@ -1454,7 +1457,7 @@ MemberSchema.static(
           packages: {
             $elemMatch: {
               pkgId: new Types.ObjectId(pkgId),
-              pkgStartDate: new Date(pkgStartDate),
+              pkgStartDate: storedStart,
             },
           },
         },
@@ -1468,7 +1471,7 @@ MemberSchema.static(
           arrayFilters: [
             {
               "pkg.pkgId": new Types.ObjectId(pkgId),
-              "pkg.pkgStartDate": new Date(pkgStartDate),
+              "pkg.pkgStartDate": storedStart,
             },
           ],
         }
@@ -1481,7 +1484,7 @@ MemberSchema.static(
           packages: {
             $elemMatch: {
               pkgId: new Types.ObjectId(pkgId),
-              pkgStartDate: new Date(pkgStartDate),
+              pkgStartDate: storedStart,
             },
           },
         },
@@ -1495,7 +1498,7 @@ MemberSchema.static(
           arrayFilters: [
             {
               "pkg.pkgId": new Types.ObjectId(pkgId),
-              "pkg.pkgStartDate": new Date(pkgStartDate),
+              "pkg.pkgStartDate": storedStart,
             },
           ],
         }
@@ -1516,27 +1519,32 @@ MemberSchema.static(
     logger.info("Data", { pkgId, pkgStartDate });
     const member = await this.findOne({ uid });
     if (!member) throw new NotFoundError("ERROR");
-    const p = member.packages.find((p) => {
+    const { isSameCairoDay, toStoredPackageDate, startOfTodayCairo } =
+      await import("../utils/timezone");
+    const p = member.packages.find((pkg) => {
       return (
-        p.pkgId.toString() === pkgId &&
-        p.pkgStartDate.toDateString() === new Date(pkgStartDate).toDateString()
+        pkg.pkgId.toString() === pkgId &&
+        isSameCairoDay(pkg.pkgStartDate, pkgStartDate)
       );
     });
     logger.info("Package Matched", p);
-    if (new Date(newDate) < new Date()) {
+    if (!p) throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found");
+    const storedStart = p.pkgStartDate;
+    const normalizedEnd = toStoredPackageDate(newDate);
+    if (normalizedEnd < startOfTodayCairo()) {
       await this.updateOne(
         {
           uid,
           packages: {
             $elemMatch: {
               pkgId: new Types.ObjectId(pkgId),
-              pkgStartDate: new Date(pkgStartDate),
+              pkgStartDate: storedStart,
             },
           },
         },
         {
           $set: {
-            "packages.$[pkg].pkgEndDate": new Date(newDate),
+            "packages.$[pkg].pkgEndDate": normalizedEnd,
             "packages.$[pkg].status": "EXPIRED",
           },
         },
@@ -1544,7 +1552,7 @@ MemberSchema.static(
           arrayFilters: [
             {
               "pkg.pkgId": new Types.ObjectId(pkgId),
-              "pkg.pkgStartDate": new Date(pkgStartDate),
+              "pkg.pkgStartDate": storedStart,
             },
           ],
           session,
@@ -1557,13 +1565,13 @@ MemberSchema.static(
           packages: {
             $elemMatch: {
               pkgId: new Types.ObjectId(pkgId),
-              pkgStartDate: new Date(pkgStartDate),
+              pkgStartDate: storedStart,
             },
           },
         },
         {
           $set: {
-            "packages.$[pkg].pkgEndDate": new Date(newDate),
+            "packages.$[pkg].pkgEndDate": normalizedEnd,
             "packages.$[pkg].status": "ACTIVE",
           },
         },
@@ -1571,7 +1579,7 @@ MemberSchema.static(
           arrayFilters: [
             {
               "pkg.pkgId": new Types.ObjectId(pkgId),
-              "pkg.pkgStartDate": new Date(pkgStartDate),
+              "pkg.pkgStartDate": storedStart,
             },
           ],
           session,

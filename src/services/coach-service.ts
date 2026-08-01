@@ -11,6 +11,7 @@ import { ClientResponseDto, PaginatedClientsResponseDto, DeductSessionRequestDto
 import { runInTransaction } from "../utils/transaction";
 import { addDays, format } from "date-fns";
 import { formatInTimeZone } from "date-fns-tz";
+import { isSameCairoDay } from "../utils/timezone";
 
 export class CoachService {
   static async getCoachDocumentByUserId(userId: Types.ObjectId): Promise<ICoach | null> {
@@ -279,10 +280,9 @@ export class CoachService {
       throw new ForbiddenError("ACCESS_DENIED", "No scheduled class or personal package links this coach to the member");
     }
 
-    // Date-normalize: match by same calendar day using toDateString() comparison
-    // (consistent with the pattern used in editPackageClasses / editExpiryDate)
-    const pkg = member.packages.find(
-      (p) => p.pkgStartDate.toDateString() === parsedPackageStartDate.toDateString(),
+    // Match by Africa/Cairo calendar day (avoids UTC toDateString off-by-one).
+    const pkg = member.packages.find((p) =>
+      isSameCairoDay(p.pkgStartDate, parsedPackageStartDate),
     );
 
     if (!pkg) {

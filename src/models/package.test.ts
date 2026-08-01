@@ -3,6 +3,7 @@ import {
   isUnlimitedSpaceAccess,
   resolvePackageExpiryDays,
 } from "./package";
+import { formatInTimeZone } from "date-fns-tz";
 
 // re-import from payment util for duration label tests
 import { formatOpenGymDurationLabel as formatDuration } from "../utils/open-gym-payment-purpose";
@@ -31,10 +32,20 @@ describe("resolvePackageExpiryDays", () => {
 });
 
 describe("getPackageEndDate", () => {
-  it("computes end date from custom expiryPeriod days", () => {
-    const start = "2026-01-01T00:00:00.000Z";
-    const end = getPackageEndDate(start, { expiryPeriod: 60 });
-    expect(end.toISOString()).toBe("2026-03-02T00:00:00.000Z");
+  it("computes end date from custom expiryPeriod days on the Cairo calendar", () => {
+    const end = getPackageEndDate("2026-01-01", { expiryPeriod: 60 });
+    expect(formatInTimeZone(end, "Africa/Cairo", "yyyy-MM-dd")).toBe(
+      "2026-03-02",
+    );
+    expect(end.toISOString()).toBe("2026-03-02T12:00:00.000Z");
+  });
+
+  it("does not shift a June 2 start back to June 1 when computing end", () => {
+    const end = getPackageEndDate("2025-06-02", { expiryPeriod: 30 });
+    expect(formatInTimeZone(end, "Africa/Cairo", "yyyy-MM-dd")).toBe(
+      "2025-07-02",
+    );
+    expect(end.toISOString().slice(0, 10)).toBe("2025-07-02");
   });
 });
 
