@@ -36,6 +36,7 @@ import {
   isPendingMember,
 } from "../utils/matcha-branch";
 import { resolveSessionPaymentLocationId } from "../utils/app-package-location";
+import Payment from "../models/payment";
 
 /** Records a failed scan; duplicate failed-scan entries are ignored. */
 async function recordFailedClassScan(scid: string, uid: string): Promise<void> {
@@ -1029,6 +1030,57 @@ export class BookingsService {
     });
   }
 
+  /**
+   * Finish drop-in booking when payment is already saved (idempotent retry).
+   * Does not create a new Payment or call Geidea.
+   */
+  private static async completeDropInFromExistingPayment(
+    uid: string,
+    scid: string,
+    payment: { _id: Types.ObjectId | string | unknown },
+    scheduledClass: { _id: Types.ObjectId },
+    userHasReservation: any,
+  ) {
+    const member = await Member.findOne({ uid });
+    const alreadyBooked = member?.bookings?.some(
+      (b) => b.scid.toString() === scid,
+    );
+    const alreadyOnClass = (scheduledClass as any).bookedMembers?.some(
+      (m: any) => m.uid?.toString() === uid,
+    );
+
+    if (alreadyBooked && alreadyOnClass) {
+      return;
+    }
+
+    await runInTransaction(async (session: ClientSession) => {
+      if (!alreadyBooked) {
+        await Member.saveDropIn(
+          uid,
+          scid,
+          String(payment._id),
+          session,
+        );
+      }
+      if (!alreadyOnClass) {
+        await ScheduledClass.bookMember(scid, uid, "Drop In", session);
+      }
+      if (userHasReservation) {
+        userHasReservation.status = "COMPLETED";
+        await userHasReservation.save({ session });
+        await WaitlistEntry.updateOne(
+          {
+            sessionId: scheduledClass._id,
+            userId: new Types.ObjectId(uid),
+            status: "NOTIFIED",
+          },
+          { status: "BOOKED" },
+          { session },
+        );
+      }
+    });
+  }
+
   static async bookDropIn(
     uid: string,
     scid: string,
@@ -1112,14 +1164,84 @@ export class BookingsService {
       }
     }
 
-    const orderId = await PaymentsService.checkPayment(
-      merchantReferenceId,
-      price,
+    // Idempotent: already booked for this class → success no-op
+    const alreadyBooked = member.bookings?.some(
+      (b) => b.scid.toString() === scid,
     );
+    if (alreadyBooked) {
+      logger.info(
+        `Drop-in idempotent no-op: uid=${uid} already booked scid=${scid}`,
+      );
+      return;
+    }
+
+    // Idempotent: payment already saved for this merchant ref → finish booking only
+    const existingPayment =
+      await PaymentsService.findPaymentByMerchantReference(
+        merchantReferenceId,
+        "DROPIN",
+      );
+    if (existingPayment) {
+      logger.info(
+        `Drop-in idempotent fulfill from existing payment ${existingPayment._id} mref=${merchantReferenceId}`,
+      );
+      await BookingsService.completeDropInFromExistingPayment(
+        uid,
+        scid,
+        existingPayment,
+        scheduledClass,
+        userHasReservation,
+      );
+      return;
+    }
+
+    let orderId: string;
+    try {
+      orderId = await PaymentsService.checkPayment(
+        merchantReferenceId,
+        price,
+      );
+    } catch (err) {
+      if (err instanceof ConflictError && err.code === "PAYMENT_ALREADY_RECORDED") {
+        const recorded = await PaymentsService.findPaymentByMerchantReference(
+          merchantReferenceId,
+          "DROPIN",
+        );
+        if (recorded) {
+          await BookingsService.completeDropInFromExistingPayment(
+            uid,
+            scid,
+            recorded,
+            scheduledClass,
+            userHasReservation,
+          );
+          return;
+        }
+      }
+      throw err;
+    }
+
     const scId = new Types.ObjectId(scid);
     const resolvedLocationId =
       await resolveSessionPaymentLocationId(scheduledClass as any);
     await runInTransaction(async (session: ClientSession) => {
+      // Re-check inside txn in case a concurrent confirm already saved payment
+      const racePayment = await Payment.findOne({
+        merchantReferenceId,
+        purpose: "DROPIN",
+        isRefunded: { $ne: true },
+      }).session(session);
+      if (racePayment) {
+        await Member.saveDropIn(
+          uid,
+          scid,
+          (racePayment._id as Types.ObjectId).toString(),
+          session,
+        );
+        await ScheduledClass.bookMember(scid, uid, "Drop In", session);
+        return;
+      }
+
       const payment = await PaymentsService.savePayment(
         uid,
         price,

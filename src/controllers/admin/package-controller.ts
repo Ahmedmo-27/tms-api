@@ -191,8 +191,16 @@ export const subMemberToPackage = asyncHandler(async function (
   req: Request,
   res: Response
 ): Promise<void> {
-  const { uid, pkgId, pkgStartDate, paymentMethod, paymentDate, amount, note } =
-    req.body;
+  const {
+    uid,
+    pkgId,
+    pkgStartDate,
+    paymentMethod,
+    paymentDate,
+    amount,
+    note,
+    pendingDeduction,
+  } = req.body;
   const targetLocationId = resolveLocationIdForWrite(req);
   const io = req.app.get("io");
   await SubscriptionsService.frontDeskSubscribeToPackage(
@@ -204,7 +212,8 @@ export const subMemberToPackage = asyncHandler(async function (
     amount,
     note,
     io,
-    targetLocationId
+    targetLocationId,
+    pendingDeduction === true || pendingDeduction === "true",
   );
   new SuccessResponse("Package Added!").send(res);
 });

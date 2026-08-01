@@ -22,6 +22,7 @@ import {
   isPendingMember,
 } from "../utils/matcha-branch";
 import { resolveAppPackageLocationId } from "../utils/app-package-location";
+import Payment from "../models/payment";
 
 export class SubscriptionsService {
   /** Same catalog package + Cairo start day already on the member. */
@@ -83,6 +84,7 @@ export class SubscriptionsService {
     note?: string,
     io?: SocketIOServer,
     locationId?: string,
+    pendingDeduction = false,
   ) {
     const member = await Member.findOne({ uid });
     if (!member)
@@ -103,6 +105,12 @@ export class SubscriptionsService {
       throw new BadRequestError(
         "PACKAGE_BRANCH_MISMATCH",
         "This open gym package is not available at the selected branch",
+      );
+    }
+    if (pendingDeduction && pkg.numberOfSessions < 1) {
+      throw new BadRequestError(
+        "INVALID_DEDUCTION",
+        "This package has no sessions to deduct",
       );
     }
     // Persist UTC noon of the Cairo calendar day so naive UTC formatters do not
@@ -169,17 +177,35 @@ export class SubscriptionsService {
         undefined,
         locationId
       );
+      const remainingClasses = pendingDeduction
+        ? pkg.numberOfSessions - 1
+        : pkg.numberOfSessions;
       await Member.addPackage(
         uid,
         pkg._id.toString(),
         pkg.name,
-        pkg.numberOfSessions,
+        remainingClasses,
         startDate,
         endDate,
         session,
         restrictions,
         locationId
       );
+      if (pendingDeduction) {
+        await Member.pushAdjustmentRecord(
+          uid,
+          pkg._id.toString(),
+          new Date(startDate),
+          {
+            date: new Date(),
+            source: "ADMIN",
+            type: "DEDUCT",
+            amount: 1,
+            reason: "Attended a class using this package",
+          },
+          session,
+        );
+      }
       if (io && pkg.coachId) {
         io.to(`coach:${pkg.coachId.toString()}`).emit("coach:newPackage", {
           memberName: user?.name ?? "",
@@ -205,7 +231,7 @@ export class SubscriptionsService {
     promoCode?: string,
     note?: string,
   ) {
-    let orderId: string;
+    let orderId: string | undefined;
     const pkg = await Package.findById(pkgId);
     if (!pkg)
       throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found", {
@@ -252,17 +278,90 @@ export class SubscriptionsService {
       price = discountedPrice;
     }
 
-    if (merchantReferenceId && paymentMethod === "APP") {
-      orderId = await PaymentsService.checkPayment(
-        merchantReferenceId,
-        price,
-      );
-    }
-
     const packageLocationId = await resolveAppPackageLocationId(
       pkg,
       pendingMember,
     );
+
+    // Idempotent APP confirm: payment already saved for this merchant ref
+    if (merchantReferenceId && paymentMethod === "APP") {
+      const existingPayment =
+        await PaymentsService.findPaymentByMerchantReference(
+          merchantReferenceId,
+          "PACKAGE",
+        );
+      if (existingPayment) {
+        const alreadyHasPkg = await Member.hasPackageOnStartDay(
+          uid,
+          pkg._id.toString(),
+          startDate,
+        );
+        if (alreadyHasPkg) {
+          logger.info(
+            `Package subscribe idempotent no-op: uid=${uid} pkg=${pkgId} mref=${merchantReferenceId}`,
+          );
+          return;
+        }
+        logger.info(
+          `Package subscribe idempotent fulfill from payment ${existingPayment._id} mref=${merchantReferenceId}`,
+        );
+        await runInTransaction(async (session: ClientSession) => {
+          await Member.addPackage(
+            uid,
+            pkg._id.toString(),
+            pkg.name,
+            pkg.numberOfSessions,
+            startDate,
+            endDate,
+            session,
+            restrictions,
+            packageLocationId,
+          );
+        });
+        return;
+      }
+
+      try {
+        orderId = await PaymentsService.checkPayment(
+          merchantReferenceId,
+          price,
+        );
+      } catch (err) {
+        if (
+          err instanceof ConflictError &&
+          err.code === "PAYMENT_ALREADY_RECORDED"
+        ) {
+          const recorded = await PaymentsService.findPaymentByMerchantReference(
+            merchantReferenceId,
+            "PACKAGE",
+          );
+          if (recorded) {
+            const alreadyHasPkg = await Member.hasPackageOnStartDay(
+              uid,
+              pkg._id.toString(),
+              startDate,
+            );
+            if (!alreadyHasPkg) {
+              await runInTransaction(async (session: ClientSession) => {
+                await Member.addPackage(
+                  uid,
+                  pkg._id.toString(),
+                  pkg.name,
+                  pkg.numberOfSessions,
+                  startDate,
+                  endDate,
+                  session,
+                  restrictions,
+                  packageLocationId,
+                );
+              });
+            }
+            return;
+          }
+        }
+        throw err;
+      }
+    }
 
     await runInTransaction(async (session: ClientSession) => {
       await SubscriptionsService.assertNoDuplicateMemberPackage(
@@ -280,6 +379,30 @@ export class SubscriptionsService {
           session,
         );
       }
+
+      // Concurrent confirm may have saved payment already
+      if (merchantReferenceId && paymentMethod === "APP") {
+        const racePayment = await Payment.findOne({
+          merchantReferenceId,
+          purpose: "PACKAGE",
+          isRefunded: { $ne: true },
+        }).session(session);
+        if (racePayment) {
+          await Member.addPackage(
+            uid,
+            pkg._id.toString(),
+            pkg.name,
+            pkg.numberOfSessions,
+            startDate,
+            endDate,
+            session,
+            restrictions,
+            packageLocationId,
+          );
+          return;
+        }
+      }
+
       const payment = await PaymentsService.savePayment(
         uid,
         price,
