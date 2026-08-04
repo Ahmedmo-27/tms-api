@@ -215,10 +215,13 @@ export const bookClass = asyncHandler(async function (
   req: Request,
   res: Response
 ): Promise<void> {
-  const { uid, scid } = req.body;
-  await BookingsService.addBooking(uid, scid, true);
+  const { uid, scid, overrideTimeRestrictions } = req.body;
+  if (!uid || !scid) {
+    throw new BadRequestError("INVALID_REQUEST", "uid and scid are required");
+  }
   await assertSessionAccess(req, scid);
-  await BookingsService.addBooking(uid, scid);
+  const isAdminOverride = overrideTimeRestrictions === true;
+  await BookingsService.addBooking(uid, scid, isAdminOverride);
   new SuccessResponse("Class Booked!").send(res);
 });
 
