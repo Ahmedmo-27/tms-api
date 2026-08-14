@@ -27,7 +27,7 @@ import connectDB from "../config/db";
 import User from "../models/user";
 import Member from "../models/member";
 import Package, { getPackageEndDate } from "../models/package";
-import Payment from "../models/payment";
+import Payment, { IPayment } from "../models/payment";
 import ScheduledClass from "../models/scheduledClass";
 import Location from "../models/location";
 import { runInTransaction } from "../utils/transaction";
@@ -285,7 +285,7 @@ async function recoverDropIn(opts: {
   }
 
   await runInTransaction(async (session) => {
-    let payment = byOrder;
+    let payment: IPayment | null = byOrder;
     if (!payment) {
       payment = await PaymentsService.savePayment(
         opts.uid,
@@ -312,7 +312,7 @@ async function recoverDropIn(opts: {
       await Member.saveDropIn(
         opts.uid,
         opts.scId,
-        (payment!._id as Types.ObjectId).toString(),
+        (payment._id as Types.ObjectId).toString(),
         session,
       );
       console.log(`[OK] Member drop-in booking saved`);
@@ -327,8 +327,8 @@ async function recoverDropIn(opts: {
 
     if (opts.syncErp && !byOrder) {
       try {
-        await sendPaymentToRentalSystem(payment!);
-        console.log(`[OK] ERP sync attempted for payment ${payment!._id}`);
+        await sendPaymentToRentalSystem(payment);
+        console.log(`[OK] ERP sync attempted for payment ${payment._id}`);
       } catch (erpErr) {
         console.error(
           `[WARN] ERP sync failed (payment/booking still saved):`,
@@ -578,7 +578,7 @@ async function main() {
         }
 
         await runInTransaction(async (session) => {
-          let payment = existingPayment;
+          let payment: IPayment | null = existingPayment;
           if (!payment) {
             payment = await PaymentsService.savePayment(
               SALLY.uid,
