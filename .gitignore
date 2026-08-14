@@ -13,3 +13,4 @@ src/tests
 migration/
 dev.env
 prod.env
+tmp-*

@@ -102,7 +102,7 @@ export const getClass = asyncHandler(async function (
     query._id = cid;
   }
   if (title) {
-    query.title = { $regex: title, $options: "i" };
+    query.title = { $regex: escapeRegex(String(title)), $options: "i" };
   }
   if (category) {
     query.category = category;

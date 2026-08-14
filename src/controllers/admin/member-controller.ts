@@ -6,6 +6,7 @@ import { SuccessResponse } from "../../core/ApiResponse";
 import asyncHandler from "../../utils/asyncHandler";
 import { SubscriptionsService } from "../../services/subscriptions-service";
 import { runInTransaction } from "../../utils/transaction";
+import { escapeRegex } from "../../utils/escapeRegex";
 
 export const addMember = asyncHandler(async function (
   req: Request,
@@ -53,13 +54,13 @@ export const getMember = asyncHandler(async function (
     userQuery._id = uid;
   }
   if (name) {
-    userQuery.name = { $regex: name, $options: "i" };
+    userQuery.name = { $regex: escapeRegex(String(name)), $options: "i" };
   }
   if (phone) {
-    userQuery.phoneNumber = { $regex: phone, $options: "i" };
+    userQuery.phoneNumber = { $regex: escapeRegex(String(phone)), $options: "i" };
   }
 
-  const users = await User.find(userQuery);
+  const users = await User.find(userQuery).select("_id");
   if (!users || users.length === 0) {
     new SuccessResponse("No members found", { members: [], total: 0 }).send(res);
     return;
@@ -78,7 +79,7 @@ export const getMember = asyncHandler(async function (
 
   let [members, total] = await Promise.all([
     Member.find(memberQuery)
-      .populate("uid")
+      .populate({ path: "uid", select: "-password -tokens -resetCode -fcmTokens" })
       .populate({ path: "packages.pkgId" })
       .populate({ path: "ptAttendance.pkgId" })
       .sort({ createdAt: -1 })

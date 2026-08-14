@@ -186,6 +186,10 @@ PackageSchema.static(
   }
 );
 
+PackageSchema.index({ coachId: 1 });
+PackageSchema.index({ locationId: 1 });
+PackageSchema.index({ name: 1 });
+
 const Package = mongoose.model<IPackage, IPackageModel>(
   "Package",
   PackageSchema

@@ -20,7 +20,7 @@ export const getPackage = asyncHandler(async function (
   const { name, category, coachId } = req.query;
   const query: any = {};
   if (name) {
-    query.name = { $regex: name, $options: "i" };
+    query.name = { $regex: String(name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" };
   }
   if (category) {
     query.category = category;

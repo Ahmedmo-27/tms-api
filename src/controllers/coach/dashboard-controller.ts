@@ -10,14 +10,14 @@ import User from "../../models/user";
 
 /**
  * GET /api/coach/clients
- * Returns the deduplicated list of members linked to the authenticated coach
- * via ScheduledClass documents.
+ * Returns PT clients assigned to the authenticated coach.
+ * Scheduled-class bookings are not included.
  *
  * Requirements: 5.1, 5.2, 5.3
  */
 export const getClients = asyncHandler(async (req: Request, res: Response) => {
   const coachReq = req as CoachAuthRequest;
-  const { page, limit, search, filter, type } = req.query;
+  const { page, limit, search, filter, type, status, alert } = req.query;
   
   const options = {
     page: page ? parseInt(page as string, 10) : 1,
@@ -25,6 +25,8 @@ export const getClients = asyncHandler(async (req: Request, res: Response) => {
     search: search as string | undefined,
     filter: filter as string | undefined,
     type: type as string | undefined,
+    status: status as string | undefined,
+    alert: alert as string | undefined,
   };
 
   const paginatedClients = await CoachService.getClients(coachReq.coachDocId, options);

@@ -33,6 +33,9 @@ export interface ClientResponseDto {
   phoneNumber: string;
   source: string[];
   activePackagesCount: number;
+  remainingClasses: number | null;
+  daysUntilExpiry: number | null;
+  nearestExpiryDate: string | null;
 }
 
 export interface ClientListResponseDto {
@@ -67,6 +70,7 @@ export interface ScheduleSessionDto {
   endTime: string;
   capacity: number;
   bookedCount: number;
+  location: string | null;
   clients: CalendarClientDto[];
 }
 
