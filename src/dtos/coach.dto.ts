@@ -88,6 +88,7 @@ export interface MemberPackageResponseDto {
   pkgStartDate: Date;
   pkgEndDate: Date;
   remainingClasses: number;
+  totalClasses?: number;
   status: string;
   isExpired: boolean;
   daysUntilExpiry: number;
@@ -99,10 +100,72 @@ export interface MemberPackageListResponseDto {
 }
 
 export interface NewPackageEventDto {
+  memberId: string;
   memberName: string;
   packageName: string;
   classesTotal: number;
   createdAt: string;
+}
+
+export interface CoachMeDto {
+  name: string;
+  email: string;
+  phoneNumber: string;
+  branchName: string | null;
+  branchLocation: string | null;
+  hasPtSessions: boolean;
+  hasScheduledClasses: boolean;
+}
+
+export interface TodaySessionSummaryDto {
+  scheduledClassId: string;
+  classTitle: string;
+  category: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  capacity: number;
+  bookedCount: number;
+}
+
+export interface TodayPtAlertDto {
+  memberId: string;
+  name: string;
+  remainingClasses: number;
+  daysUntilExpiry: number;
+  packageName: string;
+}
+
+export interface TodaySummaryDto {
+  nextSession: TodaySessionSummaryDto | null;
+  todaySessions: TodaySessionSummaryDto[];
+  scans: {
+    successCount: number;
+    failedCount: number;
+    willPayCount: number;
+  };
+  tickets: { openCount: number };
+  ptAlerts: TodayPtAlertDto[];
+  unreadNotifications: number;
+}
+
+export interface CoachNotificationDto {
+  id: string;
+  memberId: string;
+  memberName: string;
+  packageName: string;
+  classesTotal: number;
+  createdAt: string;
+  read: boolean;
+}
+
+export interface DeductionHistoryItemDto {
+  id: string;
+  reason: string;
+  sessionDate: string;
+  classesRemainingAfter: number;
+  createdAt: string;
+  pkgId?: string;
 }
 
 // ---------------------------------------------------------------------------

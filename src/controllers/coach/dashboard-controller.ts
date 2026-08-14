@@ -6,6 +6,7 @@ import { CoachAuthRequest } from "../../middlewares/coach.middleware";
 import { DeductSessionRequestDto } from "../../dtos/coach.dto";
 import { startOfWeek } from "date-fns";
 import { BadRequestError } from "../../core/ApiError";
+import User from "../../models/user";
 
 /**
  * GET /api/coach/clients
@@ -40,8 +41,16 @@ export const getClients = asyncHandler(async (req: Request, res: Response) => {
 export const getMemberPackages = asyncHandler(async (req: Request, res: Response) => {
   const coachReq = req as CoachAuthRequest;
   const packages = await CoachService.getMemberPackages(coachReq.coachDocId, req.params.memberId);
+  const user = await User.findById(req.params.memberId).select("name phoneNumber");
   const message = packages.length > 0 ? "Packages found" : "No packages found";
-  return new SuccessResponse(message, { packages }).send(res);
+  return new SuccessResponse(message, {
+    packages,
+    member: {
+      memberId: req.params.memberId,
+      name: user?.name ?? "",
+      phoneNumber: user?.phoneNumber ?? "",
+    },
+  }).send(res);
 });
 
 /**
@@ -116,4 +125,31 @@ export const getPtAttendance = asyncHandler(async (req: Request, res: Response) 
 
   const ptAttendance = await CoachService.getPtAttendance(coachReq.coachDocId, date);
   return new SuccessResponse("PT attendance fetched", ptAttendance).send(res);
+});
+
+export const getToday = asyncHandler(async (req: Request, res: Response) => {
+  const coachReq = req as CoachAuthRequest;
+  const summary = await CoachService.getToday(coachReq.coachDocId, coachReq.coachId);
+  return new SuccessResponse("Today summary", summary).send(res);
+});
+
+export const getNotifications = asyncHandler(async (req: Request, res: Response) => {
+  const coachReq = req as CoachAuthRequest;
+  const notifications = await CoachService.getNotifications(coachReq.coachDocId);
+  return new SuccessResponse("Notifications fetched", { notifications }).send(res);
+});
+
+export const markNotificationsRead = asyncHandler(async (req: Request, res: Response) => {
+  const coachReq = req as CoachAuthRequest;
+  await CoachService.markAllNotificationsRead(coachReq.coachDocId);
+  return new SuccessResponse("Notifications marked read", {}).send(res);
+});
+
+export const getDeductionHistory = asyncHandler(async (req: Request, res: Response) => {
+  const coachReq = req as CoachAuthRequest;
+  const deductions = await CoachService.getDeductionHistory(
+    coachReq.coachDocId,
+    req.params.memberId,
+  );
+  return new SuccessResponse("Deductions fetched", { deductions }).send(res);
 });

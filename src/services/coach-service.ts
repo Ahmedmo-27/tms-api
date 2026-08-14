@@ -6,12 +6,31 @@ import DeductionLog from "../models/deductionLog";
 import Class from "../models/class";
 import Coach, { ICoach } from "../models/coach";
 import DailyAttendance from "../models/dailyAttendance";
+import CoachNotification from "../models/coachNotification";
+import Ticket from "../models/ticket";
+import User from "../models/user";
+import Location from "../models/location";
 import { BadRequestError, ForbiddenError, NotFoundError } from "../core/ApiError";
-import { ClientResponseDto, PaginatedClientsResponseDto, DeductSessionRequestDto, DeductSessionResponseDto, MemberPackageResponseDto, ScheduleResponseDto, mapDeductSessionResponseDto, mapMemberPackageResponseDto } from "../dtos/coach.dto";
+import {
+  ClientResponseDto,
+  PaginatedClientsResponseDto,
+  DeductSessionRequestDto,
+  DeductSessionResponseDto,
+  MemberPackageResponseDto,
+  ScheduleResponseDto,
+  CoachMeDto,
+  TodaySummaryDto,
+  TodaySessionSummaryDto,
+  TodayPtAlertDto,
+  CoachNotificationDto,
+  DeductionHistoryItemDto,
+  mapDeductSessionResponseDto,
+  mapMemberPackageResponseDto,
+} from "../dtos/coach.dto";
 import { runInTransaction } from "../utils/transaction";
-import { addDays, format } from "date-fns";
-import { formatInTimeZone } from "date-fns-tz";
-import { isSameCairoDay } from "../utils/timezone";
+import { addDays, format, startOfWeek } from "date-fns";
+import { formatInTimeZone, fromZonedTime, toZonedTime } from "date-fns-tz";
+import { CAIRO_TZ, cairoDateKey, isSameCairoDay } from "../utils/timezone";
 
 export class CoachService {
   static async getCoachDocumentByUserId(userId: Types.ObjectId): Promise<ICoach | null> {
@@ -32,10 +51,13 @@ export class CoachService {
     // Source 1: PT clients
     const ptPackages = await Package.find({ coachId: coachDocId });
     const ptPkgIds = ptPackages.map(p => p._id);
-    const ptMembers = await Member.find({ "packages.pkgId": { $in: ptPkgIds } }).populate<{ uid: any }>("uid");
+    const ptMembers = await Member.find({ "packages.pkgId": { $in: ptPkgIds } }).populate<{ uid: any }>({
+      path: "uid",
+      select: "-password -tokens -resetCode -fcmTokens",
+    });
 
     // Source 2: Group session clients (skipped when PT-only is requested)
-    const groupMembers = [];
+    const groupMembers: typeof ptMembers = [];
     if (!ptOnly) {
       const classes = await ScheduledClass.find({ coachId: coachDocId });
       const groupUidSet = new Set<string>();
@@ -44,9 +66,15 @@ export class CoachService {
           groupUidSet.add(booking.uid.toString());
         }
       }
-      for (const uidStr of groupUidSet) {
-        const member = await Member.findOne({ uid: new Types.ObjectId(uidStr) }).populate<{ uid: any }>("uid");
-        if (member && member.uid) groupMembers.push(member);
+      const groupUids = Array.from(groupUidSet).map((id) => new Types.ObjectId(id));
+      if (groupUids.length > 0) {
+        const batch = await Member.find({ uid: { $in: groupUids } }).populate<{ uid: any }>({
+          path: "uid",
+          select: "-password -tokens -resetCode -fcmTokens",
+        });
+        for (const member of batch) {
+          if (member && member.uid) groupMembers.push(member);
+        }
       }
     }
 
@@ -192,12 +220,14 @@ export class CoachService {
     const allowedPkgIdSet = new Set<string>();
     const packageCategoryMap = new Map<string, string>();
     const packageNameMap = new Map<string, string>();
+    const packageSessionsMap = new Map<string, number>();
 
     for (const pkg of packagesInfo) {
       if (!pkg.coachId || pkg.coachId.toString() === coachDocId.toString()) {
         allowedPkgIdSet.add(pkg._id.toString());
         packageCategoryMap.set(pkg._id.toString(), pkg.category);
         packageNameMap.set(pkg._id.toString(), pkg.name);
+        packageSessionsMap.set(pkg._id.toString(), pkg.numberOfSessions);
         if (pkg.coachId && pkg.coachId.toString() === coachDocId.toString()) {
           hasPtPackage = true;
         }
@@ -225,7 +255,8 @@ export class CoachService {
       return { 
         ...dto, 
         name: pkgName || dto.name, 
-        isPtPackage: category === "PERSONAL_TRAINING" 
+        isPtPackage: category === "PERSONAL_TRAINING",
+        totalClasses: packageSessionsMap.get(pkg.pkgId.toString()),
       };
     });
   }
@@ -453,6 +484,7 @@ export class CoachService {
       const scans = sc.scans.map((scan: any) => {
         const user = scan.uid as any; // populated User
         return {
+          memberId: user?._id?.toString() ?? "",
           member: user?.name ?? "Unknown",
           phone:  user?.phoneNumber ?? "",
           time:   scan.scanTime.toISOString(),
@@ -507,6 +539,7 @@ export class CoachService {
       if (!coachPkgNames.has(entry.method)) continue;
       const user = entry.uid as any; // populated User
       result.push({
+        memberId: user?._id?.toString() ?? "",
         member: user?.name ?? "Unknown",
         phone:  user?.phoneNumber ?? "",
         time:   entry.time.toISOString(),
@@ -516,5 +549,212 @@ export class CoachService {
     }
 
     return result;
+  }
+
+  static async getMe(
+    coachUserId: Types.ObjectId,
+    coachDocId: Types.ObjectId,
+  ): Promise<CoachMeDto> {
+    const user = await User.findById(coachUserId).select(
+      "name email phoneNumber locationId",
+    );
+    if (!user) {
+      throw new NotFoundError("USER_NOT_FOUND", "Coach user not found");
+    }
+
+    let branchName: string | null = null;
+    let branchLocation: string | null = null;
+    if (user.locationId) {
+      const location = await Location.findById(user.locationId);
+      if (location) {
+        branchName = location.branchName;
+        branchLocation = location.location;
+      }
+    }
+
+    const [ptCount, classCount] = await Promise.all([
+      Package.countDocuments({ coachId: coachDocId }),
+      ScheduledClass.countDocuments({ coachId: coachDocId }),
+    ]);
+
+    return {
+      name: user.name ?? "",
+      email: user.email ?? "",
+      phoneNumber: user.phoneNumber ?? "",
+      branchName,
+      branchLocation,
+      hasPtSessions: ptCount > 0,
+      hasScheduledClasses: classCount > 0,
+    };
+  }
+
+  static async getToday(
+    coachDocId: Types.ObjectId,
+    coachUserId: Types.ObjectId,
+  ): Promise<TodaySummaryDto> {
+    const todayKey = cairoDateKey(new Date());
+    const cairoNow = toZonedTime(new Date(), CAIRO_TZ);
+    const monday = startOfWeek(cairoNow, { weekStartsOn: 1 });
+    const weekStart = new Date(`${format(monday, "yyyy-MM-dd")}T00:00:00.000Z`);
+    const todayUtc = new Date(`${todayKey}T00:00:00.000Z`);
+
+    const [schedule, scans, ptScans, openTicketCount, unreadNotifications, ptAlerts] =
+      await Promise.all([
+        this.getSchedule(coachDocId, weekStart),
+        this.getScans(coachDocId, todayUtc),
+        this.getPtAttendance(coachDocId, todayUtc),
+        Ticket.countDocuments({
+          createdBy: coachUserId,
+          status: { $in: ["pending", "in_progress"] },
+        }),
+        CoachNotification.countDocuments({ coachId: coachDocId, read: false }),
+        this.getPtAlerts(coachDocId),
+      ]);
+
+    const toSummary = (
+      session: {
+        scheduledClassId: string;
+        classTitle: string;
+        category: string;
+        startTime: string;
+        endTime: string;
+        capacity: number;
+        bookedCount: number;
+      },
+      date: string,
+    ): TodaySessionSummaryDto => ({
+      scheduledClassId: session.scheduledClassId,
+      classTitle: session.classTitle,
+      category: session.category,
+      date,
+      startTime: session.startTime,
+      endTime: session.endTime,
+      capacity: session.capacity,
+      bookedCount: session.bookedCount,
+    });
+
+    const todaySessions = (schedule.days.find((d) => d.date === todayKey)?.sessions ?? []).map(
+      (s) => toSummary(s, todayKey),
+    );
+
+    let nextSession: TodaySessionSummaryDto | null = null;
+    const now = new Date();
+    for (const day of schedule.days) {
+      for (const session of day.sessions) {
+        const start = fromZonedTime(`${day.date} ${session.startTime}:00`, CAIRO_TZ);
+        if (start > now) {
+          nextSession = toSummary(session, day.date);
+          break;
+        }
+      }
+      if (nextSession) break;
+    }
+
+    const allScans = [
+      ...scans.flatMap((cls: { scans: { status: string }[] }) => cls.scans),
+      ...ptScans,
+    ];
+
+    return {
+      nextSession,
+      todaySessions,
+      scans: {
+        successCount: allScans.filter((s) => s.status === "SUCCESS").length,
+        failedCount: allScans.filter((s) => s.status === "FAILED").length,
+        willPayCount: allScans.filter((s) => s.status === "WILL_PAY").length,
+      },
+      tickets: { openCount: openTicketCount },
+      ptAlerts,
+      unreadNotifications,
+    };
+  }
+
+  private static async getPtAlerts(
+    coachDocId: Types.ObjectId,
+  ): Promise<TodayPtAlertDto[]> {
+    const ptPackages = await Package.find({
+      coachId: coachDocId,
+      category: "PERSONAL_TRAINING",
+    });
+    if (ptPackages.length === 0) return [];
+
+    const pkgMap = new Map(ptPackages.map((p) => [p._id.toString(), p]));
+    const members = await Member.find({
+      "packages.pkgId": { $in: ptPackages.map((p) => p._id) },
+    }).populate<{ uid: any }>({
+      path: "uid",
+      select: "name",
+    });
+
+    const now = Date.now();
+    const alerts: TodayPtAlertDto[] = [];
+
+    for (const member of members) {
+      if (!member.uid) continue;
+      for (const pkg of member.packages) {
+        const catalog = pkgMap.get(pkg.pkgId.toString());
+        if (!catalog || pkg.status !== "ACTIVE") continue;
+        if (pkg.pkgEndDate.getTime() < now) continue;
+        const daysUntilExpiry = Math.ceil((pkg.pkgEndDate.getTime() - now) / 86400000);
+        if (pkg.remainingClasses > 2 && daysUntilExpiry > 14) continue;
+        alerts.push({
+          memberId: member.uid._id.toString(),
+          name: member.uid.name ?? "",
+          remainingClasses: pkg.remainingClasses,
+          daysUntilExpiry,
+          packageName: catalog.name || pkg.name,
+        });
+      }
+    }
+
+    return alerts.slice(0, 10);
+  }
+
+  static async getNotifications(
+    coachDocId: Types.ObjectId,
+  ): Promise<CoachNotificationDto[]> {
+    const items = await CoachNotification.find({ coachId: coachDocId })
+      .sort({ createdAt: -1 })
+      .limit(50);
+
+    return items.map((n) => ({
+      id: (n._id as Types.ObjectId).toString(),
+      memberId: n.memberId.toString(),
+      memberName: n.memberName,
+      packageName: n.packageName,
+      classesTotal: n.classesTotal,
+      createdAt: n.createdAt.toISOString(),
+      read: n.read,
+    }));
+  }
+
+  static async markAllNotificationsRead(coachDocId: Types.ObjectId): Promise<void> {
+    await CoachNotification.updateMany(
+      { coachId: coachDocId, read: false },
+      { $set: { read: true } },
+    );
+  }
+
+  static async getDeductionHistory(
+    coachDocId: Types.ObjectId,
+    memberId: string,
+  ): Promise<DeductionHistoryItemDto[]> {
+    await this.getMemberPackages(coachDocId, memberId);
+
+    const logs = await DeductionLog.find({
+      coachId: coachDocId,
+      memberId: new Types.ObjectId(memberId),
+    })
+      .sort({ createdAt: -1 })
+      .limit(50);
+
+    return logs.map((log) => ({
+      id: (log._id as Types.ObjectId).toString(),
+      reason: log.reason,
+      sessionDate: log.sessionDate.toISOString(),
+      classesRemainingAfter: log.classesRemainingAfter,
+      createdAt: log.createdAt.toISOString(),
+      pkgId: log.pkgId?.toString(),
+    }));
   }
 }

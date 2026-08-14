@@ -86,15 +86,20 @@ async function fetchTickets(queryParams: {
   search?: string;
   page?: string;
   limit?: string;
+  createdBy?: Types.ObjectId;
 }) {
-  const { status, search, page, limit } = queryParams;
+  const { status, search, page, limit, createdBy } = queryParams;
   const query: Record<string, unknown> = {};
+
+  if (createdBy) {
+    query.createdBy = createdBy;
+  }
 
   if (status && (TICKET_STATUSES as readonly string[]).includes(status)) {
     query.status = status;
   }
   if (search) {
-    const rx = { $regex: search, $options: "i" };
+    const rx = { $regex: escapeRegex(search), $options: "i" };
     query.$or = [
       { name: rx },
       { phone: rx },
@@ -247,11 +252,13 @@ export const updateTicketStatus = asyncHandler(
 
 export const getCoachTickets = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
+    const coachReq = req as CoachAuthRequest;
     const result = await fetchTickets({
       status: req.query.status as string | undefined,
       search: req.query.search as string | undefined,
       page: req.query.page as string | undefined,
       limit: req.query.limit as string | undefined,
+      createdBy: coachReq.coachId,
     });
     new SuccessResponse("Tickets fetched", result).send(res);
   }

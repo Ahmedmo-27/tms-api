@@ -16,6 +16,7 @@ import { Server as SocketIOServer } from "socket.io";
 import { resolveOpenGymPaymentNote } from "../utils/open-gym-payment-purpose";
 import { normalizePhoneNumber } from "../utils/phone";
 import { cairoDayRange, toStoredPackageDate } from "../utils/timezone";
+import CoachNotification from "../models/coachNotification";
 import {
   assertMatchaPackageForPendingUser,
   ensureMemberForPendingPurchase,
@@ -206,15 +207,32 @@ export class SubscriptionsService {
           session,
         );
       }
-      if (io && pkg.coachId) {
-        io.to(`coach:${pkg.coachId.toString()}`).emit("coach:newPackage", {
+      if (pkg.coachId) {
+        const payload = {
+          memberId: uid,
           memberName: user?.name ?? "",
           packageName: pkg.name,
           classesTotal: pkg.numberOfSessions,
           createdAt: new Date().toISOString(),
-        });
-      } else if (!io) {
-        logger.warn("coach:newPackage skipped — io instance unavailable");
+        };
+        await CoachNotification.create(
+          [
+            {
+              coachId: pkg.coachId,
+              memberId: new Types.ObjectId(uid),
+              memberName: payload.memberName,
+              packageName: payload.packageName,
+              classesTotal: payload.classesTotal,
+              read: false,
+            },
+          ],
+          { session },
+        );
+        if (io) {
+          io.to(`coach:${pkg.coachId.toString()}`).emit("coach:newPackage", payload);
+        } else {
+          logger.warn("coach:newPackage skipped — io instance unavailable");
+        }
       }
       if (pkg.category !== "PERSONAL_TRAINING") {
         await sendPaymentToRentalSystem(payment);
