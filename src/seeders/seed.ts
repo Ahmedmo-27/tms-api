@@ -64,9 +64,13 @@ const seed = async () => {
 
     // ========== SEED ADMIN USER ==========
     console.log("\n=== Seeding Admin User ===");
+    const seedPassword = process.env.SEED_DEFAULT_PASSWORD?.trim();
+    if (!seedPassword || seedPassword.length < 10) {
+      throw new Error("Set SEED_DEFAULT_PASSWORD in env (min 10 characters)");
+    }
     const admin = new User({
       email: "admin@themindspace.com",
-      password: "12345678",
+      password: seedPassword,
       name: "Admin User",
       phoneNumber: "01200000000",
       role: "admin",
@@ -78,10 +82,10 @@ const seed = async () => {
     console.log("\n=== Seeding FD User ===");
     const fd = new User({
       email: "fd@themindspace.com",
-      password: "12345678",
+      password: seedPassword,
       name: "Facility Director",
       phoneNumber: "01200000001",
-      role: "fd",
+      role: "management",
     });
     await fd.save();
     console.log(`✓ Created FD: ${fd.name} (${fd.email})`);
@@ -95,7 +99,7 @@ const seed = async () => {
         email:
           memberData.email ||
           `${memberData.name.replace(/\s+/g, "").toLowerCase()}${randomNum}@themindspace.com`,
-        password: "12345678",
+        password: seedPassword,
         name: memberData.name,
         phoneNumber: memberData.phoneNumber,
         role: "member",

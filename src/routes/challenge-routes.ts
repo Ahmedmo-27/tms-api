@@ -28,19 +28,22 @@ const router = Router();
 
 router.use(authenticateUser);
 
+// Catalog write — management only (before member gate)
+router.post("/places", authorizeUser(["management"]), addCharityPlace);
+
+router.use(authorizeUser(["member", "user"]));
+
 // ============= SUBSCRIBE TO CHALLENGE =============
 router.post("/subscribe", subToChallenge);
 router.use(checkChallengeSubscription());
 
 // ============= INIT =============
 router.post("/init", initMemberChallengeRecord);
-router.post("/initRun", initRunChallengeRecord)
-router.post("/initWorkout", initWorkoutChallenge)
-
+router.post("/initRun", initRunChallengeRecord);
+router.post("/initWorkout", initWorkoutChallenge);
 
 // ============= GET =============
 router.get("/record", getMemberChallengeRecord);
-
 
 // ============= RUN CHALLENGE =============
 router.post("/run/update", updateRun);
@@ -56,7 +59,6 @@ router.post("/water-intake/update", updateWaterIntake);
 router.post("/water-intake/reset", resetWaterIntake);
 
 // ============= CHARITY =============
-router.post("/places", addCharityPlace);
 router.get("/places", getAllCharityPlaces);
 router.post("/charity/update", updateCharity);
 router.post("/charity/reset", resetCharity);

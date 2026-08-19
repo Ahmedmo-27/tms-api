@@ -453,6 +453,10 @@ ScheduledClassSchema.method(
   },
 );
 
+ScheduledClassSchema.index({ coachId: 1 });
+ScheduledClassSchema.index({ startTime: 1 });
+ScheduledClassSchema.index({ locationId: 1, startTime: 1 });
+
 const ScheduledClass = mongoose.model<IScheduledClass, IScheduledClassModel>(
   "ScheduledClass",
   ScheduledClassSchema,

@@ -3,6 +3,7 @@ import { Types, ClientSession } from "mongoose";
 import asyncHandler from "../../utils/asyncHandler";
 import { AuthRequest } from "../../middlewares/auth.middleware";
 import { BadRequestError, NotFoundError } from "../../core/ApiError";
+import { SuccessResponse } from "../../core/ApiResponse";
 import { runInTransaction } from "../../utils/transaction";
 import Refund from "../../models/refund";
 import Payment from "../../models/payment";
@@ -344,26 +345,21 @@ export const searchMembers = asyncHandler(
     const query = (req.query.name as string) ?? "";
 
     if (query.length < 2) {
-      res.status(200).json({
-        statusCode: 200,
-        message: "Members Found!",
-        data: [],
-      });
+      new SuccessResponse("Members Found!", []).send(res);
       return;
     }
 
     const members = await User.find({
-      name: { $regex: query, $options: "i" },
+      name: { $regex: query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" },
       role: "member",
     })
       .select("_id name phoneNumber email")
       .limit(10);
 
-    res.status(200).json({
-      statusCode: 200,
-      message: "Members Found!",
-      data: members.map((m) => mapMemberSearchResultDto(m)),
-    });
+    new SuccessResponse(
+      "Members Found!",
+      members.map((m) => mapMemberSearchResultDto(m)),
+    ).send(res);
   }
 );
 

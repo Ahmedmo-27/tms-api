@@ -16,6 +16,6 @@ router.use("/challenge", challengeRoutes)
 router.use("/feed", feedRoutes)
 router.use("/external", exposedRoutes);
 router.use("/coach", coachRoutes);
-router.use("/api/coach", coachRoutes);
+// /api/coach is available via app.use("/api", router) → /api/coach (no double mount)
 
 export default router;

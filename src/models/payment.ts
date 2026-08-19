@@ -97,6 +97,10 @@ const PaymentSchema = new Schema({
   },
 });
 
+PaymentSchema.index({ paymentTime: -1 });
+PaymentSchema.index({ locationId: 1, paymentTime: -1 });
+PaymentSchema.index({ uid: 1 });
+
 const Payment = mongoose.model<IPayment>("Payment", PaymentSchema);
 
 export default Payment;

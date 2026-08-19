@@ -28,6 +28,10 @@ type UserRole = "member" | "user" | "admin" | "management" | "branch_admin" | "c
 
 const ADMIN_ROLE_ALIASES: UserRole[] = ["admin", "management", "branch_admin"];
 
+/**
+ * NOTE: Passing "admin" in allowedRoles expands to management + branch_admin + admin.
+ * Prefer explicit ["management"] or ["management","branch_admin"] when you need precision.
+ */
 function roleIsAllowed(userRole: string, allowedRoles: UserRole[]): boolean {
   const normalizedUserRole =
     userRole === "admin" ? "management" : userRole;

@@ -1,45 +1,37 @@
-import { Request, Response, CookieOptions } from "express";
+import { Request, Response } from "express";
 import { Types } from "mongoose";
 import User from "../../models/user";
-import { BadRequestError, ForbiddenError } from "../../core/ApiError";
+import { BadRequestError, ForbiddenError, NotFoundError } from "../../core/ApiError";
 import { SuccessResponse } from "../../core/ApiResponse";
 import asyncHandler from "../../utils/asyncHandler";
 import Package from "../../models/package";
 import Coach from "../../models/coach";
 import ScheduledClass from "../../models/scheduledClass";
+import { authCookieOptions } from "../../utils/authCookies";
+import { CoachService } from "../../services/coach-service";
+import { CoachAuthRequest } from "../../middlewares/coach.middleware";
 
 export const coachLogin = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const { phoneNumber, password } = req.body;
     const deviceType = req.headers["x-device-type"] ? "mobile" : "web";
 
-    // Validate required fields before any DB call (Requirement 3.1)
     if (!phoneNumber || !password) {
       throw new BadRequestError("MISSING_FIELDS", "Phone number and password are required");
     }
 
     const cleanPhoneNumber = phoneNumber.replace(/\s/g, "");
 
-    // Authenticate user — propagates NotFoundError on invalid credentials (Requirement 3.4)
     const user = await User.findByCredentials(cleanPhoneNumber, password);
 
-    // Verify the user has the coach role (Requirement 3.3)
     if (user.role !== "coach") {
       throw new ForbiddenError("INSUFFICIENT_PERMISSIONS", "Access restricted to coach accounts");
     }
 
-    // Generate token only after role check passes (Requirement 3.2, 3.5)
     const token = await user.generateAuthToken(deviceType);
 
     if (deviceType === "web") {
-      const isProd = process.env.NODE_ENV === "production";
-      const cookieOptions: CookieOptions = {
-        httpOnly: true,
-        secure: isProd,
-        sameSite: isProd ? ("none" as "none" | "lax" | "strict") : ("lax" as "none" | "lax" | "strict"),
-        maxAge: 30 * 24 * 60 * 60 * 1000,
-      };
-      res.cookie("token", token, cookieOptions);
+      res.cookie("token", token, authCookieOptions());
     }
 
     let hasPtSessions = false;
@@ -48,7 +40,7 @@ export const coachLogin = asyncHandler(
     if (coachDoc) {
       const ptPackagesCount = await Package.countDocuments({ coachId: coachDoc._id as Types.ObjectId });
       hasPtSessions = ptPackagesCount > 0;
-      
+
       const scheduledClassesCount = await ScheduledClass.countDocuments({ coachId: coachDoc._id as Types.ObjectId });
       hasScheduledClasses = scheduledClassesCount > 0;
     }
@@ -56,8 +48,54 @@ export const coachLogin = asyncHandler(
     new SuccessResponse("Login successful", {
       token,
       coachId: coachDoc ? (coachDoc._id as Types.ObjectId).toString() : (user._id as Types.ObjectId).toString(),
+      name: user.name,
       hasPtSessions,
       hasScheduledClasses,
     }).send(res);
   }
+);
+
+export const getCoachMe = asyncHandler(async (req: Request, res: Response) => {
+  const coachReq = req as CoachAuthRequest;
+  const profile = await CoachService.getMe(coachReq.coachId, coachReq.coachDocId);
+  return new SuccessResponse("Coach profile", profile).send(res);
+});
+
+export const changeCoachPassword = asyncHandler(
+  async (req: Request, res: Response): Promise<void> => {
+    const coachReq = req as CoachAuthRequest;
+    const { currentPassword, newPassword } = req.body ?? {};
+
+    if (!currentPassword || !newPassword) {
+      throw new BadRequestError(
+        "MISSING_FIELDS",
+        "Current password and new password are required",
+      );
+    }
+
+    if (typeof newPassword !== "string" || newPassword.length < 10) {
+      throw new BadRequestError(
+        "WEAK_PASSWORD",
+        "Password must be at least 10 characters",
+      );
+    }
+
+    const user = await User.findById(coachReq.coachId);
+    if (!user) {
+      throw new NotFoundError("USER_NOT_FOUND", "User not found");
+    }
+
+    const matches = await user.comparePassword(String(currentPassword));
+    if (!matches) {
+      throw new BadRequestError(
+        "INVALID_CREDENTIALS",
+        "Current password is incorrect",
+      );
+    }
+
+    user.password = String(newPassword);
+    await user.save();
+
+    new SuccessResponse("Password updated", {}).send(res);
+  },
 );
