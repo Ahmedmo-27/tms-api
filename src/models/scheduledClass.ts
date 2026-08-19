@@ -67,6 +67,10 @@ interface IScheduledClassStatics {
     uid: string,
     session?: ClientSession,
   ): Promise<void>;
+  removeFailedMemberScan(
+    scid: string,
+    uid: string,
+  ): Promise<void>;
   addMemberToWaitlistOverride(scid: string, uid: string): Promise<void>;
   removeMemberFromWaitlist(scid: string, uid: string): Promise<void>;
   assertOnWaitlist(scid: string, uid: string): Promise<void>;
@@ -374,6 +378,26 @@ ScheduledClassSchema.static(
         },
       },
       { session },
+    );
+  },
+);
+
+ScheduledClassSchema.static(
+  "removeFailedMemberScan",
+  async function (
+    scid: string,
+    uid: string,
+  ): Promise<void> {
+    await this.updateOne(
+      { _id: new Types.ObjectId(scid) },
+      {
+        $pull: {
+          scans: {
+            uid: new Types.ObjectId(uid),
+            status: false,
+          },
+        },
+      },
     );
   },
 );

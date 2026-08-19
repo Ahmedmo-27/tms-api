@@ -52,12 +52,9 @@ const NonUserBookingSchema: Schema<INonUserBooking, NonUserBookingModel> =
     },
     phoneNumber: {
       type: String,
-      required: true,
+      required: false,
+      default: "",
       trim: true,
-      match: [
-        /^\d{11}$/,
-        "Please enter a valid phone number (11 digits without spaces)",
-      ],
     },
     status: {
       type: String,

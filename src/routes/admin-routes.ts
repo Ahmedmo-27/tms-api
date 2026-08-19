@@ -29,10 +29,12 @@ import {
   getNonUserBookings,
   recordNonUserAttendance,
   cancelNonUserBooking,
+  updateNonUserBookingPhone,
   addWalkIn,
   saveNonUserPayment,
   manualRecordMemberAttendance,
   manualRemoveMemberAttendance,
+  removeFailedScan,
   overrideAddToWaitlist,
   overrideRemoveFromWaitlist,
   getWaitlistedMembers,
@@ -253,6 +255,13 @@ adminRoutes.delete(
   manualRemoveMemberAttendance
 );
 
+adminRoutes.delete(
+  "/attendance/failed-scan",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  removeFailedScan
+);
+
 adminRoutes.post(
   "/bookDropIn",
   authenticateUser,
@@ -328,6 +337,13 @@ adminRoutes.post(
   authenticateUser,
   authorizeUser(["management", "branch_admin"]),
   cancelNonUserBooking
+)
+
+adminRoutes.patch(
+  "/nonUserBooking/:bookingId/phone",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  updateNonUserBookingPhone
 )
 
 adminRoutes.post(

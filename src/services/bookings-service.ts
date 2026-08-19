@@ -491,6 +491,10 @@ export class BookingsService {
     });
   }
 
+  static async removeFailedClassScan(uid: string, scid: string) {
+    await ScheduledClass.removeFailedMemberScan(scid, uid);
+  }
+
   static async recordPtAttendance(
     uid: string,
     io: Server,

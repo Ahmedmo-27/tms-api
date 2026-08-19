@@ -13,7 +13,8 @@ import { SuccessResponse } from "../../core/ApiResponse";
 import asyncHandler from "../../utils/asyncHandler";
 import { BookingsService } from "../../services/bookings-service";
 import { SchedulerService } from "../../services/scheduler-service";
-import { INonUserBooking } from "../../models/nonUserBookings";
+import NonUserBooking, { INonUserBooking } from "../../models/nonUserBookings";
+import Payment from "../../models/payment";
 import { Types } from "mongoose";
 import { runInTransaction } from "../../utils/transaction";
 import { ClientSession } from "mongoose";
@@ -404,7 +405,7 @@ export const addWalkIn = asyncHandler(async function (
   res: Response
 ): Promise<void> {
   const { name, phoneNumber, scid, paymentMethod, amount, paymentDate } = req.body;
-  if (!name || !phoneNumber || !scid)
+  if (!name || !scid)
     throw new BadRequestError("INVALID_REQUEST", "Invalid request");
   await assertSessionAccess(req, scid);
   const branchLocationId = resolveLocationIdForWrite(req);
@@ -412,7 +413,7 @@ export const addWalkIn = asyncHandler(async function (
   await runInTransaction(async (session: ClientSession) => {
     const booking: INonUserBooking = await BookingsService.addNonUserBooking(
       name,
-      phoneNumber,
+      phoneNumber || "",
       scid,
       session
     );
@@ -436,6 +437,32 @@ export const addWalkIn = asyncHandler(async function (
   });
   if(!finalBooking) throw new InternalError("INTERNAL_ERROR", "UnknownError")
   new SuccessResponse("Class Booked!", finalBooking).send(res);
+});
+
+export const updateNonUserBookingPhone = asyncHandler(async function (
+  req: Request,
+  res: Response
+): Promise<void> {
+  const { bookingId } = req.params;
+  const { phoneNumber } = req.body;
+  if (!bookingId)
+    throw new BadRequestError("INVALID_BOOKING_ID", "Booking Id is invalid");
+  if (!phoneNumber || !/^\d{11}$/.test(phoneNumber.trim()))
+    throw new BadRequestError("INVALID_PHONE", "Please enter a valid 11-digit phone number");
+  const trimmedPhone = phoneNumber.trim();
+  const booking = await NonUserBooking.findByIdAndUpdate(
+    bookingId,
+    { phoneNumber: trimmedPhone },
+    { new: true }
+  );
+  if (!booking)
+    throw new NotFoundError("BOOKING_NOT_FOUND", "Booking not found");
+  if (booking.paymentId) {
+    await Payment.findByIdAndUpdate(booking.paymentId, {
+      nonMemberPhone: trimmedPhone,
+    });
+  }
+  new SuccessResponse("Phone number updated!", booking).send(res);
 });
 
 export const cancelNonUserBooking = asyncHandler(async function (
@@ -472,6 +499,18 @@ export const manualRemoveMemberAttendance = asyncHandler(async function (
   await assertSessionAccess(req, scid);
   await BookingsService.manualRemoveClassAttendance(uid, scid);
   new SuccessResponse("Attendance removed").send(res);
+});
+
+export const removeFailedScan = asyncHandler(async function (
+  req: Request,
+  res: Response
+): Promise<void> {
+  const { uid, scid } = req.body;
+  if (!uid || !scid)
+    throw new BadRequestError("INVALID_REQUEST", "uid and scid are required");
+  await assertSessionAccess(req, scid);
+  await BookingsService.removeFailedClassScan(uid, scid);
+  new SuccessResponse("Failed scan removed").send(res);
 });
 
 export const promoteFromWaitlist = asyncHandler(async function (
