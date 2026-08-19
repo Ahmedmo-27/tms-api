@@ -8,7 +8,7 @@ import { Types } from "mongoose";
 import connectDB from "./config/db";
 import logger from "./config/logger";
 import { syncEmails } from "./services/imap-service";
-import { CORS_ORIGINS } from "./config/corsOrigins";
+import { isAllowedCorsOrigin } from "./config/corsOrigins";
 import User from "./models/user";
 
 const app = require("./app"); // your Express app
@@ -22,7 +22,9 @@ const startServer = async () => {
 
   const io = new SocketIOServer(server, {
     cors: {
-      origin: CORS_ORIGINS,
+      origin: (origin, callback) => {
+        callback(null, isAllowedCorsOrigin(origin));
+      },
       credentials: true,
     },
   });

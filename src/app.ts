@@ -13,7 +13,7 @@ import logger from "./config/logger";
 import { getRequestContext } from "./utils/requestContext";
 import { specs, swaggerUi } from "./config/swagger";
 import cors from "cors";
-import { CORS_ORIGINS } from "./config/corsOrigins";
+import { isAllowedCorsOrigin } from "./config/corsOrigins";
 import { securityHeaders } from "./middlewares/securityHeaders";
 
 const app = express();
@@ -24,7 +24,9 @@ app.use(securityHeaders);
 app.disable("x-powered-by");
 app.use(
   cors({
-    origin: CORS_ORIGINS,
+    origin: (origin, callback) => {
+      callback(null, isAllowedCorsOrigin(origin));
+    },
     credentials: true, // Allow cookies / Authorization headers
   })
 );

@@ -8,3 +8,12 @@ export const CORS_ORIGINS = [
   "https://the-mind-space.com",
   "https://www.the-mind-space.com",
 ];
+
+const LOCAL_DEV_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1):\d+$/;
+
+/** Native apps send no Origin. Flutter web on localhost uses a random port. */
+export function isAllowedCorsOrigin(origin?: string): boolean {
+  if (!origin) return true;
+  if (CORS_ORIGINS.includes(origin)) return true;
+  return LOCAL_DEV_ORIGIN.test(origin);
+}
