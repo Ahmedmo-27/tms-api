@@ -69,18 +69,61 @@ describe("resolveBookingPackageFailure", () => {
 });
 
 describe("bookingPackageErrorMessage", () => {
-  it("names the class when a package does not open it", () => {
+  it("formats member-perspective messages with 'you / your' by default", () => {
+    expect(
+      bookingPackageErrorMessage("NO_PACKAGES_ON_ACCOUNT", "Mat Pilates"),
+    ).toBe("You don't have any packages on your account. Please subscribe to a package before booking.");
+
     expect(
       bookingPackageErrorMessage(
         "PACKAGE_DOES_NOT_OPEN_CLASS",
-        "Mat Pilates 9 am",
+        "Reformer Pilates",
+        { packageNames: ["5 Studio"] },
       ),
-    ).toBe('No active package includes "Mat Pilates 9 am".');
+    ).toBe('None of your active packages ("5 Studio") include "Reformer Pilates".');
+
+    expect(
+      bookingPackageErrorMessage("PACKAGE_EXPIRED", "Mat Pilates", {
+        packageName: "10 Studio",
+        date: "10 Aug 2026",
+      }),
+    ).toBe('Your package "10 Studio" covering "Mat Pilates" expired on 10 Aug 2026.');
+
+    expect(
+      bookingPackageErrorMessage("NO_REMAINING_SESSIONS", "Mat Pilates", {
+        packageName: "10 Studio",
+      }),
+    ).toBe('Your package "10 Studio" covering "Mat Pilates" has 0 remaining sessions.');
+
+    expect(
+      bookingPackageErrorMessage("CLASS_RESTRICTION_REACHED", "Reformer Pilates", {
+        packageName: "1 Month Ultimate Mindspacer",
+        limit: 2,
+      }),
+    ).toBe('You have reached your monthly booking limit (2 sessions) for "Reformer Pilates" under package "1 Month Ultimate Mindspacer".');
   });
 
-  it("keeps a true empty-package message generic", () => {
-    expect(bookingPackageErrorMessage("NO_ACTIVE_PACKAGE_FOUND")).toBe(
-      BOOKING_ERROR_MESSAGES.NO_ACTIVE_PACKAGE_FOUND,
-    );
+  it("formats admin-perspective messages with 'the member / this member'", () => {
+    expect(
+      bookingPackageErrorMessage("NO_PACKAGES_ON_ACCOUNT", "Mat Pilates", {
+        audience: "admin",
+      }),
+    ).toBe("This member has no packages on their account. Please subscribe to a package before booking.");
+
+    expect(
+      bookingPackageErrorMessage(
+        "PACKAGE_DOES_NOT_OPEN_CLASS",
+        "Reformer Pilates",
+        { packageNames: ["5 Studio"], audience: "admin" },
+      ),
+    ).toBe('None of the member\'s active packages ("5 Studio") include "Reformer Pilates".');
+
+    expect(
+      bookingPackageErrorMessage("PACKAGE_EXPIRED", "Mat Pilates", {
+        packageName: "10 Studio",
+        date: "10 Aug 2026",
+        audience: "admin",
+      }),
+    ).toBe('The package "10 Studio" covering "Mat Pilates" expired on 10 Aug 2026.');
   });
 });

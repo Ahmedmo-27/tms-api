@@ -22,6 +22,7 @@ import {
   bookingPackageErrorMessage,
   resolveBookingPackageFailure,
   type BookingPackageSkipReason,
+  type BookingAudience,
 } from "../utils/booking-package-errors";
 import { cairoDayRange } from "../utils/timezone";
 
@@ -103,7 +104,8 @@ interface IMemberstatics {
     points: Number,
     session: ClientSession,
     className: string,
-    attendanceDate: Date
+    attendanceDate: Date,
+    audience?: BookingAudience
   ): Promise<void>;
   saveDropIn(
     uid: string,
@@ -405,7 +407,8 @@ MemberSchema.static(
     points: Number,
     session: ClientSession,
     className: string,
-    attendanceDate: Date
+    attendanceDate: Date,
+    audience: BookingAudience = "member"
   ): Promise<string> {
     logger.info("DATA: ", {
       uid,
@@ -423,7 +426,9 @@ MemberSchema.static(
     if (booking)
       throw new ConflictError(
         "CLASS_ALREADY_BOOKED",
-        "This class is already booked"
+        audience === "admin"
+          ? "This member is already booked for this class"
+          : "You have already booked this class"
       );
 
     const hasAnyPackage = member.packages.length > 0;
@@ -452,6 +457,7 @@ MemberSchema.static(
             bookingPackageErrorMessage("PACKAGE_EXPIRED", className, {
               packageName: expired.name,
               date: dateStr,
+              audience,
             }),
             { className, packageName: expired.name, expiryDate: expired.pkgEndDate }
           );
@@ -465,6 +471,7 @@ MemberSchema.static(
             "NO_REMAINING_SESSIONS",
             bookingPackageErrorMessage("NO_REMAINING_SESSIONS", className, {
               packageName: depleted.name,
+              audience,
             }),
             { className, packageName: depleted.name, remainingClasses: 0 }
           );
@@ -484,6 +491,7 @@ MemberSchema.static(
             bookingPackageErrorMessage("PACKAGE_NOT_YET_ACTIVE", className, {
               packageName: future.name,
               date: dateStr,
+              audience,
             }),
             { className, packageName: future.name, startDate: future.pkgStartDate }
           );
@@ -504,6 +512,7 @@ MemberSchema.static(
         code,
         bookingPackageErrorMessage(code, className, {
           packageNames: activePackageNames,
+          audience,
         }),
         { className, activePackageNames },
       );
@@ -773,6 +782,7 @@ MemberSchema.static(
       bookingPackageErrorMessage(code, className, {
         packageName: firstSkipped?.name,
         date: dateStr,
+        audience,
       }),
       {
         className,
