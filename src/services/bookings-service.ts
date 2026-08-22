@@ -36,6 +36,9 @@ import {
   ensureMemberForPendingPurchase,
   isPendingMember,
 } from "../utils/matcha-branch";
+import { resolveSessionPaymentLocationId } from "../utils/app-package-location";
+import Payment from "../models/payment";
+import { locationIdScalarQuery, locationIdsArrayQuery } from "../utils/location-scope";
 
 /** Records a failed scan; duplicate failed-scan entries are ignored. */
 async function recordFailedClassScan(scid: string, uid: string): Promise<void> {
@@ -131,7 +134,7 @@ export class BookingsService {
       }
     }
 
-    // Apply booking policy restriction (30 mins after class start time)
+    // Members may book until halfway through the session; admins can override
     if (!isAdminOverride && (scheduledClass.cid as any).category !== "WORKSPACE") {
       assertMemberBookingWindow(scheduledClass, (scheduledClass.cid as any)?.title);
     }
@@ -248,17 +251,15 @@ export class BookingsService {
               (d) => d.completed,
             );
 
-            // Save changes in transaction
-            await runInTransaction(async (session: ClientSession) => {
-              await ChallengeRecord.updateWorkoutDay(
-                uid,
-                weekNumber,
-                nextDay.dayNumber,
-                true,
-                (scheduledClass._id as Types.ObjectId).toString(),
-                session,
-              );
-            });
+            // Use the outer booking session — nested transactions cause WriteConflicts
+            await ChallengeRecord.updateWorkoutDay(
+              uid,
+              weekNumber,
+              nextDay.dayNumber,
+              true,
+              (scheduledClass._id as Types.ObjectId).toString(),
+              session,
+            );
           } else {
           }
         }
@@ -480,13 +481,7 @@ export class BookingsService {
         (member.uid as any).name,
         io,
       );
-      await ScheduledClass.addMemberScan(
-        scid,
-        uid,
-        true,
-        session,
-        "MANUAL",
-      );
+      await ScheduledClass.addMemberScan(scid, uid, true, session);
     });
     io.emit("SUCCESS-SCAN", {
       code: "CLASS_ATTENDED",
@@ -502,15 +497,34 @@ export class BookingsService {
     });
   }
 
-  static async recordPtAttendance(uid: string, io: Server) {
+  static async removeFailedClassScan(uid: string, scid: string) {
+    await ScheduledClass.removeFailedMemberScan(scid, uid);
+  }
+
+  static async recordPtAttendance(
+    uid: string,
+    io: Server,
+    locationId?: string,
+  ) {
     const member = await Member.findOne({ uid }).populate({ path: "uid" });
     if (!member)
       throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
+
+    const memberName = (member.uid as any).name ?? "";
+
+    if (locationId) {
+      await BookingsService.assertOpenGymBranchExists(
+        locationId,
+        memberName,
+        io,
+      );
+    }
+
     const pkgs = await Package.find({
       category: "PERSONAL_TRAINING",
     });
     const pkgIds = pkgs.map((p) => p._id.toString());
-    if (!pkgIds) {
+    if (!pkgIds.length) {
       throw new NotFoundError("PACKAGE_NOT_FOUND", "Pt Package not found");
     }
     const pkgName = pkgs[0]?.name ?? "Personal Training";
@@ -524,6 +538,7 @@ export class BookingsService {
           session,
           "FAILED",
           io,
+          locationId,
         );
         throw new ForbiddenError(
           "NO_ACTIVE_PACKAGE_FOUND",
@@ -539,12 +554,14 @@ export class BookingsService {
         session,
         "SUCCESS",
         io,
+        locationId,
       );
       io.emit("SUCCESS-SCAN", {
         code: "PT_CLASS_ATTENDED",
         message: "Success",
-        member: (member.uid as any).name,
+        member: memberName,
         coach: pkg.name,
+        ...(locationId ? { locationId } : {}),
       });
     });
   }
@@ -791,14 +808,12 @@ export class BookingsService {
     if ((scheduledClass.cid as any).allowDropIn === false)
       throw new ConflictError("DROP_IN_DISABLED", "Drop-ins are not allowed for this class");
 
-    const isWorkSpace = (scheduledClass.cid as any).category === "WORKSPACE";
-    if (
-      !isWorkSpace &&
-      new Date() > new Date(scheduledClass.startTime.getTime() + 30 * 60 * 1000)
-    )
-      throw new ConflictError("CLASS_ALREADY_STARTED", "Class already started");
+    // Admins/FD can book drop-ins even after the session has ended
     let price = scheduledClass.cid.price;
     const scId = new Types.ObjectId(scid);
+    const resolvedLocationId =
+      locationId ??
+      (await resolveSessionPaymentLocationId(scheduledClass as any));
     await runInTransaction(async (session: ClientSession) => {
       const payment = await PaymentsService.savePayment(
         uid,
@@ -813,7 +828,8 @@ export class BookingsService {
         paymentDate,
         note,
         undefined,
-        locationId ?? (scheduledClass as any).locationId?.toString()
+        undefined,
+        resolvedLocationId
       );
       const paymentIdStr = (payment._id as Types.ObjectId).toString();
       
@@ -830,7 +846,7 @@ export class BookingsService {
   static async resolveOpenGymDropInPrice(locationId: string): Promise<number> {
     const workspaceClass = await Class.findOne({
       category: "WORKSPACE",
-      locations: new Types.ObjectId(locationId),
+      ...locationIdsArrayQuery(locationId),
     });
     if (!workspaceClass) {
       throw new NotFoundError(
@@ -857,7 +873,7 @@ export class BookingsService {
 
     let workspaceClass = await Class.findOne({
       category: "WORKSPACE",
-      locations: new Types.ObjectId(locationId),
+      ...locationIdsArrayQuery(locationId),
     });
 
     if (workspaceClass) {
@@ -1031,6 +1047,57 @@ export class BookingsService {
     });
   }
 
+  /**
+   * Finish drop-in booking when payment is already saved (idempotent retry).
+   * Does not create a new Payment or call Geidea.
+   */
+  private static async completeDropInFromExistingPayment(
+    uid: string,
+    scid: string,
+    payment: { _id: Types.ObjectId | string | unknown },
+    scheduledClass: { _id: Types.ObjectId },
+    userHasReservation: any,
+  ) {
+    const member = await Member.findOne({ uid });
+    const alreadyBooked = member?.bookings?.some(
+      (b) => b.scid.toString() === scid,
+    );
+    const alreadyOnClass = (scheduledClass as any).bookedMembers?.some(
+      (m: any) => m.uid?.toString() === uid,
+    );
+
+    if (alreadyBooked && alreadyOnClass) {
+      return;
+    }
+
+    await runInTransaction(async (session: ClientSession) => {
+      if (!alreadyBooked) {
+        await Member.saveDropIn(
+          uid,
+          scid,
+          String(payment._id),
+          session,
+        );
+      }
+      if (!alreadyOnClass) {
+        await ScheduledClass.bookMember(scid, uid, "Drop In", session);
+      }
+      if (userHasReservation) {
+        userHasReservation.status = "COMPLETED";
+        await userHasReservation.save({ session });
+        await WaitlistEntry.updateOne(
+          {
+            sessionId: scheduledClass._id,
+            userId: new Types.ObjectId(uid),
+            status: "NOTIFIED",
+          },
+          { status: "BOOKED" },
+          { session },
+        );
+      }
+    });
+  }
+
   static async bookDropIn(
     uid: string,
     scid: string,
@@ -1063,10 +1130,8 @@ export class BookingsService {
     if ((scheduledClass.cid as any).allowDropIn === false)
       throw new ConflictError("DROP_IN_DISABLED", "Drop-ins are not allowed for this class");
 
-    if (
-      new Date() > new Date(scheduledClass.startTime.getTime() + 30 * 60 * 1000)
-    )
-      throw new ConflictError("CLASS_ALREADY_STARTED", "Class already started");
+    // Members may book drop-ins until halfway through the session
+    assertMemberBookingWindow(scheduledClass);
     let price = scheduledClass.cid.price;
     if (promoCode) {
       const discountedPrice = await PromoCode.getDiscountedPrice(
@@ -1116,12 +1181,84 @@ export class BookingsService {
       }
     }
 
-    const orderId = await PaymentsService.checkPayment(
-      merchantReferenceId,
-      price,
+    // Idempotent: already booked for this class → success no-op
+    const alreadyBooked = member.bookings?.some(
+      (b) => b.scid.toString() === scid,
     );
+    if (alreadyBooked) {
+      logger.info(
+        `Drop-in idempotent no-op: uid=${uid} already booked scid=${scid}`,
+      );
+      return;
+    }
+
+    // Idempotent: payment already saved for this merchant ref → finish booking only
+    const existingPayment =
+      await PaymentsService.findPaymentByMerchantReference(
+        merchantReferenceId,
+        "DROPIN",
+      );
+    if (existingPayment) {
+      logger.info(
+        `Drop-in idempotent fulfill from existing payment ${existingPayment._id} mref=${merchantReferenceId}`,
+      );
+      await BookingsService.completeDropInFromExistingPayment(
+        uid,
+        scid,
+        existingPayment,
+        scheduledClass,
+        userHasReservation,
+      );
+      return;
+    }
+
+    let orderId: string;
+    try {
+      orderId = await PaymentsService.checkPayment(
+        merchantReferenceId,
+        price,
+      );
+    } catch (err) {
+      if (err instanceof ConflictError && err.code === "PAYMENT_ALREADY_RECORDED") {
+        const recorded = await PaymentsService.findPaymentByMerchantReference(
+          merchantReferenceId,
+          "DROPIN",
+        );
+        if (recorded) {
+          await BookingsService.completeDropInFromExistingPayment(
+            uid,
+            scid,
+            recorded,
+            scheduledClass,
+            userHasReservation,
+          );
+          return;
+        }
+      }
+      throw err;
+    }
+
     const scId = new Types.ObjectId(scid);
+    const resolvedLocationId =
+      await resolveSessionPaymentLocationId(scheduledClass as any);
     await runInTransaction(async (session: ClientSession) => {
+      // Re-check inside txn in case a concurrent confirm already saved payment
+      const racePayment = await Payment.findOne({
+        merchantReferenceId,
+        purpose: "DROPIN",
+        isRefunded: { $ne: true },
+      }).session(session);
+      if (racePayment) {
+        await Member.saveDropIn(
+          uid,
+          scid,
+          (racePayment._id as Types.ObjectId).toString(),
+          session,
+        );
+        await ScheduledClass.bookMember(scid, uid, "Drop In", session);
+        return;
+      }
+
       const payment = await PaymentsService.savePayment(
         uid,
         price,
@@ -1135,7 +1272,8 @@ export class BookingsService {
         undefined,
         undefined,
         undefined,
-        (scheduledClass as any).locationId?.toString()
+        undefined,
+        resolvedLocationId
       );
       await Member.saveDropIn(
         uid,
@@ -1172,12 +1310,9 @@ export class BookingsService {
     if (scid) query.scid = scid;
     
     if (locationId) {
-      const locationObjectId = Types.ObjectId.isValid(locationId)
-        ? new Types.ObjectId(locationId)
-        : locationId;
-      const scheduledClasses = await ScheduledClass.find({
-        locationId: locationObjectId,
-      }).select("_id");
+      const scheduledClasses = await ScheduledClass.find(
+        locationIdScalarQuery(locationId),
+      ).select("_id");
       const validScids = scheduledClasses.map(sc => (sc as any)._id.toString());
       if (scid) {
         if (!validScids.includes(scid)) return [];
@@ -1337,6 +1472,9 @@ export class BookingsService {
       if (!scheduledClass)
         throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
       const paymentAmount = amount !== undefined ? amount : (scheduledClass.cid as any).price;
+      const resolvedLocationId =
+        locationId ??
+        (await resolveSessionPaymentLocationId(scheduledClass as any));
       const payment = await PaymentsService.savePayment(
         undefined,
         paymentAmount,
@@ -1351,7 +1489,7 @@ export class BookingsService {
         note,
         booking.name,
         booking.phoneNumber,
-        locationId ?? (scheduledClass as any).locationId?.toString()
+        resolvedLocationId
       );
       const paidBooking = await NonUserBooking.recordPayment(
         bookingId,

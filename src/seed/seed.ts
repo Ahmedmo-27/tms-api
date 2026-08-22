@@ -20,9 +20,14 @@ const filePath = path.join(__dirname, "members.json");
       { encoding: "utf-8" } // change this path to your local path to members.json file, if needed.
     );
     const parsedMembers = JSON.parse(members);
+    const adminPassword = process.env.SEED_ADMIN_PASSWORD?.trim();
+    const memberPassword = process.env.SEED_MEMBER_PASSWORD?.trim() || "Thisismypass123";
+    if (!adminPassword || adminPassword.length < 10) {
+      throw new Error("Set SEED_ADMIN_PASSWORD in env (min 10 characters)");
+    }
     const admin = new User({
       email: "omar.tolan@gmail.com",
-      password: "Admin1234",
+      password: adminPassword,
       name: "Omar Tolan",
       phoneNumber: "01207522334",
       role: "admin",
@@ -37,7 +42,7 @@ const filePath = path.join(__dirname, "members.json");
       const randomNo = Math.floor(Math.random() * 1000000000);
       const user = new User({
         email: `${randomNo}@gmail.com`, // this is to make sure that the email is unique. This is not needed if the email is already unique.
-        password: "Thisismypass123",
+        password: memberPassword,
         name: member["Name"],
         phoneNumber: member["Phone number"],
         role: "member",

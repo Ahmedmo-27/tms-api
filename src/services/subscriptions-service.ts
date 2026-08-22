@@ -16,12 +16,14 @@ import { Server as SocketIOServer } from "socket.io";
 import { resolveOpenGymPaymentNote } from "../utils/open-gym-payment-purpose";
 import { normalizePhoneNumber } from "../utils/phone";
 import { cairoDayRange, toStoredPackageDate } from "../utils/timezone";
+import CoachNotification from "../models/coachNotification";
 import {
   assertMatchaPackageForPendingUser,
   ensureMemberForPendingPurchase,
-  getMatchaLocationId,
   isPendingMember,
 } from "../utils/matcha-branch";
+import { resolveAppPackageLocationId } from "../utils/app-package-location";
+import Payment from "../models/payment";
 
 export class SubscriptionsService {
   /** Same catalog package + Cairo start day already on the member. */
@@ -95,6 +97,7 @@ export class SubscriptionsService {
     note?: string,
     io?: SocketIOServer,
     locationId?: string,
+    pendingDeduction = false,
   ) {
     if (!uid) {
       throw new BadRequestError("MEMBER_ID_REQUIRED", "Member ID is required");
@@ -139,9 +142,17 @@ export class SubscriptionsService {
         "This open gym package is not available at the selected branch",
       );
     }
-    startDate = new Date(startDate).toISOString();
+    if (pendingDeduction && pkg.numberOfSessions < 1) {
+      throw new BadRequestError(
+        "INVALID_DEDUCTION",
+        "This package has no sessions to deduct",
+      );
+    }
+    // Persist UTC noon of the Cairo calendar day so naive UTC formatters do not
+    // show the previous day (Cairo midnight == previous evening in UTC).
+    startDate = toStoredPackageDate(startDate).toISOString();
     if (paymentDate) {
-      paymentDate = new Date(paymentDate).toISOString();
+      paymentDate = toStoredPackageDate(paymentDate).toISOString();
     }
     const packageId = new Types.ObjectId(pkgId);
     const endDate = getPackageEndDate(startDate, pkg).toISOString();
@@ -168,6 +179,23 @@ export class SubscriptionsService {
       );
 
     await runInTransaction(async (session: ClientSession) => {
+      await SubscriptionsService.assertNoDuplicateMemberPackage(
+        uid,
+        pkg._id.toString(),
+        startDate,
+        session,
+      );
+      const user = await User.findOne({ _id: new Types.ObjectId(uid) }).session(
+        session,
+      );
+      if (user?.phoneNumber) {
+        await SubscriptionsService.assertNoDuplicateNonUserPackage(
+          user.phoneNumber,
+          pkg._id.toString(),
+          startDate,
+          session,
+        );
+      }
       const payment = await PaymentsService.savePayment(
         uid,
         amount || pkg.price,
@@ -184,27 +212,61 @@ export class SubscriptionsService {
         undefined,
         locationId
       );
+      const remainingClasses = pendingDeduction
+        ? pkg.numberOfSessions - 1
+        : pkg.numberOfSessions;
       await Member.addPackage(
         uid,
         pkg._id.toString(),
         pkg.name,
-        pkg.numberOfSessions,
+        remainingClasses,
         startDate,
         endDate,
         session,
         restrictions,
         locationId
       );
-      if (io && pkg.coachId) {
-        const user = await User.findOne({ _id: new Types.ObjectId(uid) }).session(session);
-        io.to(`coach:${pkg.coachId.toString()}`).emit("coach:newPackage", {
+      if (pendingDeduction) {
+        await Member.pushAdjustmentRecord(
+          uid,
+          pkg._id.toString(),
+          new Date(startDate),
+          {
+            date: new Date(),
+            source: "ADMIN",
+            type: "DEDUCT",
+            amount: 1,
+            reason: "Attended a class using this package",
+          },
+          session,
+        );
+      }
+      if (pkg.coachId) {
+        const payload = {
+          memberId: uid,
           memberName: user?.name ?? "",
           packageName: pkg.name,
           classesTotal: pkg.numberOfSessions,
           createdAt: new Date().toISOString(),
-        });
-      } else if (!io) {
-        logger.warn("coach:newPackage skipped — io instance unavailable");
+        };
+        await CoachNotification.create(
+          [
+            {
+              coachId: pkg.coachId,
+              memberId: new Types.ObjectId(uid),
+              memberName: payload.memberName,
+              packageName: payload.packageName,
+              classesTotal: payload.classesTotal,
+              read: false,
+            },
+          ],
+          { session },
+        );
+        if (io) {
+          io.to(`coach:${pkg.coachId.toString()}`).emit("coach:newPackage", payload);
+        } else {
+          logger.warn("coach:newPackage skipped — io instance unavailable");
+        }
       }
       if (pkg.category !== "PERSONAL_TRAINING") {
         await sendPaymentToRentalSystem(payment);
@@ -221,7 +283,7 @@ export class SubscriptionsService {
     promoCode?: string,
     note?: string,
   ) {
-    let orderId: string;
+    let orderId: string | undefined;
     const pkg = await Package.findById(pkgId);
     if (!pkg)
       throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found", {
@@ -241,7 +303,7 @@ export class SubscriptionsService {
     if (!member)
       throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found", { uid });
 
-    startDate = new Date(startDate).toISOString();
+    startDate = toStoredPackageDate(startDate).toISOString();
     const packageId = new Types.ObjectId(pkgId);
     const endDate = getPackageEndDate(startDate, pkg).toISOString();
 
@@ -268,14 +330,131 @@ export class SubscriptionsService {
       price = discountedPrice;
     }
 
+    const packageLocationId = await resolveAppPackageLocationId(
+      pkg,
+      pendingMember,
+    );
+
+    // Idempotent APP confirm: payment already saved for this merchant ref
     if (merchantReferenceId && paymentMethod === "APP") {
-      orderId = await PaymentsService.checkPayment(
-        merchantReferenceId,
-        price,
-      );
+      const existingPayment =
+        await PaymentsService.findPaymentByMerchantReference(
+          merchantReferenceId,
+          "PACKAGE",
+        );
+      if (existingPayment) {
+        const alreadyHasPkg = await Member.hasPackageOnStartDay(
+          uid,
+          pkg._id.toString(),
+          startDate,
+        );
+        if (alreadyHasPkg) {
+          logger.info(
+            `Package subscribe idempotent no-op: uid=${uid} pkg=${pkgId} mref=${merchantReferenceId}`,
+          );
+          return;
+        }
+        logger.info(
+          `Package subscribe idempotent fulfill from payment ${existingPayment._id} mref=${merchantReferenceId}`,
+        );
+        await runInTransaction(async (session: ClientSession) => {
+          await Member.addPackage(
+            uid,
+            pkg._id.toString(),
+            pkg.name,
+            pkg.numberOfSessions,
+            startDate,
+            endDate,
+            session,
+            restrictions,
+            packageLocationId,
+          );
+        });
+        return;
+      }
+
+      try {
+        orderId = await PaymentsService.checkPayment(
+          merchantReferenceId,
+          price,
+        );
+      } catch (err) {
+        if (
+          err instanceof ConflictError &&
+          err.code === "PAYMENT_ALREADY_RECORDED"
+        ) {
+          const recorded = await PaymentsService.findPaymentByMerchantReference(
+            merchantReferenceId,
+            "PACKAGE",
+          );
+          if (recorded) {
+            const alreadyHasPkg = await Member.hasPackageOnStartDay(
+              uid,
+              pkg._id.toString(),
+              startDate,
+            );
+            if (!alreadyHasPkg) {
+              await runInTransaction(async (session: ClientSession) => {
+                await Member.addPackage(
+                  uid,
+                  pkg._id.toString(),
+                  pkg.name,
+                  pkg.numberOfSessions,
+                  startDate,
+                  endDate,
+                  session,
+                  restrictions,
+                  packageLocationId,
+                );
+              });
+            }
+            return;
+          }
+        }
+        throw err;
+      }
     }
 
     await runInTransaction(async (session: ClientSession) => {
+      await SubscriptionsService.assertNoDuplicateMemberPackage(
+        uid,
+        pkg._id.toString(),
+        startDate,
+        session,
+      );
+      const user = await User.findById(uid).session(session);
+      if (user?.phoneNumber) {
+        await SubscriptionsService.assertNoDuplicateNonUserPackage(
+          user.phoneNumber,
+          pkg._id.toString(),
+          startDate,
+          session,
+        );
+      }
+
+      // Concurrent confirm may have saved payment already
+      if (merchantReferenceId && paymentMethod === "APP") {
+        const racePayment = await Payment.findOne({
+          merchantReferenceId,
+          purpose: "PACKAGE",
+          isRefunded: { $ne: true },
+        }).session(session);
+        if (racePayment) {
+          await Member.addPackage(
+            uid,
+            pkg._id.toString(),
+            pkg.name,
+            pkg.numberOfSessions,
+            startDate,
+            endDate,
+            session,
+            restrictions,
+            packageLocationId,
+          );
+          return;
+        }
+      }
+
       const payment = await PaymentsService.savePayment(
         uid,
         price,
@@ -287,10 +466,11 @@ export class SubscriptionsService {
         undefined,
         packageId,
         undefined,
+        undefined,
+        undefined,
+        undefined,
+        packageLocationId,
       );
-      const packageLocationId = pendingMember
-        ? (await getMatchaLocationId()) ?? undefined
-        : undefined;
       await Member.addPackage(
         uid,
         pkg._id.toString(),
@@ -326,9 +506,9 @@ export class SubscriptionsService {
       throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found", {
         pkgId,
       });
-    startDate = new Date(startDate).toISOString();
+    startDate = toStoredPackageDate(startDate).toISOString();
     const endDate = savedEndDate
-      ? savedEndDate
+      ? toStoredPackageDate(savedEndDate).toISOString()
       : getPackageEndDate(startDate, pkg).toISOString();
 
     let restrictions: IClassRestrictionRecord[];
@@ -343,7 +523,7 @@ export class SubscriptionsService {
     }
 
     const addPackage = async (s: ClientSession) => {
-      await Member.addPackage(
+      const added = await Member.addPackageIfAbsent(
         uid,
         pkg._id.toString(),
         pkg.name,
@@ -354,7 +534,15 @@ export class SubscriptionsService {
         restrictions,
         undefined
       );
-      logger.info("Added pkg");
+      if (added) {
+        logger.info("Added pkg", { uid, pkgId: pkg._id.toString(), startDate });
+      } else {
+        logger.info("Skipped duplicate staged package", {
+          uid,
+          pkgId: pkg._id.toString(),
+          startDate,
+        });
+      }
     };
 
     if (session) {
@@ -388,21 +576,41 @@ export class SubscriptionsService {
     const pkgQuery = NonUserPackage.find({
       phoneNumber: cleanPhone,
       added: false,
-    });
+    }).sort({ createdAt: 1 });
     if (session) pkgQuery.session(session);
     const savedPkgs = await pkgQuery;
 
+    // Prefer the first staged record per pkgId + start day; later duplicates are
+    // still marked added so accept/register does not fail with PACKAGE_ALREADY_ADDED.
+    const seenKeys = new Set<string>();
+
     for (const savedPkg of savedPkgs) {
-      await SubscriptionsService.addSavedPkgToMember(
-        uid,
-        savedPkg.pkgId.toString(),
-        savedPkg.pkgStartDate.toISOString(),
-        savedPkg.remainingClasses,
-        savedPkg.pkgEndDate.toISOString(),
-        session
-      );
+      const startDayKey = new Date(savedPkg.pkgStartDate)
+        .toISOString()
+        .slice(0, 10);
+      const dedupeKey = `${savedPkg.pkgId.toString()}:${startDayKey}`;
+
+      if (!seenKeys.has(dedupeKey)) {
+        seenKeys.add(dedupeKey);
+        await SubscriptionsService.addSavedPkgToMember(
+          uid,
+          savedPkg.pkgId.toString(),
+          savedPkg.pkgStartDate.toISOString(),
+          savedPkg.remainingClasses,
+          savedPkg.pkgEndDate.toISOString(),
+          session
+        );
+      } else {
+        logger.info("Skipping duplicate staged NonUserPackage", {
+          uid,
+          nonUserPackageId: String(savedPkg._id),
+          pkgId: savedPkg.pkgId.toString(),
+          pkgStartDate: savedPkg.pkgStartDate,
+        });
+      }
+
       await NonUserPackage.findByIdAndUpdate(
-        savedPkg._id,
+        savedPkg._id as Types.ObjectId,
         { added: true },
         session ? { session } : {}
       );
@@ -453,10 +661,27 @@ export class SubscriptionsService {
     }
     pkgStartDate = toStoredPackageDate(pkgStartDate).toISOString();
     if (paymentDate) {
-      paymentDate = new Date(paymentDate).toISOString();
+      paymentDate = toStoredPackageDate(paymentDate).toISOString();
     }
     const endDate = getPackageEndDate(pkgStartDate, pkg).toISOString();
     await runInTransaction(async (session: ClientSession) => {
+      await SubscriptionsService.assertNoDuplicateNonUserPackage(
+        phoneNumber,
+        pkgId,
+        pkgStartDate,
+        session,
+      );
+      const existingUser = await User.findOne({ phoneNumber }).session(
+        session ?? null,
+      );
+      if (existingUser) {
+        await SubscriptionsService.assertNoDuplicateMemberPackage(
+          String(existingUser._id),
+          pkgId,
+          pkgStartDate,
+          session,
+        );
+      }
       const payment = await PaymentsService.savePayment(
         undefined,
         amount || (pkg as any).price,

@@ -166,6 +166,27 @@ interface IMemberstatics {
     classRestrictions?: IClassRestrictionRecord[],
     locationId?: string
   ): Promise<void>;
+  /**
+   * Idempotent package attach for staged/transfer flows.
+   * Returns true when the package was newly added, false when it was already present.
+   */
+  addPackageIfAbsent(
+    uid: string,
+    pkgId: string,
+    pkgName: string,
+    numberOfSessions: number,
+    startDate: string,
+    endDate: string,
+    session: ClientSession,
+    classRestrictions?: IClassRestrictionRecord[],
+    locationId?: string
+  ): Promise<boolean>;
+  hasPackageOnStartDay(
+    uid: string,
+    pkgId: string,
+    startDate: string,
+    session?: ClientSession | null
+  ): Promise<boolean>;
   removePackage(
     uid: string,
     pkgId: string,
@@ -512,8 +533,8 @@ MemberSchema.static(
                 "pkg.pkgStartDate": new Date(pkg.pkgStartDate),
               },
             ],
+            session,
           }
-          // Session is removed to presist package status change even though booking failed
         );
         continue;
       }
@@ -1392,10 +1413,61 @@ MemberSchema.static(
     classRestrictions?: IClassRestrictionRecord[],
     locationId?: string
   ): Promise<void> {
-    const { startOfDateCairo } = await import("../utils/timezone");
-    const pkgStartDay = startOfDateCairo(startDate);
-    const pkgStartDayEnd = new Date(pkgStartDay);
-    pkgStartDayEnd.setDate(pkgStartDayEnd.getDate() + 1);
+    const added = await (this as IMemberModel).addPackageIfAbsent(
+      uid,
+      pkgId,
+      pkgName,
+      numberOfSessions,
+      startDate,
+      endDate,
+      session,
+      classRestrictions,
+      locationId
+    );
+    if (!added) {
+      throw new ConflictError("PACKAGE_ALREADY_ADDED", "Package already added");
+    }
+  }
+);
+
+MemberSchema.static(
+  "hasPackageOnStartDay",
+  async function (
+    uid: string,
+    pkgId: string,
+    startDate: string,
+    session?: ClientSession | null
+  ): Promise<boolean> {
+    const { cairoDayRange } = await import("../utils/timezone");
+    const { start, end } = cairoDayRange(startDate);
+    const existing = await this.findOne({
+      uid,
+      packages: {
+        $elemMatch: {
+          pkgId: new Types.ObjectId(pkgId),
+          pkgStartDate: { $gte: start, $lt: end },
+        },
+      },
+    }).session(session ?? null);
+    return !!existing;
+  }
+);
+
+MemberSchema.static(
+  "addPackageIfAbsent",
+  async function (
+    uid: string,
+    pkgId: string,
+    pkgName: string,
+    numberOfSessions: number,
+    startDate: string,
+    endDate: string,
+    session: ClientSession,
+    classRestrictions?: IClassRestrictionRecord[],
+    locationId?: string
+  ): Promise<boolean> {
+    const { cairoDayRange } = await import("../utils/timezone");
+    const { start, end } = cairoDayRange(startDate);
     const result = await this.findOneAndUpdate(
       {
         uid,
@@ -1403,7 +1475,7 @@ MemberSchema.static(
           $not: {
             $elemMatch: {
               pkgId: new Types.ObjectId(pkgId),
-              pkgStartDate: { $gte: pkgStartDay, $lt: pkgStartDayEnd },
+              pkgStartDate: { $gte: start, $lt: end },
             },
           },
         },
@@ -1424,9 +1496,7 @@ MemberSchema.static(
       },
       { ...(session ? { session } : {}), new: true }
     );
-    if (!result) {
-      throw new ConflictError("PACKAGE_ALREADY_ADDED", "Package already added");
-    }
+    return !!result;
   }
 );
 
@@ -1478,13 +1548,16 @@ MemberSchema.static(
     logger.info("Data", { pkgId, pkgStartDate });
     const member = await this.findOne({ uid });
     if (!member) throw new NotFoundError("ERROR");
-    const p = member.packages.find((p) => {
+    const { isSameCairoDay } = await import("../utils/timezone");
+    const p = member.packages.find((pkg) => {
       return (
-        p.pkgId.toString() === pkgId &&
-        p.pkgStartDate.toDateString() === new Date(pkgStartDate).toDateString()
+        pkg.pkgId.toString() === pkgId &&
+        isSameCairoDay(pkg.pkgStartDate, pkgStartDate)
       );
     });
     logger.info("Package Matched", p);
+    if (!p) throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found");
+    const storedStart = p.pkgStartDate;
     if (newClasses < 0)
       throw new BadRequestError(
         "INVALID_CLASSES_NUMBER",
@@ -1497,7 +1570,7 @@ MemberSchema.static(
           packages: {
             $elemMatch: {
               pkgId: new Types.ObjectId(pkgId),
-              pkgStartDate: new Date(pkgStartDate),
+              pkgStartDate: storedStart,
             },
           },
         },
@@ -1511,7 +1584,7 @@ MemberSchema.static(
           arrayFilters: [
             {
               "pkg.pkgId": new Types.ObjectId(pkgId),
-              "pkg.pkgStartDate": new Date(pkgStartDate),
+              "pkg.pkgStartDate": storedStart,
             },
           ],
         }
@@ -1524,7 +1597,7 @@ MemberSchema.static(
           packages: {
             $elemMatch: {
               pkgId: new Types.ObjectId(pkgId),
-              pkgStartDate: new Date(pkgStartDate),
+              pkgStartDate: storedStart,
             },
           },
         },
@@ -1538,7 +1611,7 @@ MemberSchema.static(
           arrayFilters: [
             {
               "pkg.pkgId": new Types.ObjectId(pkgId),
-              "pkg.pkgStartDate": new Date(pkgStartDate),
+              "pkg.pkgStartDate": storedStart,
             },
           ],
         }
@@ -1559,27 +1632,32 @@ MemberSchema.static(
     logger.info("Data", { pkgId, pkgStartDate });
     const member = await this.findOne({ uid });
     if (!member) throw new NotFoundError("ERROR");
-    const p = member.packages.find((p) => {
+    const { isSameCairoDay, toStoredPackageDate, startOfTodayCairo } =
+      await import("../utils/timezone");
+    const p = member.packages.find((pkg) => {
       return (
-        p.pkgId.toString() === pkgId &&
-        p.pkgStartDate.toDateString() === new Date(pkgStartDate).toDateString()
+        pkg.pkgId.toString() === pkgId &&
+        isSameCairoDay(pkg.pkgStartDate, pkgStartDate)
       );
     });
     logger.info("Package Matched", p);
-    if (new Date(newDate) < new Date()) {
+    if (!p) throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found");
+    const storedStart = p.pkgStartDate;
+    const normalizedEnd = toStoredPackageDate(newDate);
+    if (normalizedEnd < startOfTodayCairo()) {
       await this.updateOne(
         {
           uid,
           packages: {
             $elemMatch: {
               pkgId: new Types.ObjectId(pkgId),
-              pkgStartDate: new Date(pkgStartDate),
+              pkgStartDate: storedStart,
             },
           },
         },
         {
           $set: {
-            "packages.$[pkg].pkgEndDate": new Date(newDate),
+            "packages.$[pkg].pkgEndDate": normalizedEnd,
             "packages.$[pkg].status": "EXPIRED",
           },
         },
@@ -1587,7 +1665,7 @@ MemberSchema.static(
           arrayFilters: [
             {
               "pkg.pkgId": new Types.ObjectId(pkgId),
-              "pkg.pkgStartDate": new Date(pkgStartDate),
+              "pkg.pkgStartDate": storedStart,
             },
           ],
           session,
@@ -1600,13 +1678,13 @@ MemberSchema.static(
           packages: {
             $elemMatch: {
               pkgId: new Types.ObjectId(pkgId),
-              pkgStartDate: new Date(pkgStartDate),
+              pkgStartDate: storedStart,
             },
           },
         },
         {
           $set: {
-            "packages.$[pkg].pkgEndDate": new Date(newDate),
+            "packages.$[pkg].pkgEndDate": normalizedEnd,
             "packages.$[pkg].status": "ACTIVE",
           },
         },
@@ -1614,7 +1692,7 @@ MemberSchema.static(
           arrayFilters: [
             {
               "pkg.pkgId": new Types.ObjectId(pkgId),
-              "pkg.pkgStartDate": new Date(pkgStartDate),
+              "pkg.pkgStartDate": storedStart,
             },
           ],
           session,

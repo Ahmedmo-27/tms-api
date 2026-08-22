@@ -1,16 +1,18 @@
 import { Request, Response } from "express";
 import { SuccessResponse } from "../../core/ApiResponse";
 import User from "../../models/user";
-import { NotFoundError } from "../../core/ApiError";
 import asyncHandler from "../../utils/asyncHandler";
 import NonUserPackage from "../../models/nonUserPackage";
+import { escapeRegex } from "../../utils/escapeRegex";
+
+const USER_SAFE_SELECT = "-password -tokens -resetCode -fcmTokens";
 
 export const getUser = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const { name, phoneNumber, email } = req.query;
     const query: any = {};
     if (name) {
-      query.name = { $regex: name, $options: "i" };
+      query.name = { $regex: escapeRegex(String(name)), $options: "i" };
     }
     if (phoneNumber) {
       query.phoneNumber = phoneNumber;
@@ -18,28 +20,37 @@ export const getUser = asyncHandler(
     if (email) {
       query.email = email;
     }
-    const users = await User.find(query);
-    if (!users || users.length === 0) throw new NotFoundError("USERS_NOT_FOUND", "User not found", { query });
+    const users = await User.find(query).select(USER_SAFE_SELECT);
+    if (!users || users.length === 0) {
+      new SuccessResponse("No users found", []).send(res);
+      return;
+    }
     new SuccessResponse("Users Found!", users).send(res);
   }
 );
 
-
 export const getPendingMembers = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const { limit, page, name, phone } = req.query;
-    const query: any = {}
+    const query: any = {};
     if (name) {
-      query.name = { $regex: name, $options: "i" };
+      query.name = { $regex: escapeRegex(String(name)), $options: "i" };
     }
     if (phone) {
-      query.phoneNumber = { $regex: phone, $options: "i" };
+      query.phoneNumber = { $regex: escapeRegex(String(phone)), $options: "i" };
     }
     query.role = "user";
     const skip = ((page as any) - 1) * (limit as any);
-    const total = (await User.find(query)).length;
-    const users = await User.find(query).sort({createdAt: -1}).limit((limit as any) || 10).skip((skip as any) || 0);
-    if (!users || users.length === 0) throw new NotFoundError("REQUESTS_NOT_FOUND", "No pending members found");
+    const total = await User.countDocuments(query);
+    const users = await User.find(query)
+      .select(USER_SAFE_SELECT)
+      .sort({ createdAt: -1 })
+      .limit((limit as any) || 10)
+      .skip((skip as any) || 0);
+    if (!users || users.length === 0) {
+      new SuccessResponse("No pending members found", { users: [], total: 0 }).send(res);
+      return;
+    }
 
     const phoneNumbers = users.map((user) => user.phoneNumber);
     const pendingPackages = await NonUserPackage.find({
@@ -64,4 +75,3 @@ export const getPendingMembers = asyncHandler(
     new SuccessResponse("Pending Members Found!", { users: usersWithPackages, total }).send(res);
   }
 );
-

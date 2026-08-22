@@ -15,7 +15,7 @@ const DEFAULT_CATEGORIES = [
 ];
 
 const seedTicketCategories = async () => {
-  const uri = process.env.MONGO_URI;
+  const uri = "mongodb://yasserziad59_db_user:UHSM9oTJOnPT1r2x@ac-ynhcti6-shard-00-00.nenjvkr.mongodb.net:27017,ac-ynhcti6-shard-00-01.nenjvkr.mongodb.net:27017,ac-ynhcti6-shard-00-02.nenjvkr.mongodb.net:27017/TMS_PROD?ssl=true&replicaSet=atlas-vmtjfi-shard-0&authSource=admin&appName=Cluster0";
   if (!uri) throw new Error("MONGO_URI is not defined in environment variables");
 
   await mongoose.connect(uri);

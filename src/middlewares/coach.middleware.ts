@@ -62,10 +62,6 @@ export const coachGuard = asyncHandler(
       throw new BadTokenError("INVALID_TOKEN", "Invalid token!");
     }
 
-    if (decoded.role !== "coach") {
-      throw new ForbiddenError("INSUFFICIENT_PERMISSIONS", "Access denied - coach role required");
-    }
-
     const user = await User.findOne({
       _id: new Types.ObjectId(decoded.uid),
       "tokens.token": token,
@@ -73,6 +69,11 @@ export const coachGuard = asyncHandler(
 
     if (!user) {
       throw new BadTokenError("INVALID_TOKEN", "Invalid token - user not found or token revoked");
+    }
+
+    // Authorize from DB role, not JWT claim (handles demotion while token still valid)
+    if (user.role !== "coach") {
+      throw new ForbiddenError("INSUFFICIENT_PERMISSIONS", "Access denied - coach role required");
     }
 
     (req as CoachAuthRequest).coachId = new Types.ObjectId(decoded.uid);
@@ -83,7 +84,6 @@ export const coachGuard = asyncHandler(
     }
     (req as CoachAuthRequest).coachDocId = coachDoc._id as Types.ObjectId;
 
-    // Optionally expose device type if downstream logic needs it
     (req as any).deviceType = deviceType;
     next();
   }

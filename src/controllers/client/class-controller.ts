@@ -8,7 +8,6 @@ import asyncHandler from "../../utils/asyncHandler";
 import { BookingsService } from "../../services/bookings-service";
 import { SchedulerService } from "../../services/scheduler-service";
 import ScheduledClass from "../../models/scheduledClass";
-import Package from "../../models/package";
 import { parseScanPayload } from "../../utils/scan-payload";
 import { getInvalidQrCodeMessage } from "../../utils/error-messages";
 import { getMatchaBranchName, isPendingMember } from "../../utils/matcha-branch";
@@ -129,6 +128,12 @@ export const attendClass = asyncHandler(async function (
     return;
   }
 
+  if (payload.type === "branch_pt") {
+    await BookingsService.recordPtAttendance(_id, io, payload.locationId);
+    new SuccessResponse("Class Attended!").send(res);
+    return;
+  }
+
   if (payload.type === "legacy_open_gym") {
     await BookingsService.recordLegacyOpenGymAttendance(_id, io);
     new SuccessResponse("Class Attended!").send(res);
@@ -172,30 +177,6 @@ export const attendClass = asyncHandler(async function (
     { attendanceId },
   );
 });
-
-// export const attendPt = asyncHandler(async function (
-//   req: Request,
-//   res: Response
-// ): Promise<void> {
-//   const authRequest = req as AuthRequest;
-//   const _id = authRequest.user._id as string;
-//   const pkgId = req.params.pkgId;
-//   const io = req.app.get("io");
-//   await BookingsService.recordPtAttendance(_id, pkgId, io);
-//   new SuccessResponse("PT Attended!").send(res);
-// });
-
-// export const attendOpenGym = asyncHandler(async function (
-//   req: Request,
-//   res: Response
-// ): Promise<void> {
-//   const authRequest = req as AuthRequest;
-//   const _id = authRequest.user._id as string;
-//   const pkgId = req.params.pkgId;
-//   const io = req.app.get("io");
-//   await BookingsService.recordOpenGymAttendance(_id, pkgId, io);
-//   new SuccessResponse("Open Gym Attended!").send(res);
-// });
 
 export const cancelClass = asyncHandler(async function (
   req: Request,

@@ -12,15 +12,30 @@ import {
 import { SuccessResponse } from "../../core/ApiResponse";
 import asyncHandler from "../../utils/asyncHandler";
 import { BookingsService } from "../../services/bookings-service";
-import { INonUserBooking } from "../../models/nonUserBookings";
+import { SchedulerService } from "../../services/scheduler-service";
+import NonUserBooking, { INonUserBooking } from "../../models/nonUserBookings";
+import Payment from "../../models/payment";
 import { Types } from "mongoose";
 import { runInTransaction } from "../../utils/transaction";
 import { ClientSession } from "mongoose";
 import logger from "../../config/logger";
-import { resolveLocationIdForWrite } from "../../utils/location-scope";
+import {
+  locationIdsArrayQuery,
+  resolveLocationFilter,
+  resolveLocationIdForWrite,
+  toObjectId,
+} from "../../utils/location-scope";
 
 /** Escapes special regex characters so user-supplied strings are treated as literals. */
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const getRestrictToLocationId = (req: Request): string | null => {
+  return resolveLocationFilter(req);
+};
+
+const assertSessionAccess = async (req: Request, scid: string) => {
+  await SchedulerService.assertSessionAtLocation(scid, getRestrictToLocationId(req));
+};
 
 const processLocations = async (locationsRaw: any) => {
   if (locationsRaw === undefined || locationsRaw === null || locationsRaw === "") return undefined;
@@ -30,8 +45,9 @@ const processLocations = async (locationsRaw: any) => {
   if (locs.length === 0) return undefined;
   const mappedLocations = [];
   for (const loc of locs) {
-    if (Types.ObjectId.isValid(loc)) {
-      mappedLocations.push(loc);
+    const objectId = toObjectId(loc);
+    if (objectId) {
+      mappedLocations.push(objectId);
     } else {
       const escaped = escapeRegex(loc);
       const foundLoc = await Location.findOne({
@@ -80,25 +96,35 @@ export const getClass = asyncHandler(async function (
   res: Response
 ): Promise<void> {
   const { cid, title, category } = req.query;
+  const targetLocationId = resolveLocationFilter(req);
+
   const query: any = {};
   if (cid) {
     query._id = cid;
   }
   if (title) {
-    query.title = { $regex: title, $options: "i" };
+    query.title = { $regex: escapeRegex(String(title)), $options: "i" };
   }
   if (category) {
     query.category = category;
   }
+  if (targetLocationId && Types.ObjectId.isValid(targetLocationId)) {
+    Object.assign(query, locationIdsArrayQuery(targetLocationId));
+  }
+
   const classes = await Class.find(query).populate("locations");
   if (!classes || classes.length === 0)
     throw new NotFoundError("CLASSES_NOT_FOUND", "Classes not found", {
       query,
     });
-  
+
   const mappedClasses = classes.map((cls) => {
     const clsObj = cls.toObject() as any;
-    const locs = clsObj.locations as any[];
+    let locs = clsObj.locations as any[];
+    if (targetLocationId && locs?.length) {
+      locs = locs.filter((l) => l._id?.toString() === targetLocationId);
+    }
+    clsObj.locations = locs;
     if (locs && locs.length > 0) {
       clsObj.location = locs[0].branchName || locs[0].location;
     }
@@ -190,8 +216,13 @@ export const bookClass = asyncHandler(async function (
   req: Request,
   res: Response
 ): Promise<void> {
-  const { uid, scid } = req.body;
-  await BookingsService.addBooking(uid, scid);
+  const { uid, scid, overrideTimeRestrictions } = req.body;
+  if (!uid || !scid) {
+    throw new BadRequestError("INVALID_REQUEST", "uid and scid are required");
+  }
+  await assertSessionAccess(req, scid);
+  const isAdminOverride = overrideTimeRestrictions === true;
+  await BookingsService.addBooking(uid, scid, isAdminOverride);
   new SuccessResponse("Class Booked!").send(res);
 });
 
@@ -203,7 +234,9 @@ export const bookDropIn = asyncHandler(async function (
   if (!uid || !scid || !paymentMethod) {
     throw new BadRequestError("INVALID_REQUEST", "uid, scid, and paymentMethod are required");
   }
-  await BookingsService.bookAdminDropIn(uid, scid, paymentMethod);
+  await assertSessionAccess(req, scid);
+  const branchLocationId = resolveLocationIdForWrite(req);
+  await BookingsService.bookAdminDropIn(uid, scid, paymentMethod, branchLocationId);
   new SuccessResponse("Drop-in Booked!").send(res);
 });
 
@@ -294,6 +327,7 @@ export const cancelBooking = asyncHandler(async function (
   res: Response
 ): Promise<void> {
   const { uid, scid } = req.body;
+  await assertSessionAccess(req, scid);
   await BookingsService.cancelBooking(uid, scid);
   new SuccessResponse("Class cancelled").send(res);
 });
@@ -303,11 +337,15 @@ export const getNonUserBookings = asyncHandler(async function (
   req: Request,
   res: Response
 ): Promise<void> {
-  const { startDate, endDate, scid } = req.body;
+  const startDate = req.query.startDate || req.body?.startDate;
+  const endDate = req.query.endDate || req.body?.endDate;
+  const scid = req.query.scid || req.body?.scid;
+  const targetLocationId = resolveLocationFilter(req) ?? undefined;
   const bookings = await BookingsService.getNonUserBookings(
     startDate,
     endDate,
-    scid
+    scid,
+    targetLocationId
   );
   new SuccessResponse("Fetched Bookings", bookings).send(res);
 });
@@ -318,6 +356,7 @@ export const bookNonUser = asyncHandler(async function (
   const { name, phoneNumber, scid } = req.body;
   if (!name || !phoneNumber || !scid)
     throw new BadRequestError("INVALID_REQUEST", "Invalid request");
+  await assertSessionAccess(req, scid);
   const booking = await BookingsService.addNonUserBooking(
     name,
     phoneNumber,
@@ -349,11 +388,14 @@ export const saveNonUserPayment = asyncHandler(async function (
   const paymentDate = req.body.paymentDate;
   if (!bookingId || bookingId === "")
     throw new BadRequestError("INVALID_BOOKING_ID", "Booking Id is invalid");
+  const branchLocationId = resolveLocationIdForWrite(req);
   const booking = await BookingsService.recordNonUserPayment(
     bookingId,
     paymentMethod,
     amount,
-    paymentDate
+    paymentDate,
+    undefined,
+    branchLocationId
   );
   new SuccessResponse("Class Attended!").send(res);
 });
@@ -363,13 +405,15 @@ export const addWalkIn = asyncHandler(async function (
   res: Response
 ): Promise<void> {
   const { name, phoneNumber, scid, paymentMethod, amount, paymentDate } = req.body;
-  if (!name || !phoneNumber || !scid)
+  if (!name || !scid)
     throw new BadRequestError("INVALID_REQUEST", "Invalid request");
+  await assertSessionAccess(req, scid);
+  const branchLocationId = resolveLocationIdForWrite(req);
   let finalBooking;
   await runInTransaction(async (session: ClientSession) => {
     const booking: INonUserBooking = await BookingsService.addNonUserBooking(
       name,
-      phoneNumber,
+      phoneNumber || "",
       scid,
       session
     );
@@ -386,12 +430,39 @@ export const addWalkIn = asyncHandler(async function (
         paymentMethod,
         amount,
         paymentDate,
-        session
+        session,
+        branchLocationId
       );
     }
   });
   if(!finalBooking) throw new InternalError("INTERNAL_ERROR", "UnknownError")
   new SuccessResponse("Class Booked!", finalBooking).send(res);
+});
+
+export const updateNonUserBookingPhone = asyncHandler(async function (
+  req: Request,
+  res: Response
+): Promise<void> {
+  const { bookingId } = req.params;
+  const { phoneNumber } = req.body;
+  if (!bookingId)
+    throw new BadRequestError("INVALID_BOOKING_ID", "Booking Id is invalid");
+  if (!phoneNumber || !/^\d{11}$/.test(phoneNumber.trim()))
+    throw new BadRequestError("INVALID_PHONE", "Please enter a valid 11-digit phone number");
+  const trimmedPhone = phoneNumber.trim();
+  const booking = await NonUserBooking.findByIdAndUpdate(
+    bookingId,
+    { phoneNumber: trimmedPhone },
+    { new: true }
+  );
+  if (!booking)
+    throw new NotFoundError("BOOKING_NOT_FOUND", "Booking not found");
+  if (booking.paymentId) {
+    await Payment.findByIdAndUpdate(booking.paymentId, {
+      nonMemberPhone: trimmedPhone,
+    });
+  }
+  new SuccessResponse("Phone number updated!", booking).send(res);
 });
 
 export const cancelNonUserBooking = asyncHandler(async function (
@@ -412,6 +483,7 @@ export const manualRecordMemberAttendance = asyncHandler(async function (
   const { uid, scid } = req.body;
   if (!uid || !scid)
     throw new BadRequestError("INVALID_REQUEST", "uid and scid are required");
+  await assertSessionAccess(req, scid);
   const io = req.app.get("io");
   await BookingsService.manualRecordClassAttendance(uid, scid, io);
   new SuccessResponse("Class attended (manual)").send(res);
@@ -424,8 +496,21 @@ export const manualRemoveMemberAttendance = asyncHandler(async function (
   const { uid, scid } = req.body;
   if (!uid || !scid)
     throw new BadRequestError("INVALID_REQUEST", "uid and scid are required");
+  await assertSessionAccess(req, scid);
   await BookingsService.manualRemoveClassAttendance(uid, scid);
   new SuccessResponse("Attendance removed").send(res);
+});
+
+export const removeFailedScan = asyncHandler(async function (
+  req: Request,
+  res: Response
+): Promise<void> {
+  const { uid, scid } = req.body;
+  if (!uid || !scid)
+    throw new BadRequestError("INVALID_REQUEST", "uid and scid are required");
+  await assertSessionAccess(req, scid);
+  await BookingsService.removeFailedClassScan(uid, scid);
+  new SuccessResponse("Failed scan removed").send(res);
 });
 
 export const promoteFromWaitlist = asyncHandler(async function (
@@ -435,6 +520,7 @@ export const promoteFromWaitlist = asyncHandler(async function (
   const { uid, scid } = req.body;
   if (!uid || !scid)
     throw new BadRequestError("INVALID_REQUEST", "uid and scid are required");
+  await assertSessionAccess(req, scid);
   await BookingsService.adminPromoteFromWaitlist(uid, scid);
   new SuccessResponse("Member promoted from waitlist to booking").send(res);
 });
@@ -446,6 +532,7 @@ export const overrideAddToWaitlist = asyncHandler(async function (
   const { uid, scid } = req.body;
   if (!uid || !scid)
     throw new BadRequestError("INVALID_REQUEST", "uid and scid are required");
+  await assertSessionAccess(req, scid);
   await BookingsService.adminAddToWaitlist(uid, scid);
   new SuccessResponse("Member added to waitlist").send(res);
 });
@@ -457,6 +544,7 @@ export const overrideRemoveFromWaitlist = asyncHandler(async function (
   const { uid, scid } = req.body;
   if (!uid || !scid)
     throw new BadRequestError("INVALID_REQUEST", "uid and scid are required");
+  await assertSessionAccess(req, scid);
   await BookingsService.adminRemoveFromWaitlist(uid, scid);
   new SuccessResponse("Member removed from waitlist").send(res);
 });
@@ -468,6 +556,7 @@ export const getWaitlistedMembers = asyncHandler(async function (
   const scid = req.query.scid as string;
   if (!scid)
     throw new BadRequestError("INVALID_REQUEST", "scid is required");
+  await assertSessionAccess(req, scid);
   const waitlist = await BookingsService.getWaitlistedMembers(scid);
   new SuccessResponse("Waitlist fetched", waitlist).send(res);
 });

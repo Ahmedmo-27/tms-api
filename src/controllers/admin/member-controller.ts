@@ -6,6 +6,7 @@ import { SuccessResponse } from "../../core/ApiResponse";
 import asyncHandler from "../../utils/asyncHandler";
 import { SubscriptionsService } from "../../services/subscriptions-service";
 import { runInTransaction } from "../../utils/transaction";
+import { escapeRegex } from "../../utils/escapeRegex";
 
 export const addMember = asyncHandler(async function (
   req: Request,
@@ -45,6 +46,7 @@ export const getMember = asyncHandler(async function (
   req: Request,
   res: Response
 ): Promise<void> {
+  // Our Members is intentionally global — all staff roles see members across branches.
   const { uid, limit = "10", page = "1", name, phone } = req.query;
 
   const userQuery: any = {};
@@ -52,15 +54,17 @@ export const getMember = asyncHandler(async function (
     userQuery._id = uid;
   }
   if (name) {
-    userQuery.name = { $regex: name, $options: "i" };
+    userQuery.name = { $regex: escapeRegex(String(name)), $options: "i" };
   }
   if (phone) {
-    userQuery.phoneNumber = { $regex: phone, $options: "i" };
+    userQuery.phoneNumber = { $regex: escapeRegex(String(phone)), $options: "i" };
   }
 
-  const users = await User.find(userQuery);
-  if (!users || users.length === 0)
-    throw new NotFoundError("MEMBER_NOT_FOUND", "No members found");
+  const users = await User.find(userQuery).select("_id");
+  if (!users || users.length === 0) {
+    new SuccessResponse("No members found", { members: [], total: 0 }).send(res);
+    return;
+  }
 
   const uids = users.map((user) => user._id);
 
@@ -75,7 +79,7 @@ export const getMember = asyncHandler(async function (
 
   let [members, total] = await Promise.all([
     Member.find(memberQuery)
-      .populate("uid")
+      .populate({ path: "uid", select: "-password -tokens -resetCode -fcmTokens" })
       .populate({ path: "packages.pkgId" })
       .populate({ path: "ptAttendance.pkgId" })
       .sort({ createdAt: -1 })

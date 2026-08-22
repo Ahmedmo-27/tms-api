@@ -2,6 +2,7 @@
  * seed-admin.ts
  *
  * Creates the initial admin user.
+ * Password from SEED_ADMIN_PASSWORD (min 10 chars).
  * Run from tms_api/: npx ts-node src/scripts/seed-admin.ts
  */
 
@@ -16,6 +17,11 @@ import User from "../models/user";
 async function main() {
   await connectDB();
 
+  const password = process.env.SEED_ADMIN_PASSWORD?.trim();
+  if (!password || password.length < 10) {
+    throw new Error("Set SEED_ADMIN_PASSWORD in env (min 10 characters)");
+  }
+
   const existing = await User.findOne({ phoneNumber: "01208522334" });
   if (existing) {
     console.log("[SKIP] Admin user already exists.");
@@ -27,7 +33,7 @@ async function main() {
     name: "Tolan",
     email: "omar.tolan@gmail.com",
     phoneNumber: "01208522334",
-    password: "Admin123",
+    password,
     role: "admin",
   });
 
@@ -37,6 +43,7 @@ async function main() {
   console.log(`     Phone: ${user.phoneNumber}`);
   console.log(`     Email: ${user.email}`);
   console.log(`     Role:  ${user.role}`);
+  console.log(`     Password: [REDACTED — from SEED_ADMIN_PASSWORD]`);
 
   await mongoose.disconnect();
 }

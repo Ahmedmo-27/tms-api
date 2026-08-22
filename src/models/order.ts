@@ -16,6 +16,7 @@ export interface ICartItem {
 export interface IOrder {
   cart: ICartItem[];
   total: number;
+  locationId?: Types.ObjectId;
 }
 
 interface IOrderStatics {
@@ -61,6 +62,12 @@ const OrderSchema: Schema<IOrder, OrderModel> = new Schema(
       type: Number,
       required: true,
       default: 0,
+    },
+    locationId: {
+      type: Schema.Types.ObjectId,
+      ref: "Location",
+      default: null,
+      index: true,
     },
   },
   {

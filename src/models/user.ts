@@ -18,6 +18,7 @@ export interface IUser extends Document {
   name: string;
   phoneNumber: string;
   role: string;
+  locationId?: mongoose.Types.ObjectId;
   tokens: Itoken[];
   resetCode: string;
   fcmTokens: string[];
@@ -73,6 +74,7 @@ const UserSchema: Schema<IUser, UserModel, IUserMethods> = new Schema({
     type: String,
     required: true,
     trim: true,
+    minlength: [10, "Password must be at least 10 characters"],
   },
   name: {
     type: String,
@@ -92,9 +94,14 @@ const UserSchema: Schema<IUser, UserModel, IUserMethods> = new Schema({
     type: String,
     required: true,
     enum: {
-      values: ["member", "user", "admin", "fd", "coach", "management", "branch_admin"],
+      values: ["member", "user", "admin", "management", "branch_admin", "coach"],
       message: "{VALUE} is not a valid role",
     },
+  },
+  locationId: {
+    type: Schema.Types.ObjectId,
+    ref: "Location",
+    required: false,
   },
   tokens: [TokenSchema],
   resetCode: {
@@ -117,15 +124,37 @@ const UserSchema: Schema<IUser, UserModel, IUserMethods> = new Schema({
   },
 });
 
+UserSchema.set("toJSON", {
+  transform(_doc, ret: Record<string, unknown>) {
+    delete ret.password;
+    delete ret.tokens;
+    delete ret.resetCode;
+    delete ret.fcmTokens;
+    return ret;
+  },
+});
+
+UserSchema.set("toObject", {
+  transform(_doc, ret: Record<string, unknown>) {
+    delete ret.password;
+    delete ret.tokens;
+    delete ret.resetCode;
+    delete ret.fcmTokens;
+    return ret;
+  },
+});
+
 UserSchema.pre("save", async function (next) {
   const user = this;
   if (user.isModified("password")) {
     try {
-      user.password = await bcrypt.hash(user.password, 8);
+      user.password = await bcrypt.hash(user.password, 12);
       next();
     } catch (error) {
       next(error as Error);
     }
+  } else {
+    next();
   }
 });
 
@@ -136,15 +165,14 @@ UserSchema.static(
     password: string,
   ): Promise<IUser & IUserMethods> {
     const user = await this.findOne({ phoneNumber });
-    if (!user)
-      throw new NotFoundError("USER_NOT_FOUND", "User not found", {
-        phoneNumber,
-      });
+    const invalid = new NotFoundError(
+      "INVALID_CREDENTIALS",
+      "Invalid credentials",
+      { phoneNumber },
+    );
+    if (!user) throw invalid;
     const isValid = await user.comparePassword(password);
-    if (!isValid)
-      throw new NotFoundError("INVALID_CREDENTIALS", "Invalid credentials", {
-        phoneNumber,
-      }); // user found but password is invalid
+    if (!isValid) throw invalid;
     return user;
   },
 );
@@ -202,7 +230,9 @@ UserSchema.method(
 UserSchema.method("removeToken", async function (token, fcmToken) {
   const user = this;
   user.tokens = user.tokens.filter((t) => t.token !== token);
-  if (fcmToken) user.fcmTokens.filter((fcm) => fcm !== fcmToken);
+  if (fcmToken) {
+    user.fcmTokens = user.fcmTokens.filter((fcm) => fcm !== fcmToken);
+  }
   await user.save();
 });
 

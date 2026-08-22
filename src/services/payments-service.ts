@@ -2,12 +2,14 @@ import Payment from "../models/payment";
 import Refund, { IRefund } from "../models/refund";
 import { ClientSession, Types } from "mongoose";
 import axios from "axios";
-import { BadRequestError, NotFoundError } from "../core/ApiError";
+import { BadRequestError, ConflictError, NotFoundError } from "../core/ApiError";
 import { IPayment } from "../models/payment";
 import logger from "../config/logger";
 import { refundPaymentToRentalSystem } from "./egygap-erp-service";
 import { startOfDay, endOfDay, startOfMonth, endOfMonth } from "date-fns";
 import { buildCairoDateRangeQuery } from "../utils/date-range-query";
+import { resolveOpenGymPaymentPurposeLabel } from "../utils/open-gym-payment-purpose";
+import { locationIdScalarQuery, locationIdsArrayQuery, toObjectId } from "../utils/location-scope";
 
 export type PaymentListEntry = IPayment & {
   entryType?: "REFUND" | "CASHOUT";
@@ -37,6 +39,7 @@ function mapRefundToPaymentEntry(refund: IRefund): PaymentListEntry {
     isMoneyOut: true,
     refundId: refund._id as Types.ObjectId,
     linkedPaymentId: refund.paymentId,
+    locationId: refund.locationId ?? undefined,
   } as PaymentListEntry;
 }
 
@@ -56,7 +59,8 @@ export class PaymentsService {
   static async getPayments(
     dateString?: string,
     month?: number,
-    year?: number
+    year?: number,
+    locationId?: string | null
   ): Promise<PaymentListEntry[]> {
     const paymentQuery = buildCairoDateRangeQuery(
       "paymentTime",
@@ -70,9 +74,15 @@ export class PaymentsService {
       // refund appears as its own negative row alongside the original purchase.
     };
 
+    if (locationId) {
+      Object.assign(paymentQuery, locationIdScalarQuery(locationId));
+      Object.assign(refundQuery, locationIdScalarQuery(locationId));
+    }
+
     const [payments, refunds] = await Promise.all([
       Payment.find(paymentQuery)
         .populate("uid")
+        .populate("locationId")
         .populate({
           path: "scid",
           populate: [
@@ -80,9 +90,14 @@ export class PaymentsService {
             { path: "locationId" },
           ],
         })
-        .populate("pkgId"),
+        .populate({
+          path: "pkgId",
+          select: "name category renewalPeriod locationId",
+          populate: { path: "locationId" },
+        }),
       Refund.find(refundQuery)
         .populate("memberId", "name phoneNumber email")
+        .populate("locationId")
         .sort({ createdAt: -1 }),
     ]);
 
@@ -96,11 +111,13 @@ export class PaymentsService {
     };
 
     function buildPaymentLabel(p: IPayment): string {
-      let itemName: string = purposeLabels[p.purpose] ?? p.purpose;
-      if (p.purpose === "PACKAGE" && p.pkgId) {
+      const openGymPurpose = resolveOpenGymPaymentPurposeLabel(p);
+      let itemName: string =
+        openGymPurpose ?? purposeLabels[p.purpose] ?? p.purpose;
+      if (!openGymPurpose && p.purpose === "PACKAGE" && p.pkgId) {
         const pkg = p.pkgId as unknown as { name: string };
         itemName = pkg.name;
-      } else if (p.scid) {
+      } else if (!openGymPurpose && p.scid) {
         const sc = p.scid as unknown as { cid?: { title?: string } };
         if (sc.cid?.title) itemName = sc.cid.title;
       }
@@ -229,21 +246,84 @@ export class PaymentsService {
       `/order?MerchantReferenceId=${merchantReferenceId}`
     );
     logger.info(`Geidea response for reference ${merchantReferenceId}:`, response.data);
-    const order = response.data.orders[0];
-    if (!order) throw new NotFoundError("INVALID_PAYMENT", "Payment not found");
-    if (order.currency && order.currency !== "EGP")
-      throw new BadRequestError(
-        "UNSUPPORTED_CURRENCY",
-        "All payments should be in egyptian pounds"
+    const orders: Array<{
+      orderId?: string;
+      currency?: string;
+      totalAmount?: number;
+      status?: string;
+      detailedStatus?: string;
+    }> = response.data?.orders || [];
+
+    if (orders.length > 1) {
+      logger.warn(
+        `Multiple Geidea orders for merchantReferenceId ${merchantReferenceId}: count=${orders.length} totalAmount=${response.data?.totalAmount}`,
       );
-    if (order.totalAmount !== amount)
-      throw new BadRequestError(
-        "INVALID_PAYMENT_AMOUNT",
-        "Payment amount doesn't match required amount"
-      );
-    if (order.status !== "Success")
+    }
+
+    if (orders.length === 0) {
+      throw new NotFoundError("INVALID_PAYMENT", "Payment not found");
+    }
+
+    const matchingSuccess = orders.filter((order) => {
+      if (order.currency && order.currency !== "EGP") return false;
+      if (order.totalAmount !== amount) return false;
+      return order.status === "Success";
+    });
+
+    if (matchingSuccess.length === 0) {
+      const first = orders[0];
+      if (first.currency && first.currency !== "EGP") {
+        throw new BadRequestError(
+          "UNSUPPORTED_CURRENCY",
+          "All payments should be in egyptian pounds",
+        );
+      }
+      if (first.totalAmount !== amount) {
+        throw new BadRequestError(
+          "INVALID_PAYMENT_AMOUNT",
+          "Payment amount doesn't match required amount",
+        );
+      }
       throw new BadRequestError("PAYMENT_FAILED", "Payment is not completed");
-    return order.orderId;
+    }
+
+    const orderIds = matchingSuccess
+      .map((o) => o.orderId)
+      .filter((id): id is string => !!id);
+
+    const alreadySaved = await Payment.find({
+      orderId: { $in: orderIds },
+    }).select("orderId");
+    const usedOrderIds = new Set(
+      alreadySaved.map((p) => p.orderId).filter((id): id is string => !!id),
+    );
+
+    const unused = matchingSuccess.find(
+      (o) => o.orderId && !usedOrderIds.has(o.orderId),
+    );
+    if (unused?.orderId) {
+      return unused.orderId;
+    }
+
+    // Every matching Success order is already recorded — caller should fulfill idempotently
+    throw new ConflictError(
+      "PAYMENT_ALREADY_RECORDED",
+      "Payment already recorded for this merchant reference",
+      { merchantReferenceId, orderIds },
+    );
+  }
+
+  /** Non-refunded APP payment already saved for this Geidea merchant reference. */
+  static async findPaymentByMerchantReference(
+    merchantReferenceId: string,
+    purpose?: string,
+  ): Promise<IPayment | null> {
+    const query: Record<string, unknown> = {
+      merchantReferenceId,
+      isRefunded: { $ne: true },
+    };
+    if (purpose) query.purpose = purpose;
+    return Payment.findOne(query).sort({ paymentTime: 1 });
   }
 
   static async savePayment(
@@ -276,7 +356,7 @@ export class PaymentsService {
       isRefunded: false,
       nonMemberName,
       nonMemberPhone,
-      locationId: locationId || undefined,
+      locationId: locationId ? (toObjectId(locationId) ?? undefined) : undefined,
     });
     await payment.save(session ? { session } : {});
     return payment;

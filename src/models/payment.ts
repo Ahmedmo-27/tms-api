@@ -21,7 +21,7 @@ export interface IPayment extends Document {
   note?: string;
   isRefunded: boolean;
   refundReason?: string;
-  locationId?: Types.ObjectId;
+  locationId: Types.ObjectId;
 }
 
 const PaymentSchema = new Schema({
@@ -93,10 +93,13 @@ const PaymentSchema = new Schema({
   locationId: {
     type: Schema.Types.ObjectId,
     ref: "Location",
-    required: false,
-    default: null,
+    required: true,
   },
 });
+
+PaymentSchema.index({ paymentTime: -1 });
+PaymentSchema.index({ locationId: 1, paymentTime: -1 });
+PaymentSchema.index({ uid: 1 });
 
 const Payment = mongoose.model<IPayment>("Payment", PaymentSchema);
 

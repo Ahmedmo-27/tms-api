@@ -20,14 +20,9 @@ interface IWaitlistedMember {
   addedAt: Date;
 }
 
-interface IWaitlistedMember {
-  uid: Types.ObjectId;
-  addedAt: Date;
-}
-
 export interface IScheduledClass extends Document {
   cid: Types.ObjectId;
-  locationId?: Types.ObjectId;
+  locationId: Types.ObjectId;
   startTime: Date;
   endTime: Date;
   availableSlots: number;
@@ -71,6 +66,10 @@ interface IScheduledClassStatics {
     scid: string,
     uid: string,
     session?: ClientSession,
+  ): Promise<void>;
+  removeFailedMemberScan(
+    scid: string,
+    uid: string,
   ): Promise<void>;
   addMemberToWaitlistOverride(scid: string, uid: string): Promise<void>;
   removeMemberFromWaitlist(scid: string, uid: string): Promise<void>;
@@ -123,7 +122,7 @@ const ScheduledClassSchema = new Schema<
   locationId: {
     type: Schema.Types.ObjectId,
     ref: "Location",
-    required: false,
+    required: true,
   },
   startTime: {
     type: Date,
@@ -384,6 +383,26 @@ ScheduledClassSchema.static(
 );
 
 ScheduledClassSchema.static(
+  "removeFailedMemberScan",
+  async function (
+    scid: string,
+    uid: string,
+  ): Promise<void> {
+    await this.updateOne(
+      { _id: new Types.ObjectId(scid) },
+      {
+        $pull: {
+          scans: {
+            uid: new Types.ObjectId(uid),
+            status: false,
+          },
+        },
+      },
+    );
+  },
+);
+
+ScheduledClassSchema.static(
   "addMemberToWaitlistOverride",
   async function (scid: string, uid: string): Promise<void> {
     const scheduledClass = await this.findById(scid);
@@ -457,6 +476,10 @@ ScheduledClassSchema.method(
     }
   },
 );
+
+ScheduledClassSchema.index({ coachId: 1 });
+ScheduledClassSchema.index({ startTime: 1 });
+ScheduledClassSchema.index({ locationId: 1, startTime: 1 });
 
 const ScheduledClass = mongoose.model<IScheduledClass, IScheduledClassModel>(
   "ScheduledClass",

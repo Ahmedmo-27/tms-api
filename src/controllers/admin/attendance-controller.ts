@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import Member from "../../models/member";
 import { SuccessResponse } from "../../core/ApiResponse";
 import asyncHandler from "../../utils/asyncHandler";
+import { resolveLocationFilter } from "../../utils/location-scope";
 
 type AttendanceRow = {
   memberId: string;
@@ -26,6 +27,8 @@ export const getAttendanceHistory = asyncHandler(async function (
     type,
     memberName,
   } = req.query;
+
+  const targetLocationId = resolveLocationFilter(req);
 
   const pageNumber = Math.max(1, parseInt(page as string, 10) || 1);
   const limitNumber = Math.max(1, parseInt(limit as string, 10) || 25);
@@ -65,6 +68,7 @@ export const getAttendanceHistory = asyncHandler(async function (
       for (const att of member.attendance || []) {
         const sc: any = att.scid;
         if (!sc || typeof sc !== "object") continue;
+        if (targetLocationId && sc.locationId?.toString() !== targetLocationId) continue;
         const time: Date = sc.startTime ? new Date(sc.startTime) : new Date(0);
         if (start && time < start) continue;
         if (end && time > end) continue;
@@ -89,6 +93,11 @@ export const getAttendanceHistory = asyncHandler(async function (
         if (start && time < start) continue;
         if (end && time > end) continue;
         const pkg: any = pt.pkgId;
+        
+        if (targetLocationId) {
+          const memberPkg = member.packages?.find((p: any) => p.pkgId?.toString() === pkg?._id?.toString());
+          if (!memberPkg || memberPkg.locationId?.toString() !== targetLocationId) continue;
+        }
         rows.push({
           memberId,
           memberName: name,

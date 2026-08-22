@@ -13,21 +13,18 @@ import logger from "./config/logger";
 import { getRequestContext } from "./utils/requestContext";
 import { specs, swaggerUi } from "./config/swagger";
 import cors from "cors";
+import { CORS_ORIGINS } from "./config/corsOrigins";
+import { securityHeaders } from "./middlewares/securityHeaders";
+
 const app = express();
 
 app.set("trust proxy", 1); // Enable trusting proxy to fix express-rate-limit X-Forwarded-For error
 
+app.use(securityHeaders);
+app.disable("x-powered-by");
 app.use(
   cors({
-    origin: [
-      "http://localhost:3000",
-      "http://localhost:3803",
-      "https://tms-dashboard-ashen.vercel.app",
-      "https://tms-dashboard-test.vercel.app", // Add mobile client
-      "https://tms-dashboard-psi.vercel.app",
-      "https://the-mind-space.com",
-      "https://www.the-mind-space.com",
-    ],
+    origin: CORS_ORIGINS,
     credentials: true, // Allow cookies / Authorization headers
   })
 );
@@ -35,16 +32,9 @@ app.use(express.json());
 app.use(cookieParser());
 app.use(defaultLimiter);
 
-// Add route logging middleware before other middleware
+// Sanitize request logging — never log passwords, tokens, or auth headers
 app.use((req: Request, res: Response, next: NextFunction) => {
-  logger.info("Route accessed:", {
-    method: req.method,
-    path: req.path,
-    params: req.params,
-    query: req.query,
-    body: req.body,
-    headers: req.headers,
-  });
+  logger.info("Route accessed:", getRequestContext(req, { includeHeaders: false }));
   next();
 });
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(specs));

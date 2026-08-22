@@ -5,6 +5,15 @@ import { IPayment } from "../models/payment";
 import { IRefund } from "../models/refund";
 import { InternalError } from "../core/ApiError";
 
+// Only Cairo (New Cairo) payments are synced to the ERP
+const CAIRO_LOCATION_ID = process.env.CAIRO_LOCATION_ID || "69ec4abad8394559ce7ca77c";
+
+/** Returns true only if the record belongs to the Cairo branch (or has no locationId — legacy records) */
+function isCairoRecord(locationId?: Types.ObjectId | string | null): boolean {
+  if (!locationId) return true; // legacy records with no locationId are treated as Cairo
+  return locationId.toString() === CAIRO_LOCATION_ID;
+}
+
 // Disable on testing or when env vars are not configured
 const disabled = process.env.ENVIRONMENT === "testing" ||
   !process.env.EGYGAP_ERP_BASE_URL ||
@@ -141,6 +150,11 @@ export function buildNegativeErpPayload(params: {
 
 /** PUBLIC FUNCTION → Call this from your main payment handler */
 export async function sendPaymentToRentalSystem(payment: IPayment) {
+  if (!isCairoRecord((payment as any).locationId)) {
+    logger.info(`ERP sync skipped — payment ${(payment._id as Types.ObjectId).toString()} is not a Cairo branch record`);
+    return;
+  }
+
   // Map your internal payment to ERP request format
   const invoiceDate = new Date(payment.paymentTime).toISOString().substring(0, 10);
   const payload = {
@@ -186,6 +200,11 @@ export async function refundPaymentToRentalSystem(
   payment: IPayment,
   amount?: number
 ) {
+  if (!isCairoRecord((payment as any).locationId)) {
+    logger.info(`ERP refund sync skipped — payment ${(payment._id as Types.ObjectId).toString()} is not a Cairo branch record`);
+    return;
+  }
+
   const payload = buildPaymentRefundErpPayload(payment, amount);
 
   if (!sessionCookie) await loginToERP();
@@ -215,6 +234,11 @@ export function buildRefundErpPayload(refund: IRefund) {
 }
 
 export async function sendRefundToRentalSystem(refund: IRefund) {
+  if (!isCairoRecord((refund as any).locationId)) {
+    logger.info(`ERP refund sync skipped — refund ${(refund._id as Types.ObjectId).toString()} is not a Cairo branch record`);
+    return;
+  }
+
   const payload = buildRefundErpPayload(refund);
 
   if (!sessionCookie) await loginToERP();

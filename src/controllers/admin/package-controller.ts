@@ -11,12 +11,17 @@ import { logoutUser } from "../auth/auth-controller";
 import NonUserPackage from "../../models/nonUserPackage";
 import { runInTransaction } from "../../utils/transaction";
 import { ClientSession } from "mongoose";
-import { resolveLocationFilter } from "../../utils/location-scope";
+import { resolveLocationFilter, resolveLocationIdForWrite, locationIdScalarQuery, toObjectId } from "../../utils/location-scope";
 import { normalizePhoneNumber } from "../../utils/phone";
 import { normalizeOpenGymPackageFields } from "../../utils/open-gym-package";
 import { Types } from "mongoose";
 import { getPackageDeletionImpact } from "../../services/package-deletion-guard";
 import logger from "../../config/logger";
+import {
+  isSameCairoDay,
+  startOfTodayCairo,
+  toStoredPackageDate,
+} from "../../utils/timezone";
 
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -157,7 +162,7 @@ export const getPackage = asyncHandler(async function (
   const { name, category, coachId } = req.query;
   const query: any = {};
   if (name) {
-    query.name = { $regex: name, $options: "i" };
+    query.name = { $regex: String(name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" };
   }
   if (category) {
     query.category = category;
@@ -170,7 +175,7 @@ export const getPackage = asyncHandler(async function (
     query.$or = [
       { locationId: { $exists: false } },
       { locationId: null },
-      { locationId: new Types.ObjectId(targetLocationId) },
+      locationIdScalarQuery(targetLocationId),
     ];
   }
   let packages = await Package.find(query)
@@ -193,8 +198,8 @@ export const addPackage = asyncHandler(
       classRestrictions,
       expiryPeriod,
       numberOfSessions,
-      locationId,
     } = req.body;
+
     validatePackagePayload({
       name,
       category,
@@ -206,14 +211,8 @@ export const addPackage = asyncHandler(
       classRestrictions,
     });
 
-    if (category === "OPEN_GYM") {
-      if (!locationId || !Types.ObjectId.isValid(locationId)) {
-        throw new BadRequestError(
-          "LOCATION_REQUIRED",
-          "Open gym packages require a branch locationId",
-        );
-      }
-    }
+    const targetLocationId =
+      category === "OPEN_GYM" ? resolveLocationIdForWrite(req) : null;
 
     await validatePackageRelations({
       category,
@@ -222,7 +221,6 @@ export const addPackage = asyncHandler(
       classRestrictions,
     });
 
-    const targetLocationId = category === "OPEN_GYM" ? String(locationId) : null;
     await assertNoDuplicatePackage(name, category, targetLocationId);
 
     const normalized = normalizeOpenGymPackageFields({
@@ -241,8 +239,8 @@ export const addPackage = asyncHandler(
       coachId,
       opensClasses,
       classRestrictions,
-      ...(locationId
-        ? { locationId: new Types.ObjectId(locationId) }
+      ...(targetLocationId
+        ? { locationId: new Types.ObjectId(targetLocationId) }
         : {}),
     });
     await pkg.save();
@@ -349,11 +347,18 @@ export const updatePackage = asyncHandler(
       opensClasses: req.body.opensClasses ?? existing.opensClasses,
     };
     const normalized = normalizeOpenGymPackageFields(merged);
-    const updatePayload = {
+    const updatePayload: Record<string, unknown> = {
       ...req.body,
       expiryPeriod: normalized.expiryPeriod,
       numberOfSessions: normalized.numberOfSessions,
     };
+    if (updatePayload.locationId !== undefined && updatePayload.locationId !== null) {
+      const locationObjectId = toObjectId(updatePayload.locationId as string);
+      if (!locationObjectId) {
+        throw new BadRequestError("INVALID_LOCATION", "Invalid locationId");
+      }
+      updatePayload.locationId = locationObjectId;
+    }
 
     const pkg = await Package.findByIdAndUpdate(id, updatePayload, { new: true });
     if (!pkg)
@@ -366,9 +371,17 @@ export const subMemberToPackage = asyncHandler(async function (
   req: Request,
   res: Response
 ): Promise<void> {
-  const { uid, pkgId, pkgStartDate, paymentMethod, paymentDate, amount, note } =
-    req.body;
-  const targetLocationId = resolveLocationFilter(req) ?? undefined;
+  const {
+    uid,
+    pkgId,
+    pkgStartDate,
+    paymentMethod,
+    paymentDate,
+    amount,
+    note,
+    pendingDeduction,
+  } = req.body;
+  const targetLocationId = resolveLocationIdForWrite(req);
   const io = req.app.get("io");
   await SubscriptionsService.frontDeskSubscribeToPackage(
     uid,
@@ -379,7 +392,8 @@ export const subMemberToPackage = asyncHandler(async function (
     amount,
     note,
     io,
-    targetLocationId
+    targetLocationId,
+    pendingDeduction === true || pendingDeduction === "true",
   );
   new SuccessResponse("Package Added!").send(res);
 });
@@ -406,7 +420,7 @@ export const editMemberPackage = asyncHandler(async function (
   const pkg = member.packages.find(
     (p) =>
       p.pkgId.toString() === pkgId &&
-      p.pkgStartDate.toDateString() === new Date(pkgStartDate).toDateString()
+      isSameCairoDay(p.pkgStartDate, pkgStartDate)
   );
   if (!pkg)
     throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found", {
@@ -414,9 +428,9 @@ export const editMemberPackage = asyncHandler(async function (
     });
 
   if (pkgEndDate) {
-    pkg.pkgEndDate = new Date(pkgEndDate);
+    pkg.pkgEndDate = toStoredPackageDate(pkgEndDate);
 
-    if (new Date(pkgEndDate) < new Date()) {
+    if (toStoredPackageDate(pkgEndDate) < startOfTodayCairo()) {
       pkg.status = "EXPIRED";
     } else {
       pkg.status = "ACTIVE";
@@ -446,7 +460,7 @@ export const adjustMemberPackageClasses = asyncHandler(async function (
   const pkg = member.packages.find(
     (p) =>
       p.pkgId.toString() === pkgId &&
-      p.pkgStartDate.toDateString() === new Date(pkgStartDate).toDateString()
+      isSameCairoDay(p.pkgStartDate, pkgStartDate)
   );
   if (!pkg)
     throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found", { pkgId });
@@ -498,7 +512,7 @@ export const addNonUserPackage = asyncHandler(async function (
     locationId,
   } = req.body;
 
-  const targetLocationId = resolveLocationFilter(req) ?? undefined;
+  const targetLocationId = resolveLocationIdForWrite(req);
 
   const trimmedName = (name as string)?.trim();
   const cleanPhone = normalizePhoneNumber(phoneNumber as string);
@@ -530,7 +544,7 @@ export const getNonUserPackages = asyncHandler(async function (
   const { name, phoneNumber, date } = req.query;
   const query: any = {};
   if (name) {
-    query.name = { $regex: name, $options: "i" };
+    query.name = { $regex: String(name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" };
   }
   if (phoneNumber) {
     query.phoneNumber = phoneNumber;

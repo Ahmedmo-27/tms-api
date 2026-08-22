@@ -1,6 +1,8 @@
 import mongoose, { Schema, Model, Types } from "mongoose";
 import logger from "../config/logger";
 import Class from "./class";
+import { CAIRO_TZ, startOfDateCairo, toStoredPackageDate } from "../utils/timezone";
+import { fromZonedTime, toZonedTime } from "date-fns-tz";
 
 // Mix packages include finite scheduled-class credits plus time-based open gym.
 // Open gym scans must not debit remainingClasses (those are for booked classes only).
@@ -43,7 +45,12 @@ export function getPackageEndDate(
   },
 ): Date {
   const days = resolvePackageExpiryDays(pkg);
-  return new Date(new Date(startDate).getTime() + days * 24 * 60 * 60 * 1000);
+  // Add expiry days on the Cairo calendar, then store as UTC noon of that day
+  // so UTC-naive formatters keep the same calendar date.
+  const start = startOfDateCairo(startDate);
+  const cairo = toZonedTime(start, CAIRO_TZ);
+  cairo.setDate(cairo.getDate() + days);
+  return toStoredPackageDate(fromZonedTime(cairo, CAIRO_TZ));
 }
 
 export interface IClassRestriction {
@@ -178,6 +185,10 @@ PackageSchema.static(
     return pkgIds;
   }
 );
+
+PackageSchema.index({ coachId: 1 });
+PackageSchema.index({ locationId: 1 });
+PackageSchema.index({ name: 1 });
 
 const Package = mongoose.model<IPackage, IPackageModel>(
   "Package",

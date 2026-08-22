@@ -14,7 +14,7 @@ export const getMemberProfile: RequestHandler = asyncHandler(async function (
   const _id = authReq.user._id;
 
   let member = await Member.findOne({ uid: _id })
-    .populate("uid")
+    .populate({ path: "uid", select: "-password -tokens -resetCode -fcmTokens" })
     .populate({ path: "packages.pkgId" });
 
   if (!member && authReq.user.role === "user") {

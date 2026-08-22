@@ -1,5 +1,6 @@
 import { sendPasswordResetEmail } from "../../services/email-service";
-import { Request, Response, CookieOptions } from "express";
+import { Request, Response } from "express";
+import crypto from "crypto";
 import User from "../../models/user";
 import Member from "../../models/member";
 import Coach from "../../models/coach";
@@ -15,15 +16,47 @@ import { SuccessResponse } from "../../core/ApiResponse";
 import asyncHandler from "../../utils/asyncHandler";
 import Package from "../../models/package";
 import ScheduledClass from "../../models/scheduledClass";
+import Location from "../../models/location";
 import { Types } from "mongoose";
 import { SubscriptionsService } from "../../services/subscriptions-service";
 import { runInTransaction } from "../../utils/transaction";
 import { normalizePhoneNumber } from "../../utils/phone";
+import { authCookieOptions } from "../../utils/authCookies";
+
+function assertPasswordStrength(password: unknown): string {
+  if (typeof password !== "string" || password.length < 10) {
+    throw new BadRequestError(
+      "WEAK_PASSWORD",
+      "Password must be at least 10 characters",
+    );
+  }
+  return password;
+}
+
+async function enrichUserWithBranch(user: any) {
+  const plain = user.toObject ? user.toObject() : { ...user };
+  delete plain.password;
+  delete plain.tokens;
+  delete plain.resetCode;
+  delete plain.fcmTokens;
+
+  if (plain.locationId) {
+    plain.locationId = plain.locationId.toString();
+    const location = await Location.findById(plain.locationId);
+    if (location) {
+      plain.branchName = location.branchName;
+      plain.branchLocation = location.location;
+    }
+  }
+
+  return plain;
+}
 
 export const verifyToken = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
+    const user = await enrichUserWithBranch((req as AuthRequest).user);
     new SuccessResponse("Token Verified", {
-      user: (req as AuthRequest).user,
+      user,
     }).send(res);
   }
 );
@@ -31,6 +64,7 @@ export const verifyToken = asyncHandler(
 export const registerUserManually = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const { name, phoneNumber, password } = req.body;
+    assertPasswordStrength(password);
     const cleanPhoneNumber = normalizePhoneNumber(phoneNumber);
     if (await User.findOne({ phoneNumber: cleanPhoneNumber }))
       throw new ConflictError("USER_ALREADY_EXISTS", "User already exists", {
@@ -68,44 +102,36 @@ export const registerUserManually = asyncHandler(
 
 export const registerUser = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
-    const { name, email, password, phoneNumber, role, fcmToken } = req.body;
-    //Verify fcmToken here
+    const { name, email, password, phoneNumber, fcmToken } = req.body;
+    assertPasswordStrength(password);
     const deviceType = req.headers["x-device-type"] ? "mobile" : "web";
     logger.info("Started user registeration", {
-      data: { name, email, phoneNumber, role },
+      data: { name, email, phoneNumber },
     });
     const cleanPhoneNumber = phoneNumber.replace(/\s/g, "");
 
-    // Check if user exists with phone
     if (await User.findOne({ phoneNumber: cleanPhoneNumber }))
       throw new ConflictError("PHONE_ALREADY_EXISTS", "Phone number already exists", {
         phoneNumber,
       });
 
-    // Check if user exists with email
     if (await User.findOne({ email: email.toLowerCase() }))
       throw new ConflictError("EMAIL_ALREADY_EXISTS", "Email already exists", {
         email,
       });
 
+    // Never accept role from the client — public registration is always pending "user"
     const user = new User({
       name,
       email: email.toLowerCase(),
       password,
       phoneNumber: cleanPhoneNumber,
-      role,
+      role: "user",
     });
     await user.save();
     const token = await user.generateAuthToken(deviceType, fcmToken);
     if (deviceType == "web") {
-      const isProd = process.env.NODE_ENV === "production";
-      const cookieOptions: CookieOptions = {
-        httpOnly: true,
-        secure: isProd,
-        sameSite: isProd ? ("none" as "none" | "lax" | "strict") : ("lax" as "none" | "lax" | "strict"),
-        maxAge: 30 * 24 * 60 * 60 * 1000,
-      };
-      res.cookie("token", token, cookieOptions);
+      res.cookie("token", token, authCookieOptions());
       new SuccessResponse("Web User Registered!", { user, token }).send(res);
     } else {
       new SuccessResponse("Mobile User Registered!", { user, token }).send(res);
@@ -116,10 +142,9 @@ export const registerUser = asyncHandler(
 export const loginUser = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const { phoneNumber, password, fcmToken } = req.body;
-    //verify fcmToken here
     const deviceType = req.headers["x-device-type"] ? "mobile" : "web";
     logger.info("Started user login", {
-      data: { phoneNumber, deviceType, fcmToken },
+      data: { phoneNumber, deviceType },
     });
     const cleanPhoneNumber = phoneNumber.replace(/\s/g, "");
     const user = await User.findByCredentials(cleanPhoneNumber, password);
@@ -130,6 +155,15 @@ export const loginUser = asyncHandler(
       role: user.role,
       name: user.name,
     };
+
+    if ((user as any).locationId) {
+      responseData.locationId = (user as any).locationId.toString();
+      const location = await Location.findById((user as any).locationId);
+      if (location) {
+        responseData.branchName = location.branchName;
+        responseData.branchLocation = location.location;
+      }
+    }
 
     if (user.role === "coach") {
       let hasPtSessions = false;
@@ -146,14 +180,7 @@ export const loginUser = asyncHandler(
       responseData.hasScheduledClasses = hasScheduledClasses;
     }
     if (deviceType == "web") {
-      const isProd = process.env.NODE_ENV === "production";
-      const cookieOptions: CookieOptions = {
-        httpOnly: true,
-        secure: isProd,
-        sameSite: isProd ? ("none" as "none" | "lax" | "strict") : ("lax" as "none" | "lax" | "strict"),
-        maxAge: 30 * 24 * 60 * 60 * 1000,
-      };
-      res.cookie("token", token, cookieOptions);
+      res.cookie("token", token, authCookieOptions());
       new SuccessResponse("Web User Logged In!", responseData).send(res);
     } else {
       new SuccessResponse("Mobile User Logged In!", responseData).send(res);
@@ -164,9 +191,9 @@ export const loginUser = asyncHandler(
 export const logoutUser = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const authReq = req as AuthRequest;
-    const { fcmToken } = req.body
+    const { fcmToken } = req.body;
     logger.info("Started user logout", {
-      data: { user: authReq.user },
+      data: { userId: authReq.user._id },
     });
     const token =
       authReq.deviceType === "web"
@@ -175,7 +202,7 @@ export const logoutUser = asyncHandler(
     const user = authReq.user;
     await user.removeToken(token, fcmToken);
     if (authReq.deviceType === "web") res.clearCookie("token");
-    new SuccessResponse("User Logged Out!", user).send(res);
+    new SuccessResponse("User Logged Out!", { userId: String(user._id) }).send(res);
   }
 );
 
@@ -183,12 +210,14 @@ export const logoutFromAllDevices = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const authReq = req as AuthRequest;
     logger.info("Started user logout from all devices", {
-      data: { user: authReq.user },
+      data: { userId: authReq.user._id },
     });
     const user = authReq.user;
-    user.removeAllTokens();
+    await user.removeAllTokens();
     if (authReq.deviceType === "web") res.clearCookie("token");
-    new SuccessResponse("User Logged Out From All Devices!", user).send(res);
+    new SuccessResponse("User Logged Out From All Devices!", {
+      userId: String(user._id),
+    }).send(res);
   }
 );
 
@@ -197,34 +226,40 @@ export const sendResetCode = asyncHandler(
     const { email } = req.body;
     if (!email || email === "")
       throw new BadRequestError("INVALID_EMAIL", "Email is required");
+
+    const genericMessage =
+      "If an account exists for that email, a reset code has been sent.";
+
     const user = await User.findOne({ email: email.toLowerCase() });
-    if (!user) throw new NotFoundError("USER_NOT_FOUND", "User not found");
-    const resetCode = Math.floor(Math.random() * 1000000)
-      .toString()
-      .padStart(6, "0");
-    user.resetCode = resetCode;
-    await user.save();
-    await sendPasswordResetEmail(user.email, resetCode);
-    new SuccessResponse("Reset code sent!", { email: user.email }).send(res);
+    if (user) {
+      const resetCode = crypto.randomInt(0, 1_000_000).toString().padStart(6, "0");
+      user.resetCode = resetCode;
+      await user.save();
+      await sendPasswordResetEmail(user.email, resetCode);
+    }
+
+    new SuccessResponse(genericMessage, {}).send(res);
   }
 );
 
 export const confirmPasswordReset = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const { resetCode, password, email } = req.body;
+    assertPasswordStrength(password);
     if (!email || email === "")
       throw new BadRequestError("INVALID_EMAIL", "Email is required");
     const user = await User.findOne({ email: email.toLowerCase() });
-    if (!user) throw new NotFoundError("User not found");
-    if (user.resetCode !== resetCode)
-      throw new NotFoundError("RESET_REQUEST_NOT_FOUND", "Invalid reset code", {
-        resetCode,
-      });
+    if (!user || !user.resetCode || user.resetCode !== resetCode) {
+      throw new NotFoundError(
+        "RESET_REQUEST_NOT_FOUND",
+        "Invalid or expired reset request",
+      );
+    }
     user.password = password;
     user.resetCode = "";
     await user.removeAllTokens();
     await user.save();
-    new SuccessResponse("Password reset!", user).send(res);
+    new SuccessResponse("Password reset!", { email: user.email }).send(res);
   }
 );
 
@@ -243,29 +278,27 @@ export const deactivateAccount = asyncHandler(
       });
     member.isActive = false;
     await member.save();
-    new SuccessResponse("User Deleted!", user).send(res);
+    new SuccessResponse("User Deleted!", { userId: String(user._id) }).send(res);
   }
 );
 
 export const registerCoachUser = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const { name, email, password, phoneNumber, coachId } = req.body;
+    assertPasswordStrength(password);
 
     const cleanPhoneNumber = phoneNumber.replace(/\s/g, "");
 
-    // Check if user exists with phone
     if (await User.findOne({ phoneNumber: cleanPhoneNumber }))
       throw new ConflictError("PHONE_ALREADY_EXISTS", "Phone number already exists", {
         phoneNumber,
       });
 
-    // Check if user exists with email
     if (await User.findOne({ email: email.toLowerCase() }))
       throw new ConflictError("EMAIL_ALREADY_EXISTS", "Email already exists", {
         email,
       });
 
-    // Verify coach exists and isn't linked
     const coach = await Coach.findById(coachId);
     if (!coach) throw new NotFoundError("COACH_NOT_FOUND", "Coach not found", { id: coachId });
     if (coach.userId) throw new ConflictError("COACH_ALREADY_LINKED", "Coach already has an account");

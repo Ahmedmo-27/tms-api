@@ -79,3 +79,58 @@ Changes:
 - Optional search pre-fills existing members or pending signups
 - Relaxed guest name validation; phone normalized before API call
 - Branch `locationId` forwarded for guest open gym package purchases
+
+## Management branch selection in modals (latest)
+
+Branch: `cursor/management-branch-modal-selection`
+
+When management views **all branches** (no `?locationId=` filter), write actions now show a **branch picker inside each modal** instead of failing with `BRANCH_REQUIRED`.
+
+Apply the patch (use **UTF-8** path; `git am` does not work with PowerShell redirects):
+
+```bash
+cd tms-dashboard
+git checkout -b cursor/management-branch-modal-selection
+git am "D:/Work/The Mind Space/Testing Environment/API Test/patches/tms-dashboard/management-branch-modal-selection.patch"
+git push -u origin cursor/management-branch-modal-selection
+```
+
+From `Dashboard Test/tms-dashboard`, the patch path is:
+
+```powershell
+git am "../../API Test/patches/tms-dashboard/management-branch-modal-selection.patch"
+```
+
+### Endpoints covered (management role, requires `locationId` on write)
+
+| Dashboard surface | API route |
+|---|---|
+| Add package to member (`sub-package`, open gym subscribe) | `POST /admin/member-packages` |
+| Guest / non-member package modals | `POST /admin/nonUserPackage` |
+| Open gym drop-in (member + guest) | `POST /admin/openGym/memberDropIn`, `.../guestDropIn` |
+| Open gym pricing dialog | `POST /admin/openGym/dropInPrice`, package CRUD |
+| Add OPEN_GYM catalog package | `POST /admin/packages` |
+| Walk-in booking | `POST /admin/nonUserBooking/walk-in` |
+| Guest payment (Will Pay) | `POST /admin/nonUserBooking/pay` |
+| Checkout / complete order | `POST /admin/orders` |
+| Cash out | `POST /admin/refunds/cashout` |
+| Schedule class | already had location picker in modal |
+
+`branch_admin` users are unchanged — branch comes from their assigned `user.locationId`.
+
+## Member package pending deduction (latest)
+
+Branch: `cursor/member-package-pending-deduction`
+
+When adding a package from a member profile, staff can check **Attended a class using this package** to deduct one session at subscribe time (same as guest/non-member package modals).
+
+Apply the patch:
+
+```bash
+cd tms-dashboard
+git checkout -b cursor/member-package-pending-deduction
+git am "D:/Work/The Mind Space/Testing Environment/API Test/patches/tms-dashboard/member-package-pending-deduction.patch"
+git push -u origin cursor/member-package-pending-deduction
+```
+
+Requires matching `tms-api` changes: `POST /admin/member-packages` accepts optional `pendingDeduction: true`.

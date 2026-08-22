@@ -1,4 +1,4 @@
-import { toZonedTime, fromZonedTime, formatInTimeZone } from "date-fns-tz";
+import { formatInTimeZone, toZonedTime, fromZonedTime } from "date-fns-tz";
 
 export const CAIRO_TZ = "Africa/Cairo";
 
@@ -14,17 +14,35 @@ export function endOfTodayCairo(): Date {
   return fromZonedTime(cairoNow, CAIRO_TZ);
 }
 
+/**
+ * Calendar-day start in Africa/Cairo.
+ * Accepts date-only strings (yyyy-MM-dd), Date instances, or ISO/local date strings.
+ * Date-only values are interpreted as that Cairo calendar day (not UTC midnight).
+ */
 export function startOfDateCairo(date: Date | string): Date {
+  if (typeof date === "string") {
+    const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date.trim());
+    if (dateOnly) {
+      const [, y, m, d] = dateOnly;
+      // Construct noon UTC then snap to Cairo start-of-day to avoid UTC-midnight
+      // shifting the calendar day for positive-offset zones.
+      const approx = new Date(Date.UTC(Number(y), Number(m) - 1, Number(d), 12));
+      const cairoDate = toZonedTime(approx, CAIRO_TZ);
+      cairoDate.setHours(0, 0, 0, 0);
+      return fromZonedTime(cairoDate, CAIRO_TZ);
+    }
+  }
   const cairoDate = toZonedTime(new Date(date), CAIRO_TZ);
   cairoDate.setHours(0, 0, 0, 0);
   return fromZonedTime(cairoDate, CAIRO_TZ);
 }
 
 export function endOfDateCairo(date: Date | string): Date {
-  const cairoDate = toZonedTime(new Date(date), CAIRO_TZ);
+  const cairoDate = toZonedTime(startOfDateCairo(date), CAIRO_TZ);
   cairoDate.setHours(23, 59, 59, 999);
   return fromZonedTime(cairoDate, CAIRO_TZ);
 }
+
 /** Half-open [start, end) Cairo calendar-day bounds for package start-day matching. */
 export function cairoDayRange(date: Date | string): { start: Date; end: Date } {
   const start = startOfDateCairo(date);

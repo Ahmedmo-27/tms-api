@@ -1,159 +1,182 @@
 import { Types } from "mongoose";
 import ScheduledClass from "../models/scheduledClass";
-import Member from "../models/member";
+import Member, { IMemberPackageData } from "../models/member";
 import Package from "../models/package";
 import DeductionLog from "../models/deductionLog";
 import Class from "../models/class";
 import Coach, { ICoach } from "../models/coach";
 import DailyAttendance from "../models/dailyAttendance";
+import CoachNotification from "../models/coachNotification";
+import Ticket from "../models/ticket";
+import User from "../models/user";
+import Location from "../models/location";
 import { BadRequestError, ForbiddenError, NotFoundError } from "../core/ApiError";
-import { ClientResponseDto, PaginatedClientsResponseDto, DeductSessionRequestDto, DeductSessionResponseDto, MemberPackageResponseDto, ScheduleResponseDto, mapDeductSessionResponseDto, mapMemberPackageResponseDto } from "../dtos/coach.dto";
+import {
+  ClientResponseDto,
+  PaginatedClientsResponseDto,
+  DeductSessionRequestDto,
+  DeductSessionResponseDto,
+  MemberPackageResponseDto,
+  ScheduleResponseDto,
+  CoachMeDto,
+  TodaySummaryDto,
+  TodaySessionSummaryDto,
+  TodayPtAlertDto,
+  CoachNotificationDto,
+  DeductionHistoryItemDto,
+  mapDeductSessionResponseDto,
+  mapMemberPackageResponseDto,
+} from "../dtos/coach.dto";
 import { runInTransaction } from "../utils/transaction";
-import { addDays, format } from "date-fns";
-import { formatInTimeZone } from "date-fns-tz";
+import { addDays, format, startOfWeek } from "date-fns";
+import { formatInTimeZone, fromZonedTime, toZonedTime } from "date-fns-tz";
+import { CAIRO_TZ, cairoDateKey, isSameCairoDay } from "../utils/timezone";
 
 export class CoachService {
   static async getCoachDocumentByUserId(userId: Types.ObjectId): Promise<ICoach | null> {
     return Coach.findOne({ userId });
   }
 
-  /**
-   * Returns the deduplicated list of members who have been booked into any
-   * ScheduledClass assigned to the given coach or have PT packages with the coach.
-   */
-  static async getClients(
+  private static summarizeActivePt(
+    packages: IMemberPackageData[],
     coachDocId: Types.ObjectId,
-    options?: { page?: number; limit?: number; search?: string; filter?: string; type?: string }
-  ): Promise<PaginatedClientsResponseDto> {
-    const clientsMap = new Map<string, ClientResponseDto>();
-    const ptOnly = options?.type === "PT";
+    pkgMeta: Map<string, { category: string; coachId: string | null }>,
+  ): Pick<ClientResponseDto, "remainingClasses" | "daysUntilExpiry" | "nearestExpiryDate"> {
+    const now = Date.now();
+    const coachIdStr = coachDocId.toString();
+    let lowestRemaining: number | null = null;
+    let nearestEnd: Date | null = null;
 
-    // Source 1: PT clients
-    const ptPackages = await Package.find({ coachId: coachDocId });
-    const ptPkgIds = ptPackages.map(p => p._id);
-    const ptMembers = await Member.find({ "packages.pkgId": { $in: ptPkgIds } }).populate<{ uid: any }>("uid");
+    for (const pkg of packages) {
+      const meta = pkgMeta.get(pkg.pkgId.toString());
+      if (!meta) continue;
+      if (meta.category !== "PERSONAL_TRAINING") continue;
+      if (!meta.coachId || meta.coachId !== coachIdStr) continue;
+      if (pkg.status !== "ACTIVE") continue;
+      if (pkg.pkgEndDate.getTime() < now) continue;
 
-    // Source 2: Group session clients (skipped when PT-only is requested)
-    const groupMembers = [];
-    if (!ptOnly) {
-      const classes = await ScheduledClass.find({ coachId: coachDocId });
-      const groupUidSet = new Set<string>();
-      for (const cls of classes) {
-        for (const booking of cls.bookedMembers) {
-          groupUidSet.add(booking.uid.toString());
-        }
+      if (lowestRemaining === null || pkg.remainingClasses < lowestRemaining) {
+        lowestRemaining = pkg.remainingClasses;
       }
-      for (const uidStr of groupUidSet) {
-        const member = await Member.findOne({ uid: new Types.ObjectId(uidStr) }).populate<{ uid: any }>("uid");
-        if (member && member.uid) groupMembers.push(member);
+      if (nearestEnd === null || pkg.pkgEndDate.getTime() < nearestEnd.getTime()) {
+        nearestEnd = pkg.pkgEndDate;
       }
     }
 
-    // Collect all unique pkgIds from both sets of members to find allowed packages
+    return {
+      remainingClasses: lowestRemaining,
+      daysUntilExpiry: nearestEnd ? Math.ceil((nearestEnd.getTime() - now) / 86400000) : null,
+      nearestExpiryDate: nearestEnd ? nearestEnd.toISOString() : null,
+    };
+  }
+
+  private static locationLabel(locationId: unknown): string | null {
+    if (!locationId || typeof locationId !== "object") return null;
+    const loc = locationId as { branchName?: string; location?: string };
+    return loc.branchName || loc.location || null;
+  }
+
+  /**
+   * PT roster only: members who have (or had) a Personal Training package
+   * assigned to this coach. Scheduled-class bookings are not included.
+   */
+  static async getClients(
+    coachDocId: Types.ObjectId,
+    options?: {
+      page?: number;
+      limit?: number;
+      search?: string;
+      filter?: string;
+      type?: string;
+      status?: string;
+      alert?: string;
+    }
+  ): Promise<PaginatedClientsResponseDto> {
+    const clientsMap = new Map<string, ClientResponseDto>();
+
+    const ptPackages = await Package.find({ coachId: coachDocId });
+    const ptPkgIds = ptPackages.map(p => p._id);
+    const ptMembers = await Member.find({ "packages.pkgId": { $in: ptPkgIds } }).populate<{ uid: any }>({
+      path: "uid",
+      select: "-password -tokens -resetCode -fcmTokens",
+    });
+
     const allPkgIds = new Set<string>();
     for (const member of ptMembers) {
       member.packages.forEach(p => allPkgIds.add(p.pkgId.toString()));
     }
-    for (const member of groupMembers) {
-      member.packages.forEach(p => allPkgIds.add(p.pkgId.toString()));
-    }
 
-    // Fetch the packages to determine which are allowed (owned by coach or general group packages)
     const packagesInfo = await Package.find({ _id: { $in: Array.from(allPkgIds) } });
     const allowedPkgIdSet = new Set<string>();
+    const pkgMeta = new Map<string, { category: string; coachId: string | null }>();
+    const coachIdStr = coachDocId.toString();
     for (const pkg of packagesInfo) {
-      if (!pkg.coachId || pkg.coachId.toString() === coachDocId.toString()) {
+      const pkgCoachId = pkg.coachId ? String(pkg.coachId) : null;
+      pkgMeta.set(pkg._id.toString(), {
+        category: pkg.category,
+        coachId: pkgCoachId,
+      });
+      if (!pkgCoachId || pkgCoachId === coachIdStr) {
         allowedPkgIdSet.add(pkg._id.toString());
       }
     }
 
-    // Process PT members
     for (const member of ptMembers) {
       if (!member.uid) continue;
       const uidStr = member.uid._id.toString();
       const activePackagesCount = member.packages.filter(p =>
         allowedPkgIdSet.has(p.pkgId.toString()) && p.status === "ACTIVE"
       ).length;
-
+      const pt = this.summarizeActivePt(member.packages, coachDocId, pkgMeta);
       clientsMap.set(uidStr, {
         memberId: uidStr,
         name: member.uid.name ?? "",
         email: member.uid.email ?? "",
         phoneNumber: member.uid.phoneNumber ?? "",
         source: ["PT"],
-        activePackagesCount
+        activePackagesCount,
+        ...pt,
       });
-    }
-
-    // Process Group members
-    for (const member of groupMembers) {
-      const uidStr = member.uid._id.toString();
-      const activePackagesCount = member.packages.filter(p =>
-        allowedPkgIdSet.has(p.pkgId.toString()) && p.status === "ACTIVE"
-      ).length;
-
-      const existing = clientsMap.get(uidStr);
-      if (existing) {
-        if (!existing.source.includes("GROUP")) {
-          existing.source = [...existing.source, "GROUP"];
-        }
-        existing.activePackagesCount = Math.max(existing.activePackagesCount, activePackagesCount);
-      } else {
-        clientsMap.set(uidStr, {
-          memberId: uidStr,
-          name: member.uid.name ?? "",
-          email: member.uid.email ?? "",
-          phoneNumber: member.uid.phoneNumber ?? "",
-          source: ["GROUP"],
-          activePackagesCount
-        });
-      }
     }
 
     let allClients = Array.from(clientsMap.values());
 
-    // When PT-only mode, strip any client that isn't solely PT-sourced
-    if (ptOnly) {
-      allClients = allClients.filter(c => c.source.includes("PT"));
+    const status = options?.status ?? "active";
+    if (status === "past") {
+      allClients = allClients.filter(c => c.source.includes("PT") && c.activePackagesCount === 0);
+    } else if (status === "all") {
+      allClients = allClients.filter(c => c.activePackagesCount > 0 || c.source.includes("PT"));
+    } else {
+      allClients = allClients.filter(c => c.activePackagesCount > 0);
     }
 
-    // Exclude clients with 0 active packages
-    allClients = allClients.filter(c => c.activePackagesCount > 0);
+    if (options?.alert === "low") {
+      allClients = allClients.filter(c => c.remainingClasses !== null && c.remainingClasses <= 2);
+    } else if (options?.alert === "expiring") {
+      allClients = allClients.filter(c => c.daysUntilExpiry !== null && c.daysUntilExpiry <= 14);
+    }
 
-    // Apply search
     if (options?.search) {
       const q = options.search.toLowerCase();
-      allClients = allClients.filter(c => 
+      allClients = allClients.filter(c =>
         c.name.toLowerCase().includes(q) || c.phoneNumber.includes(options.search!)
       );
     }
 
-    // Apply filter
-    if (options?.filter && options.filter !== "All") {
-      const f = options.filter;
-      if (f === "PT only") {
-        allClients = allClients.filter(c => c.source.includes("PT") && !c.source.includes("GROUP"));
-      } else if (f === "Group only") {
-        allClients = allClients.filter(c => c.source.includes("GROUP") && !c.source.includes("PT"));
-      } else if (f === "Both") {
-        allClients = allClients.filter(c => c.source.includes("PT") && c.source.includes("GROUP"));
-      }
-    }
+    allClients.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
 
     const total = allClients.length;
     const page = options?.page ?? 1;
     const limit = options?.limit ?? 10;
-    const totalPages = Math.ceil(total / limit);
+    const totalPages = Math.max(1, Math.ceil(total / limit));
     const skip = (page - 1) * limit;
 
-    const paginatedClients = allClients.slice(skip, skip + limit);
-
     return {
-      clients: paginatedClients,
+      clients: allClients.slice(skip, skip + limit),
       total,
       page,
       limit,
-      totalPages
+      totalPages,
     };
   }
 
@@ -191,12 +214,14 @@ export class CoachService {
     const allowedPkgIdSet = new Set<string>();
     const packageCategoryMap = new Map<string, string>();
     const packageNameMap = new Map<string, string>();
+    const packageSessionsMap = new Map<string, number>();
 
     for (const pkg of packagesInfo) {
       if (!pkg.coachId || pkg.coachId.toString() === coachDocId.toString()) {
         allowedPkgIdSet.add(pkg._id.toString());
         packageCategoryMap.set(pkg._id.toString(), pkg.category);
         packageNameMap.set(pkg._id.toString(), pkg.name);
+        packageSessionsMap.set(pkg._id.toString(), pkg.numberOfSessions);
         if (pkg.coachId && pkg.coachId.toString() === coachDocId.toString()) {
           hasPtPackage = true;
         }
@@ -224,7 +249,8 @@ export class CoachService {
       return { 
         ...dto, 
         name: pkgName || dto.name, 
-        isPtPackage: category === "PERSONAL_TRAINING" 
+        isPtPackage: category === "PERSONAL_TRAINING",
+        totalClasses: packageSessionsMap.get(pkg.pkgId.toString()),
       };
     });
   }
@@ -279,10 +305,9 @@ export class CoachService {
       throw new ForbiddenError("ACCESS_DENIED", "No scheduled class or personal package links this coach to the member");
     }
 
-    // Date-normalize: match by same calendar day using toDateString() comparison
-    // (consistent with the pattern used in editPackageClasses / editExpiryDate)
-    const pkg = member.packages.find(
-      (p) => p.pkgStartDate.toDateString() === parsedPackageStartDate.toDateString(),
+    // Match by Africa/Cairo calendar day (avoids UTC toDateString off-by-one).
+    const pkg = member.packages.find((p) =>
+      isSameCairoDay(p.pkgStartDate, parsedPackageStartDate),
     );
 
     if (!pkg) {
@@ -349,7 +374,7 @@ export class CoachService {
     const scheduledClasses = await ScheduledClass.find({
       coachId: coachDocId,
       startTime: { $gte: weekStart, $lt: weekEnd }
-    }).sort({ startTime: 1 });
+    }).populate("locationId").sort({ startTime: 1 });
 
     const sessionsMap = new Map<string, any[]>();
 
@@ -399,6 +424,7 @@ export class CoachService {
         endTime: formatInTimeZone(scheduledClass.endTime, "Africa/Cairo", "HH:mm"),
         capacity: scheduledClass.availableSlots + scheduledClass.bookedMembers.length,
         bookedCount: scheduledClass.bookedMembers.length,
+        location: this.locationLabel(scheduledClass.locationId),
         clients
       };
 
@@ -441,6 +467,7 @@ export class CoachService {
       startTime: { $gte: dayStart, $lt: dayEnd },
     })
       .populate<{ "scans.uid": any }>("scans.uid")
+      .populate("locationId")
       .sort({ startTime: 1 });
 
     const result = [];
@@ -453,6 +480,7 @@ export class CoachService {
       const scans = sc.scans.map((scan: any) => {
         const user = scan.uid as any; // populated User
         return {
+          memberId: user?._id?.toString() ?? "",
           member: user?.name ?? "Unknown",
           phone:  user?.phoneNumber ?? "",
           time:   scan.scanTime.toISOString(),
@@ -469,6 +497,7 @@ export class CoachService {
         endTime:     formatInTimeZone(sc.endTime,   "Africa/Cairo", "HH:mm"),
         capacity:    sc.availableSlots + sc.bookedMembers.length,
         bookedCount: sc.bookedMembers.length,
+        location:    this.locationLabel(sc.locationId),
         scans,
       });
     }
@@ -507,6 +536,7 @@ export class CoachService {
       if (!coachPkgNames.has(entry.method)) continue;
       const user = entry.uid as any; // populated User
       result.push({
+        memberId: user?._id?.toString() ?? "",
         member: user?.name ?? "Unknown",
         phone:  user?.phoneNumber ?? "",
         time:   entry.time.toISOString(),
@@ -516,5 +546,212 @@ export class CoachService {
     }
 
     return result;
+  }
+
+  static async getMe(
+    coachUserId: Types.ObjectId,
+    coachDocId: Types.ObjectId,
+  ): Promise<CoachMeDto> {
+    const user = await User.findById(coachUserId).select(
+      "name email phoneNumber locationId",
+    );
+    if (!user) {
+      throw new NotFoundError("USER_NOT_FOUND", "Coach user not found");
+    }
+
+    let branchName: string | null = null;
+    let branchLocation: string | null = null;
+    if (user.locationId) {
+      const location = await Location.findById(user.locationId);
+      if (location) {
+        branchName = location.branchName;
+        branchLocation = location.location;
+      }
+    }
+
+    const [ptCount, classCount] = await Promise.all([
+      Package.countDocuments({ coachId: coachDocId }),
+      ScheduledClass.countDocuments({ coachId: coachDocId }),
+    ]);
+
+    return {
+      name: user.name ?? "",
+      email: user.email ?? "",
+      phoneNumber: user.phoneNumber ?? "",
+      branchName,
+      branchLocation,
+      hasPtSessions: ptCount > 0,
+      hasScheduledClasses: classCount > 0,
+    };
+  }
+
+  static async getToday(
+    coachDocId: Types.ObjectId,
+    coachUserId: Types.ObjectId,
+  ): Promise<TodaySummaryDto> {
+    const todayKey = cairoDateKey(new Date());
+    const cairoNow = toZonedTime(new Date(), CAIRO_TZ);
+    const monday = startOfWeek(cairoNow, { weekStartsOn: 1 });
+    const weekStart = new Date(`${format(monday, "yyyy-MM-dd")}T00:00:00.000Z`);
+    const todayUtc = new Date(`${todayKey}T00:00:00.000Z`);
+
+    const [schedule, scans, ptScans, openTicketCount, unreadNotifications, ptAlerts] =
+      await Promise.all([
+        this.getSchedule(coachDocId, weekStart),
+        this.getScans(coachDocId, todayUtc),
+        this.getPtAttendance(coachDocId, todayUtc),
+        Ticket.countDocuments({
+          createdBy: coachUserId,
+          status: { $in: ["pending", "in_progress"] },
+        }),
+        CoachNotification.countDocuments({ coachId: coachDocId, read: false }),
+        this.getPtAlerts(coachDocId),
+      ]);
+
+    const toSummary = (
+      session: {
+        scheduledClassId: string;
+        classTitle: string;
+        category: string;
+        startTime: string;
+        endTime: string;
+        capacity: number;
+        bookedCount: number;
+      },
+      date: string,
+    ): TodaySessionSummaryDto => ({
+      scheduledClassId: session.scheduledClassId,
+      classTitle: session.classTitle,
+      category: session.category,
+      date,
+      startTime: session.startTime,
+      endTime: session.endTime,
+      capacity: session.capacity,
+      bookedCount: session.bookedCount,
+    });
+
+    const todaySessions = (schedule.days.find((d) => d.date === todayKey)?.sessions ?? []).map(
+      (s) => toSummary(s, todayKey),
+    );
+
+    let nextSession: TodaySessionSummaryDto | null = null;
+    const now = new Date();
+    for (const day of schedule.days) {
+      for (const session of day.sessions) {
+        const start = fromZonedTime(`${day.date} ${session.startTime}:00`, CAIRO_TZ);
+        if (start > now) {
+          nextSession = toSummary(session, day.date);
+          break;
+        }
+      }
+      if (nextSession) break;
+    }
+
+    const allScans = [
+      ...scans.flatMap((cls: { scans: { status: string }[] }) => cls.scans),
+      ...ptScans,
+    ];
+
+    return {
+      nextSession,
+      todaySessions,
+      scans: {
+        successCount: allScans.filter((s) => s.status === "SUCCESS").length,
+        failedCount: allScans.filter((s) => s.status === "FAILED").length,
+        willPayCount: allScans.filter((s) => s.status === "WILL_PAY").length,
+      },
+      tickets: { openCount: openTicketCount },
+      ptAlerts,
+      unreadNotifications,
+    };
+  }
+
+  private static async getPtAlerts(
+    coachDocId: Types.ObjectId,
+  ): Promise<TodayPtAlertDto[]> {
+    const ptPackages = await Package.find({
+      coachId: coachDocId,
+      category: "PERSONAL_TRAINING",
+    });
+    if (ptPackages.length === 0) return [];
+
+    const pkgMap = new Map(ptPackages.map((p) => [p._id.toString(), p]));
+    const members = await Member.find({
+      "packages.pkgId": { $in: ptPackages.map((p) => p._id) },
+    }).populate<{ uid: any }>({
+      path: "uid",
+      select: "name",
+    });
+
+    const now = Date.now();
+    const alerts: TodayPtAlertDto[] = [];
+
+    for (const member of members) {
+      if (!member.uid) continue;
+      for (const pkg of member.packages) {
+        const catalog = pkgMap.get(pkg.pkgId.toString());
+        if (!catalog || pkg.status !== "ACTIVE") continue;
+        if (pkg.pkgEndDate.getTime() < now) continue;
+        const daysUntilExpiry = Math.ceil((pkg.pkgEndDate.getTime() - now) / 86400000);
+        if (pkg.remainingClasses > 2 && daysUntilExpiry > 14) continue;
+        alerts.push({
+          memberId: member.uid._id.toString(),
+          name: member.uid.name ?? "",
+          remainingClasses: pkg.remainingClasses,
+          daysUntilExpiry,
+          packageName: catalog.name || pkg.name,
+        });
+      }
+    }
+
+    return alerts.slice(0, 10);
+  }
+
+  static async getNotifications(
+    coachDocId: Types.ObjectId,
+  ): Promise<CoachNotificationDto[]> {
+    const items = await CoachNotification.find({ coachId: coachDocId })
+      .sort({ createdAt: -1 })
+      .limit(50);
+
+    return items.map((n) => ({
+      id: (n._id as Types.ObjectId).toString(),
+      memberId: n.memberId.toString(),
+      memberName: n.memberName,
+      packageName: n.packageName,
+      classesTotal: n.classesTotal,
+      createdAt: n.createdAt.toISOString(),
+      read: n.read,
+    }));
+  }
+
+  static async markAllNotificationsRead(coachDocId: Types.ObjectId): Promise<void> {
+    await CoachNotification.updateMany(
+      { coachId: coachDocId, read: false },
+      { $set: { read: true } },
+    );
+  }
+
+  static async getDeductionHistory(
+    coachDocId: Types.ObjectId,
+    memberId: string,
+  ): Promise<DeductionHistoryItemDto[]> {
+    await this.getMemberPackages(coachDocId, memberId);
+
+    const logs = await DeductionLog.find({
+      coachId: coachDocId,
+      memberId: new Types.ObjectId(memberId),
+    })
+      .sort({ createdAt: -1 })
+      .limit(50);
+
+    return logs.map((log) => ({
+      id: (log._id as Types.ObjectId).toString(),
+      reason: log.reason,
+      sessionDate: log.sessionDate.toISOString(),
+      classesRemainingAfter: log.classesRemainingAfter,
+      createdAt: log.createdAt.toISOString(),
+      pkgId: log.pkgId?.toString(),
+    }));
   }
 }

@@ -65,6 +65,11 @@ async function auditClasses(db, locationIds) {
         continue;
       }
 
+      // valid ObjectId but stored as string instead of BSON ObjectId
+      if (typeof loc === "string" && isValidObjectId) {
+        issue("classes", id, "LOCATIONS_STORED_AS_STRING", `${label} locations[${i}]="${locStr}" should be ObjectId`);
+      }
+
       // valid ObjectId but no matching document in locations collection
       if (!locationIds.has(locStr)) {
         issue("classes", id, "LOCATIONS_ORPHANED_REF", `${label} locations[${i}]=${locStr} not found in locations collection`);
