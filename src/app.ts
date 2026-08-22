@@ -13,7 +13,6 @@ import logger from "./config/logger";
 import { getRequestContext } from "./utils/requestContext";
 import { specs, swaggerUi } from "./config/swagger";
 import cors from "cors";
-
 const app = express();
 
 app.set("trust proxy", 1); // Enable trusting proxy to fix express-rate-limit X-Forwarded-For error

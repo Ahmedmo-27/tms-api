@@ -1,6 +1,8 @@
 import { Request, Response } from "express";
 import Package from "../../models/package";
 import Member from "../../models/member";
+import Class from "../../models/class";
+import Coach from "../../models/coach";
 import { BadRequestError, ConflictError, NotFoundError } from "../../core/ApiError";
 import { SuccessResponse } from "../../core/ApiResponse";
 import asyncHandler from "../../utils/asyncHandler";
@@ -15,6 +17,138 @@ import { normalizeOpenGymPackageFields } from "../../utils/open-gym-package";
 import { Types } from "mongoose";
 import { getPackageDeletionImpact } from "../../services/package-deletion-guard";
 import logger from "../../config/logger";
+
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function validatePackagePayload(
+  payload: {
+    name?: unknown;
+    category?: unknown;
+    price?: unknown;
+    numberOfSessions?: unknown;
+    expiryPeriod?: unknown;
+    coachId?: unknown;
+    opensClasses?: unknown;
+    classRestrictions?: unknown;
+  },
+  isUpdate = false,
+) {
+  if (!isUpdate || payload.name !== undefined) {
+    const trimmed = typeof payload.name === "string" ? payload.name.trim() : "";
+    if (!trimmed) {
+      throw new BadRequestError("PACKAGE_NAME_REQUIRED", "Package name is required");
+    }
+    if (trimmed.length < 2) {
+      throw new BadRequestError("INVALID_PACKAGE_NAME", "Package name must be at least 2 characters");
+    }
+  }
+
+  if (!isUpdate || payload.category !== undefined) {
+    if (!payload.category || typeof payload.category !== "string" || !payload.category.trim()) {
+      throw new BadRequestError("PACKAGE_CATEGORY_REQUIRED", "Package category is required");
+    }
+  }
+
+  if (!isUpdate || payload.price !== undefined) {
+    if (payload.price === undefined || payload.price === null || payload.price === "" || Number.isNaN(Number(payload.price))) {
+      throw new BadRequestError("PRICE_REQUIRED", "Package price is required and must be a number");
+    }
+    const numPrice = Number(payload.price);
+    if (numPrice < 0) {
+      throw new BadRequestError("INVALID_PRICE", "Package price cannot be negative");
+    }
+  }
+
+  if (payload.category !== "OPEN_GYM" && (!isUpdate || payload.numberOfSessions !== undefined)) {
+    if (payload.numberOfSessions === undefined || payload.numberOfSessions === null || payload.numberOfSessions === "" || Number.isNaN(Number(payload.numberOfSessions))) {
+      throw new BadRequestError("SESSIONS_REQUIRED", "Number of sessions is required");
+    }
+    const numSessions = Number(payload.numberOfSessions);
+    if (!Number.isInteger(numSessions) || numSessions < 1) {
+      throw new BadRequestError("INVALID_SESSIONS", "Number of sessions must be at least 1");
+    }
+  }
+
+  if (!isUpdate || payload.expiryPeriod !== undefined) {
+    if (payload.expiryPeriod === undefined || payload.expiryPeriod === null || payload.expiryPeriod === "" || Number.isNaN(Number(payload.expiryPeriod))) {
+      throw new BadRequestError("EXPIRY_PERIOD_REQUIRED", "Expiry period is required");
+    }
+    const numExpiry = Number(payload.expiryPeriod);
+    if (!Number.isInteger(numExpiry) || numExpiry < 1) {
+      throw new BadRequestError("INVALID_EXPIRY_PERIOD", "Expiry period must be at least 1 day");
+    }
+  }
+}
+
+async function validatePackageRelations(payload: {
+  category?: string;
+  coachId?: string;
+  opensClasses?: string[];
+  classRestrictions?: Array<{ cid: string; limit: number }>;
+}) {
+  if (payload.category === "PERSONAL_TRAINING") {
+    if (!payload.coachId) {
+      throw new BadRequestError("COACH_REQUIRED", "A coach must be assigned to personal training packages");
+    }
+    if (!Types.ObjectId.isValid(payload.coachId)) {
+      throw new BadRequestError("INVALID_COACH", "Invalid coach ID");
+    }
+    const coach = await Coach.findById(payload.coachId);
+    if (!coach) {
+      throw new NotFoundError("COACH_NOT_FOUND", "Selected coach does not exist");
+    }
+  }
+
+  if (payload.opensClasses && Array.isArray(payload.opensClasses) && payload.opensClasses.length > 0) {
+    for (const cid of payload.opensClasses) {
+      if (!cid || !Types.ObjectId.isValid(cid)) {
+        throw new BadRequestError("INVALID_CLASS_SELECTION", `Invalid class ID: ${cid}`);
+      }
+    }
+    const count = await Class.countDocuments({ _id: { $in: payload.opensClasses } });
+    if (count !== payload.opensClasses.length) {
+      throw new NotFoundError("CLASS_NOT_FOUND", "One or more selected classes do not exist");
+    }
+  }
+
+  if (payload.classRestrictions && Array.isArray(payload.classRestrictions) && payload.classRestrictions.length > 0) {
+    for (const res of payload.classRestrictions) {
+      if (!res.cid || !Types.ObjectId.isValid(res.cid)) {
+        throw new BadRequestError("INVALID_CLASS_RESTRICTION", "Class restriction must reference a valid class ID");
+      }
+      if (res.limit === undefined || res.limit === null || Number.isNaN(Number(res.limit)) || Number(res.limit) < 1) {
+        throw new BadRequestError("INVALID_CLASS_RESTRICTION", "Class restriction limit must be at least 1 session");
+      }
+    }
+  }
+}
+
+async function assertNoDuplicatePackage(
+  name: string,
+  category: string,
+  locationId?: string | null,
+  excludeId?: string,
+) {
+  const query: any = {
+    name: { $regex: new RegExp(`^${escapeRegex(name.trim())}$`, "i") },
+    category,
+  };
+  if (excludeId) {
+    query._id = { $ne: new Types.ObjectId(excludeId) };
+  }
+  if (category === "OPEN_GYM" && locationId) {
+    query.locationId = new Types.ObjectId(locationId);
+  }
+  const existing = await Package.findOne(query);
+  if (existing) {
+    throw new ConflictError(
+      "PACKAGE_ALREADY_EXISTS",
+      `A package named "${name.trim()}" already exists in category "${category}"`,
+    );
+  }
+}
 
 export const getPackage = asyncHandler(async function (
   req: Request,
@@ -61,8 +195,17 @@ export const addPackage = asyncHandler(
       numberOfSessions,
       locationId,
     } = req.body;
-    if (!name || !category || !price)
-      throw new BadRequestError("INVALID_REQUEST", "Invalid request");
+    validatePackagePayload({
+      name,
+      category,
+      price,
+      numberOfSessions,
+      expiryPeriod,
+      coachId,
+      opensClasses,
+      classRestrictions,
+    });
+
     if (category === "OPEN_GYM") {
       if (!locationId || !Types.ObjectId.isValid(locationId)) {
         throw new BadRequestError(
@@ -72,6 +215,16 @@ export const addPackage = asyncHandler(
       }
     }
 
+    await validatePackageRelations({
+      category,
+      coachId,
+      opensClasses,
+      classRestrictions,
+    });
+
+    const targetLocationId = category === "OPEN_GYM" ? String(locationId) : null;
+    await assertNoDuplicatePackage(name, category, targetLocationId);
+
     const normalized = normalizeOpenGymPackageFields({
       category,
       expiryPeriod,
@@ -80,10 +233,10 @@ export const addPackage = asyncHandler(
     });
 
     const pkg = new Package({
-      name,
+      name: name.trim(),
       numberOfSessions: normalized.numberOfSessions,
       category,
-      price,
+      price: Number(price),
       expiryPeriod: normalized.expiryPeriod,
       coachId,
       opensClasses,
@@ -156,6 +309,7 @@ export const updatePackage = asyncHandler(
       "hidden",
       "classRestrictions",
       "locationId",
+      "coachId",
     ];
     const updates = Object.keys(req.body);
     const isValidUpdate = updates.every((update) =>
@@ -167,6 +321,26 @@ export const updatePackage = asyncHandler(
     const existing = await Package.findById(id);
     if (!existing)
       throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found", { id });
+
+    validatePackagePayload(req.body, true);
+
+    if (req.body.name || req.body.category) {
+      await assertNoDuplicatePackage(
+        req.body.name ?? existing.name,
+        req.body.category ?? existing.category,
+        req.body.locationId ?? existing.locationId?.toString(),
+        id,
+      );
+    }
+
+    if (req.body.coachId || req.body.opensClasses || req.body.classRestrictions) {
+      await validatePackageRelations({
+        category: req.body.category ?? existing.category,
+        coachId: req.body.coachId ?? existing.coachId?.toString(),
+        opensClasses: req.body.opensClasses ?? existing.opensClasses?.map((c: any) => String(c)),
+        classRestrictions: req.body.classRestrictions ?? existing.classRestrictions,
+      });
+    }
 
     const merged = {
       category: req.body.category ?? existing.category,

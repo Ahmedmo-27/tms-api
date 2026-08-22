@@ -59,6 +59,12 @@ import {
 } from "../controllers/admin/coach-controller";
 import { addMember, getMember } from "../controllers/admin/member-controller";
 import { getAttendanceHistory } from "../controllers/admin/attendance-controller";
+import {
+  getSheetDay,
+  getSheetMemberEligibility,
+  commitSheetRows,
+  importSheetDay,
+} from "../controllers/admin/sheet-controller";
 import { getPendingMembers } from "../controllers/admin/user-contoller";
 import { sendCustomNotification } from "../controllers/admin/notifications-controller";
 import {
@@ -156,6 +162,30 @@ adminRoutes.get(
   authenticateUser,
   authorizeUser(["admin", "fd"]),
   getDailyAttendnace
+);
+adminRoutes.get(
+  "/sheet",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  getSheetDay
+);
+adminRoutes.get(
+  "/sheet/member-eligibility",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  getSheetMemberEligibility
+);
+adminRoutes.post(
+  "/sheet/commit",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  commitSheetRows
+);
+adminRoutes.post(
+  "/sheet/import",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  importSheetDay
 );
 adminRoutes.get(
   "/attendance",

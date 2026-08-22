@@ -3,9 +3,12 @@ import {
   getInvalidQrCodeMessage,
   normalizeToApiError,
   SCAN_ERROR_MESSAGES,
+  staffSheetErrorFromApi,
+  STAFF_SHEET_ERROR_MESSAGES,
 } from "./error-messages";
 import {
   BadRequestError,
+  ForbiddenError,
   InternalError,
   NotFoundError,
 } from "../core/ApiError";
@@ -87,5 +90,73 @@ describe("normalizeToApiError", () => {
     expect(apiError.context.originalError?.message).toBe(
       "database socket timeout",
     );
+  });
+});
+
+describe("staffSheetErrorFromApi", () => {
+  it("rewrites an active-package/class mismatch into staff copy with the class name", () => {
+    const err = new ForbiddenError(
+      "PACKAGE_DOES_NOT_OPEN_CLASS",
+      'No active package includes "Mat Pilates 9 am".',
+      { className: "Mat Pilates 9 am" },
+    );
+    expect(staffSheetErrorFromApi(err)).toEqual({
+      code: "PACKAGE_DOES_NOT_OPEN_CLASS",
+      message: STAFF_SHEET_ERROR_MESSAGES.PACKAGE_DOES_NOT_OPEN_CLASS(
+        "Mat Pilates 9 am",
+      ),
+    });
+  });
+
+  it("does not call a true empty package list a class mismatch", () => {
+    const err = new ForbiddenError(
+      "NO_ACTIVE_PACKAGE_FOUND",
+      "No active package found.",
+    );
+    expect(staffSheetErrorFromApi(err)).toEqual({
+      code: "NO_ACTIVE_PACKAGE_FOUND",
+      message: STAFF_SHEET_ERROR_MESSAGES.NO_ACTIVE_PACKAGE_FOUND,
+    });
+  });
+
+  it("rewrites scan member/class messages for the desk", () => {
+    expect(
+      staffSheetErrorFromApi(
+        new NotFoundError(
+          "MEMBER_NOT_FOUND",
+          SCAN_ERROR_MESSAGES.MEMBER_NOT_FOUND,
+        ),
+      ).message,
+    ).toBe(STAFF_SHEET_ERROR_MESSAGES.MEMBER_NOT_FOUND);
+    expect(
+      staffSheetErrorFromApi(
+        new NotFoundError("CLASS_NOT_FOUND", SCAN_ERROR_MESSAGES.CLASS_NOT_FOUND),
+      ).message,
+    ).toBe(STAFF_SHEET_ERROR_MESSAGES.CLASS_NOT_FOUND);
+  });
+
+  it("rewrites PT and space scan package messages for the desk", () => {
+    expect(
+      staffSheetErrorFromApi(
+        new ForbiddenError(
+          "NO_ACTIVE_PACKAGE_FOUND",
+          SCAN_ERROR_MESSAGES.NO_ACTIVE_PT_PACKAGE,
+        ),
+      ),
+    ).toEqual({
+      code: "NO_ACTIVE_PT_PACKAGE",
+      message: STAFF_SHEET_ERROR_MESSAGES.NO_ACTIVE_PT_PACKAGE,
+    });
+    expect(
+      staffSheetErrorFromApi(
+        new ForbiddenError(
+          "NO_ACTIVE_PACKAGE_FOUND",
+          SCAN_ERROR_MESSAGES.NO_ACTIVE_PACKAGE,
+        ),
+      ),
+    ).toEqual({
+      code: "NO_ACTIVE_SPACE_PACKAGE",
+      message: STAFF_SHEET_ERROR_MESSAGES.NO_ACTIVE_SPACE_PACKAGE,
+    });
   });
 });

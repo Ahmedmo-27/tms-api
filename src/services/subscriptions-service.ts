@@ -3,7 +3,7 @@ import Package, { getPackageEndDate } from "../models/package";
 import PromoCode from "../models/promoCode";
 import { Types } from "mongoose";
 import { PaymentsService } from "./payments-service";
-import { NotFoundError, BadRequestError } from "../core/ApiError";
+import { NotFoundError, BadRequestError, ConflictError } from "../core/ApiError";
 import { runInTransaction } from "../utils/transaction";
 import { ClientSession } from "mongoose";
 import logger from "../config/logger";
@@ -15,6 +15,7 @@ import User from "../models/user";
 import { Server as SocketIOServer } from "socket.io";
 import { resolveOpenGymPaymentNote } from "../utils/open-gym-payment-purpose";
 import { normalizePhoneNumber } from "../utils/phone";
+import { cairoDayRange, toStoredPackageDate } from "../utils/timezone";
 import {
   assertMatchaPackageForPendingUser,
   ensureMemberForPendingPurchase,
@@ -23,6 +24,67 @@ import {
 } from "../utils/matcha-branch";
 
 export class SubscriptionsService {
+  /** Same catalog package + Cairo start day already on the member. */
+  static async assertNoDuplicateMemberPackage(
+    uid: string,
+    pkgId: string,
+    startDate: string,
+    session?: ClientSession | null,
+  ) {
+    const exists = await Member.hasPackageOnStartDay(
+      uid,
+      pkgId,
+      startDate,
+      session,
+    );
+    if (exists) {
+      const pkg = await Package.findById(pkgId);
+      const pkgName = pkg?.name ? ` "${pkg.name}"` : "";
+      throw new ConflictError(
+        "PACKAGE_ALREADY_ADDED",
+        `This member already has an active package${pkgName} starting on this date`,
+        {
+          uid,
+          pkgId,
+          startDate,
+        },
+      );
+    }
+  }
+
+  /** Unused staged NonUserPackage already exists for phone + package + Cairo start day. */
+  static async assertNoDuplicateNonUserPackage(
+    phoneNumber: string,
+    pkgId: string,
+    startDate: string,
+    session?: ClientSession | null,
+  ) {
+    const cleanPhone = normalizePhoneNumber(phoneNumber);
+    const { start, end } = cairoDayRange(startDate);
+    const existingQuery = NonUserPackage.findOne({
+      phoneNumber: cleanPhone,
+      pkgId: new Types.ObjectId(pkgId),
+      added: false,
+      pkgStartDate: { $gte: start, $lt: end },
+    });
+    if (session) existingQuery.session(session);
+    const existing = await existingQuery;
+    if (existing) {
+      const pkg = await Package.findById(pkgId);
+      const pkgName = pkg?.name ? ` "${pkg.name}"` : "";
+      throw new ConflictError(
+        "PACKAGE_ALREADY_ADDED",
+        `A pending package${pkgName} has already been added for ${cleanPhone} on this date`,
+        {
+          phoneNumber: cleanPhone,
+          pkgId,
+          startDate,
+          nonUserPackageId: String(existing._id),
+        },
+      );
+    }
+  }
+
   static async frontDeskSubscribeToPackage(
     uid: string,
     pkgId: string,
@@ -34,6 +96,28 @@ export class SubscriptionsService {
     io?: SocketIOServer,
     locationId?: string,
   ) {
+    if (!uid) {
+      throw new BadRequestError("MEMBER_ID_REQUIRED", "Member ID is required");
+    }
+    if (!pkgId) {
+      throw new BadRequestError("PACKAGE_ID_REQUIRED", "Package ID is required");
+    }
+    if (!startDate) {
+      throw new BadRequestError("START_DATE_REQUIRED", "Start date is required");
+    }
+    if (!paymentMethod) {
+      throw new BadRequestError(
+        "PAYMENT_METHOD_REQUIRED",
+        "Payment method is required",
+      );
+    }
+    if (amount !== undefined && (Number.isNaN(Number(amount)) || Number(amount) < 0)) {
+      throw new BadRequestError(
+        "INVALID_AMOUNT",
+        "Payment amount must be a non-negative number",
+      );
+    }
+
     const member = await Member.findOne({ uid });
     if (!member)
       throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found", {
@@ -335,13 +419,39 @@ export class SubscriptionsService {
     paymentDate?: string,
     amount?: string,
     locationId?: string,
+    note?: string,
   ) {
+    if (!name || !name.trim()) {
+      throw new BadRequestError("NAME_REQUIRED", "Name is required");
+    }
+    if (!phoneNumber) {
+      throw new BadRequestError("PHONE_REQUIRED", "Phone number is required");
+    }
+    if (!pkgId) {
+      throw new BadRequestError("PACKAGE_ID_REQUIRED", "Package ID is required");
+    }
+    if (!pkgStartDate) {
+      throw new BadRequestError("START_DATE_REQUIRED", "Start date is required");
+    }
+    if (!paymentMethod) {
+      throw new BadRequestError("PAYMENT_METHOD_REQUIRED", "Payment method is required");
+    }
+    if (amount !== undefined && (Number.isNaN(Number(amount)) || Number(amount) < 0)) {
+      throw new BadRequestError("INVALID_AMOUNT", "Amount must be a non-negative number");
+    }
+
     name = name.trim();
     phoneNumber = normalizePhoneNumber(phoneNumber);
     const pkg = await Package.findById(pkgId);
     if (!pkg)
       throw new NotFoundError("PACKAGE_NOT_FOUND", "The package was not found");
-    pkgStartDate = new Date(pkgStartDate).toISOString();
+    if (pendingDeduction && pkg.numberOfSessions < 1) {
+      throw new BadRequestError(
+        "INVALID_DEDUCTION",
+        "This package has no sessions to deduct",
+      );
+    }
+    pkgStartDate = toStoredPackageDate(pkgStartDate).toISOString();
     if (paymentDate) {
       paymentDate = new Date(paymentDate).toISOString();
     }
@@ -358,7 +468,7 @@ export class SubscriptionsService {
         undefined,
         (pkg as any)._id,
         paymentDate ? paymentDate : undefined,
-        undefined,
+        note,
         name,
         phoneNumber,
         locationId
