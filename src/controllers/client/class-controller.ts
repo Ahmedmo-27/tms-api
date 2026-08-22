@@ -75,7 +75,7 @@ export const bookClass = asyncHandler(async function (
   const authReq = req as AuthRequest;
   const uid = authReq.user._id as string;
   const scid = req.params.scid;
-  await BookingsService.addBooking(uid, scid);
+  await BookingsService.addBooking(uid, scid, false, "member");
   new SuccessResponse("Class Booked!").send(res);
 });
 

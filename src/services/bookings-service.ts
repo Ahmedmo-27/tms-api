@@ -77,7 +77,12 @@ function assertMemberBookingWindow(
   }
 }
 export class BookingsService {
-  static async addBooking(uid: string, scid: string, isAdminOverride: boolean = false) {
+  static async addBooking(
+    uid: string,
+    scid: string,
+    isAdminOverride: boolean = false,
+    audience: "member" | "admin" = "member",
+  ) {
     const scheduledClass = await ScheduledClass.findById(scid).populate({
       path: "cid",
       populate: { path: "locations" },
@@ -191,6 +196,7 @@ export class BookingsService {
         session,
         (scheduledClass.cid as any).title,
         scheduledClass.startTime,
+        audience,
       );
 
       // get pkg used for booking
