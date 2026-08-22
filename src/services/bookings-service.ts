@@ -23,6 +23,7 @@ import {
 } from "../utils/scan-payload";
 import { resolveLegacyOpenGymLocationId } from "../utils/open-gym-location";
 import { SCAN_ERROR_MESSAGES } from "../utils/error-messages";
+import { BOOKING_ERROR_MESSAGES } from "../utils/booking-package-errors";
 import NonUserBooking, { INonUserBooking } from "../models/nonUserBookings";
 import { sendPaymentToRentalSystem } from "./egygap-erp-service";
 import { NotificationsService } from "./notifications-service";
@@ -55,23 +56,26 @@ async function recordFailedClassScan(scid: string, uid: string): Promise<void> {
  * Members may book until halfway through the session duration.
  * After the midpoint, booking is blocked (admins bypass via isAdminOverride).
  */
-function assertMemberBookingWindow(scheduledClass: {
-  startTime: Date;
-  endTime: Date;
-}): void {
+function assertMemberBookingWindow(
+  scheduledClass: {
+    startTime: Date;
+    endTime: Date;
+  },
+  className?: string,
+): void {
   const durationMs =
     scheduledClass.endTime.getTime() - scheduledClass.startTime.getTime();
   const midpoint = new Date(
     scheduledClass.startTime.getTime() + durationMs / 2,
   );
   if (new Date() > midpoint) {
+    const classLabel = className ? `"${className}"` : "this class";
     throw new ConflictError(
       "CLASS_ALREADY_STARTED",
-      "Booking is only allowed until halfway through the session",
+      `Booking is closed because ${classLabel} has already started.`,
     );
   }
 }
-
 export class BookingsService {
   static async addBooking(uid: string, scid: string, isAdminOverride: boolean = false) {
     const scheduledClass = await ScheduledClass.findById(scid).populate({
@@ -132,7 +136,7 @@ export class BookingsService {
 
     // Members may book until halfway through the session; admins can override
     if (!isAdminOverride && (scheduledClass.cid as any).category !== "WORKSPACE") {
-      assertMemberBookingWindow(scheduledClass);
+      assertMemberBookingWindow(scheduledClass, (scheduledClass.cid as any)?.title);
     }
 
     // get location and class specific data
@@ -155,14 +159,16 @@ export class BookingsService {
     const monthString = month.toString() + year.toString();
 
     // get valid packages and check if member has no packages
+    const classTitle = (scheduledClass.cid as any).title as string | undefined;
     const validPkgs: string[] = await Package.getClassPackages(
       scheduledClass.cid._id.toString(),
       location,
     );
     if (!validPkgs || validPkgs.length === 0)
       throw new NotFoundError(
-        "NO_ACTIVE_PACKAGE_FOUND",
-        "No valid packages found",
+        "NO_CLASS_PACKAGES_CONFIGURED",
+        BOOKING_ERROR_MESSAGES.NO_CLASS_PACKAGES_CONFIGURED(classTitle),
+        { className: classTitle },
       );
 
     // get class points for deduction
@@ -788,6 +794,8 @@ export class BookingsService {
     scid: string,
     paymentMethod: string,
     locationId?: string,
+    paymentDate?: string,
+    note?: string,
   ) {
     const member = await Member.findOne({ uid });
     if (!member)
@@ -817,8 +825,8 @@ export class BookingsService {
         undefined,
         scId,
         undefined,
-        undefined,
-        undefined,
+        paymentDate,
+        note,
         undefined,
         undefined,
         resolvedLocationId
@@ -922,6 +930,7 @@ export class BookingsService {
     locationId: string,
     amount?: number,
     paymentDate?: string,
+    note?: string,
   ) {
     const member = await Member.findOne({ uid }).populate({ path: "uid" });
     if (!member)
@@ -951,7 +960,7 @@ export class BookingsService {
         undefined,
         undefined,
         parsedPaymentDate,
-        "Open gym drop-in",
+        note ? `Open gym drop-in; ${note}` : "Open gym drop-in",
         undefined,
         undefined,
         locationId,
@@ -963,6 +972,7 @@ export class BookingsService {
         "SUCCESS",
         io,
         locationId,
+        parsedPaymentDate ? new Date(parsedPaymentDate) : undefined,
       );
       io.emit("SUCCESS-SCAN", {
         code: "OPEN_GYM_DROP_IN",
@@ -980,6 +990,7 @@ export class BookingsService {
     locationId: string,
     amount?: number,
     paymentDate?: string,
+    note?: string,
   ) {
     const existingUser = await User.findOne({ phoneNumber });
     if (existingUser) {
@@ -1013,7 +1024,7 @@ export class BookingsService {
         undefined,
         undefined,
         parsedPaymentDate,
-        "Open gym guest drop-in",
+        note ? `Open gym guest drop-in; ${note}` : "Open gym guest drop-in",
         name,
         phoneNumber,
         locationId,
@@ -1026,6 +1037,7 @@ export class BookingsService {
         "SUCCESS",
         io,
         locationId,
+        parsedPaymentDate ? new Date(parsedPaymentDate) : undefined,
       );
       io.emit("SUCCESS-SCAN", {
         code: "OPEN_GYM_DROP_IN",
@@ -1441,6 +1453,7 @@ export class BookingsService {
     paymentDate?: string,
     session?: ClientSession,
     locationId?: string,
+    note?: string,
   ): Promise<INonUserBooking> {
     const run = async (s: ClientSession) => {
       if (session) logger.info(`In session - ${session?.id?.toString()}`);
@@ -1473,7 +1486,7 @@ export class BookingsService {
         scheduledClass._id as Types.ObjectId,
         undefined,
         paymentDate,
-        undefined,
+        note,
         booking.name,
         booking.phoneNumber,
         resolvedLocationId

@@ -1,10 +1,23 @@
 import { Types } from "mongoose";
 import { SubscriptionsService } from "./subscriptions-service";
 import Member from "../models/member";
+import Package from "../models/package";
 import NonUserPackage from "../models/nonUserPackage";
 import { ConflictError } from "../core/ApiError";
 
 jest.mock("../models/member");
+jest.mock("../models/package", () => {
+  const actual = jest.requireActual("../models/package");
+  return {
+    __esModule: true,
+    ...actual,
+    default: {
+      findById: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue(null),
+      }),
+    },
+  };
+});
 jest.mock("../models/nonUserPackage");
 jest.mock("../config/logger", () => ({
   info: jest.fn(),

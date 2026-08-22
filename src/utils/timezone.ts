@@ -52,6 +52,20 @@ export function cairoDayRange(date: Date | string): { start: Date; end: Date } {
   return { start, end };
 }
 
+/** Half-open [start, end) Cairo calendar-month bounds. `month` is 1-12. */
+export function cairoMonthRange(
+  year: number,
+  month: number,
+): { start: Date; end: Date } {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const nextYear = month === 12 ? year + 1 : year;
+  const nextMonth = month === 12 ? 1 : month + 1;
+  return {
+    start: startOfDateCairo(`${year}-${pad(month)}-01`),
+    end: startOfDateCairo(`${nextYear}-${pad(nextMonth)}-01`),
+  };
+}
+
 /** yyyy-MM-dd key for the Cairo calendar day of an instant. */
 export function cairoDateKey(date: Date | string): string {
   if (typeof date === "string") {

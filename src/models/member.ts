@@ -18,6 +18,12 @@ import Package, {
   spaceAccessPriority,
 } from "./package";
 import { memberPackageGrantsAccessAtLocation } from "../utils/open-gym-location";
+import {
+  bookingPackageErrorMessage,
+  resolveBookingPackageFailure,
+  type BookingPackageSkipReason,
+} from "../utils/booking-package-errors";
+import { cairoDayRange } from "../utils/timezone";
 
 interface IAttendance {
   scid: Types.ObjectId;
@@ -206,6 +212,12 @@ interface IMemberstatics {
     record: IAdjustmentRecord,
     session: ClientSession
   ): Promise<void>;
+  hasPackageOnStartDay(
+    uid: string,
+    pkgId: string,
+    startDate: string,
+    session?: ClientSession | null
+  ): Promise<boolean>;
 }
 
 interface IMemberMethods {}
@@ -414,13 +426,86 @@ MemberSchema.static(
         "This class is already booked"
       );
 
+    const hasAnyPackage = member.packages.length > 0;
+    const hasAnyActivePackage = member.packages.some(
+      (p) => p.status === "ACTIVE"
+    );
     const memberPkgs = member.packages.filter(
       (p) => pkgs.includes(p.pkgId.toString()) && p.status === "ACTIVE"
     );
     if (memberPkgs.length <= 0) {
+      const matchingAnyStatus = member.packages.filter((p) =>
+        pkgs.includes(p.pkgId.toString())
+      );
+      if (matchingAnyStatus.length > 0) {
+        const expired = matchingAnyStatus.find(
+          (p) => p.status === "EXPIRED" || new Date(p.pkgEndDate) < new Date()
+        );
+        if (expired) {
+          const dateStr = new Date(expired.pkgEndDate).toLocaleDateString("en-GB", {
+            day: "numeric",
+            month: "short",
+            year: "numeric",
+          });
+          throw new ForbiddenError(
+            "PACKAGE_EXPIRED",
+            bookingPackageErrorMessage("PACKAGE_EXPIRED", className, {
+              packageName: expired.name,
+              date: dateStr,
+            }),
+            { className, packageName: expired.name, expiryDate: expired.pkgEndDate }
+          );
+        }
+
+        const depleted = matchingAnyStatus.find(
+          (p) => p.status === "COMPLETED" || p.remainingClasses <= 0
+        );
+        if (depleted) {
+          throw new ForbiddenError(
+            "NO_REMAINING_SESSIONS",
+            bookingPackageErrorMessage("NO_REMAINING_SESSIONS", className, {
+              packageName: depleted.name,
+            }),
+            { className, packageName: depleted.name, remainingClasses: 0 }
+          );
+        }
+
+        const future = matchingAnyStatus.find(
+          (p) => new Date(p.pkgStartDate) > new Date()
+        );
+        if (future) {
+          const dateStr = new Date(future.pkgStartDate).toLocaleDateString("en-GB", {
+            day: "numeric",
+            month: "short",
+            year: "numeric",
+          });
+          throw new ForbiddenError(
+            "PACKAGE_NOT_YET_ACTIVE",
+            bookingPackageErrorMessage("PACKAGE_NOT_YET_ACTIVE", className, {
+              packageName: future.name,
+              date: dateStr,
+            }),
+            { className, packageName: future.name, startDate: future.pkgStartDate }
+          );
+        }
+      }
+
+      const activePackageNames = member.packages
+        .filter((p) => p.status === "ACTIVE")
+        .map((p) => p.name);
+
+      const code = resolveBookingPackageFailure({
+        hasAnyPackage,
+        hasAnyActivePackage,
+        matchingActiveCount: 0,
+        skipReasons: [],
+      });
       throw new ForbiddenError(
-        "NO_ACTIVE_PACKAGE_FOUND",
-        "No active packages found"
+        code,
+        bookingPackageErrorMessage(code, className, {
+          packageNames: activePackageNames,
+        }),
+        { className, activePackageNames },
       );
     }
     memberPkgs.sort(
@@ -428,10 +513,12 @@ MemberSchema.static(
     );
 
     logger.info("Sorted Pkgs", { memberPkgs });
+    const skipReasons: BookingPackageSkipReason[] = [];
     for (const pkg of memberPkgs) {
       logger.info("Trying pkg", { pkg });
 
       if (pkg.pkgEndDate < new Date()) {
+        skipReasons.push("expired");
         await this.updateOne(
           {
             uid,
@@ -453,6 +540,7 @@ MemberSchema.static(
       }
 
       if (pkg.remainingClasses <= 0) {
+        skipReasons.push("remaining");
         await this.updateOne(
           {
             uid,
@@ -491,7 +579,10 @@ MemberSchema.static(
           }
         });
       }
-      if (restricted) continue;
+      if (restricted) {
+        skipReasons.push("restricted");
+        continue;
+      }
 
       if (!isFree && !isWorkSpace) {
         await this.updateOne(
@@ -663,9 +754,31 @@ MemberSchema.static(
 
       return pkg.pkgId.toString();
     }
+    const code = resolveBookingPackageFailure({
+      hasAnyPackage: true,
+      hasAnyActivePackage: true,
+      matchingActiveCount: memberPkgs.length,
+      skipReasons,
+    });
+    const firstSkipped = memberPkgs[0];
+    const dateStr = firstSkipped
+      ? new Date(firstSkipped.pkgEndDate).toLocaleDateString("en-GB", {
+          day: "numeric",
+          month: "short",
+          year: "numeric",
+        })
+      : undefined;
     throw new ForbiddenError(
-      "NO_ACTIVE_PACKAGE_FOUND",
-      "No active packages found"
+      code,
+      bookingPackageErrorMessage(code, className, {
+        packageName: firstSkipped?.name,
+        date: dateStr,
+      }),
+      {
+        className,
+        packageName: firstSkipped?.name,
+        expiryDate: firstSkipped?.pkgEndDate,
+      },
     );
   }
 );
@@ -1615,6 +1728,30 @@ MemberSchema.static(
         session,
       }
     );
+  }
+);
+
+MemberSchema.static(
+  "hasPackageOnStartDay",
+  async function (
+    uid: string,
+    pkgId: string,
+    startDate: string,
+    session?: ClientSession | null
+  ): Promise<boolean> {
+    const { start, end } = cairoDayRange(startDate);
+    const query: any = {
+      uid: new Types.ObjectId(uid),
+      packages: {
+        $elemMatch: {
+          pkgId: new Types.ObjectId(pkgId),
+          pkgStartDate: { $gte: start, $lt: end },
+          status: { $ne: "CANCELLED" },
+        },
+      },
+    };
+    const existing = await this.findOne(query).session(session || null);
+    return !!existing;
   }
 );
 
