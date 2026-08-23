@@ -41,7 +41,8 @@ type DailyAttendanceModel = Model<IDailyAttendance> & {
     session: ClientSession,
     status: "SUCCESS" | "FAILED",
     io: Server,
-    locationId?: string
+    locationId?: string,
+    at?: Date,
   ): Promise<void>;
   recordOpenGymGuestAttendance(
     guestName: string,
@@ -50,7 +51,8 @@ type DailyAttendanceModel = Model<IDailyAttendance> & {
     session: ClientSession,
     status: "SUCCESS" | "FAILED",
     io: Server,
-    locationId?: string
+    locationId?: string,
+    at?: Date,
   ): Promise<void>;
   hasSuccessfulOpenGymToday(
     uid: string,
@@ -217,6 +219,14 @@ DailyAttendanceSchema.static(
   }
 );
 
+function utcDayBounds(at: Date): { start: Date; end: Date } {
+  const start = new Date(at);
+  start.setUTCHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setUTCHours(23, 59, 59, 999);
+  return { start, end };
+}
+
 DailyAttendanceSchema.static(
   "recordOpenGymAttendance",
   async function (
@@ -225,13 +235,11 @@ DailyAttendanceSchema.static(
     session: ClientSession,
     status: "SUCCESS" | "FAILED",
     io: Server,
-    locationId?: string
+    locationId?: string,
+    at?: Date,
   ): Promise<void> {
-    const startOfDay = new Date();
-    startOfDay.setUTCHours(0, 0, 0, 0);
-
-    const endOfDay = new Date();
-    endOfDay.setUTCHours(23, 59, 59, 999);
+    const recordedAt = at ?? new Date();
+    const { start: startOfDay, end: endOfDay } = utcDayBounds(recordedAt);
 
     let day = await this.findOne(
       { date: { $gte: startOfDay, $lte: endOfDay } },
@@ -270,7 +278,7 @@ DailyAttendanceSchema.static(
           openGymAttendance: {
             uid: new mongoose.Types.ObjectId(uid),
             method,
-            time: new Date(),
+            time: recordedAt,
             status,
             locationId: locationId ? new mongoose.Types.ObjectId(locationId) : null,
           },
@@ -304,13 +312,11 @@ DailyAttendanceSchema.static(
     session: ClientSession,
     status: "SUCCESS" | "FAILED",
     io: Server,
-    locationId?: string
+    locationId?: string,
+    at?: Date,
   ): Promise<void> {
-    const startOfDay = new Date();
-    startOfDay.setUTCHours(0, 0, 0, 0);
-
-    const endOfDay = new Date();
-    endOfDay.setUTCHours(23, 59, 59, 999);
+    const recordedAt = at ?? new Date();
+    const { start: startOfDay, end: endOfDay } = utcDayBounds(recordedAt);
 
     let day = await this.findOne(
       { date: { $gte: startOfDay, $lte: endOfDay } },
@@ -350,7 +356,7 @@ DailyAttendanceSchema.static(
             guestName,
             guestPhone,
             method,
-            time: new Date(),
+            time: recordedAt,
             status,
             locationId: locationId ? new mongoose.Types.ObjectId(locationId) : null,
           },

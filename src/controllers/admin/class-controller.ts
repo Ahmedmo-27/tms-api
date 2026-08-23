@@ -222,7 +222,7 @@ export const bookClass = asyncHandler(async function (
   }
   await assertSessionAccess(req, scid);
   const isAdminOverride = overrideTimeRestrictions === true;
-  await BookingsService.addBooking(uid, scid, isAdminOverride);
+  await BookingsService.addBooking(uid, scid, isAdminOverride, "admin");
   new SuccessResponse("Class Booked!").send(res);
 });
 

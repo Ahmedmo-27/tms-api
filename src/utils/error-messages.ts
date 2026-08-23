@@ -5,6 +5,7 @@ import {
   InternalError,
   NotFoundError,
 } from "../core/ApiError";
+import { quoteClassName } from "./booking-package-errors";
 
 const OPEN_GYM_QR_PREFIX = /^opengym:/i;
 const PT_QR_PREFIX = /^pt:/i;
@@ -44,6 +45,138 @@ export const SCAN_ERROR_MESSAGES = {
   PACKAGE_NOT_FOUND:
     "No eligible open gym package is configured. Please contact staff.",
 } as const;
+
+export const STAFF_SHEET_ERROR_MESSAGES = {
+  NO_PACKAGES_ON_ACCOUNT: "This member has no packages on their account.",
+  PACKAGE_DOES_NOT_OPEN_CLASS: (className?: string) =>
+    `This member has an active package, but it does not include ${quoteClassName(className)}.`,
+  NO_ACTIVE_PACKAGE_FOUND: "This member has no active package.",
+  PACKAGE_EXPIRED: (className?: string) =>
+    `This member's package for ${quoteClassName(className)} has expired.`,
+  NO_REMAINING_SESSIONS: (className?: string) =>
+    `This member's package for ${quoteClassName(className)} has no remaining sessions.`,
+  CLASS_RESTRICTION_REACHED: (className?: string) =>
+    `This member has reached the monthly limit for ${quoteClassName(className)}.`,
+  PACKAGE_NOT_YET_ACTIVE: (className?: string) =>
+    `This member's package for ${quoteClassName(className)} is not active yet.`,
+  NO_CLASS_PACKAGES_CONFIGURED: (className?: string) =>
+    `No packages in the catalog open ${quoteClassName(className)} at this branch.`,
+  MEMBER_NOT_FOUND: "This member could not be found.",
+  CLASS_NOT_FOUND: "This class session could not be found.",
+  NO_ACTIVE_PT_PACKAGE:
+    "This member does not have an active personal training package.",
+  NO_ACTIVE_SPACE_PACKAGE:
+    "This member does not have an active package with open gym access at this branch.",
+  NO_ACCESS_AT_LOCATION:
+    "This member's membership does not include open gym access at this branch.",
+} as const;
+
+export function staffSheetErrorFromApi(err: ApiError): {
+  code: string;
+  message: string;
+} {
+  const code = err.code || "UNKNOWN_ERROR";
+  const className =
+    typeof err.context?.className === "string"
+      ? err.context.className
+      : undefined;
+
+  switch (code) {
+    case "NO_PACKAGES_ON_ACCOUNT":
+      return {
+        code,
+        message: STAFF_SHEET_ERROR_MESSAGES.NO_PACKAGES_ON_ACCOUNT,
+      };
+    case "PACKAGE_DOES_NOT_OPEN_CLASS":
+      return {
+        code,
+        message: STAFF_SHEET_ERROR_MESSAGES.PACKAGE_DOES_NOT_OPEN_CLASS(
+          className,
+        ),
+      };
+    case "PACKAGE_EXPIRED":
+      return {
+        code,
+        message: STAFF_SHEET_ERROR_MESSAGES.PACKAGE_EXPIRED(className),
+      };
+    case "NO_REMAINING_SESSIONS":
+      return {
+        code,
+        message: STAFF_SHEET_ERROR_MESSAGES.NO_REMAINING_SESSIONS(className),
+      };
+    case "CLASS_RESTRICTION_REACHED":
+      return {
+        code,
+        message: STAFF_SHEET_ERROR_MESSAGES.CLASS_RESTRICTION_REACHED(
+          className,
+        ),
+      };
+    case "PACKAGE_NOT_YET_ACTIVE":
+      return {
+        code,
+        message: STAFF_SHEET_ERROR_MESSAGES.PACKAGE_NOT_YET_ACTIVE(className),
+      };
+    case "NO_CLASS_PACKAGES_CONFIGURED":
+      return {
+        code,
+        message: STAFF_SHEET_ERROR_MESSAGES.NO_CLASS_PACKAGES_CONFIGURED(
+          className,
+        ),
+      };
+    case "NO_ACTIVE_PACKAGE_FOUND":
+      if (err.message === SCAN_ERROR_MESSAGES.NO_ACTIVE_PT_PACKAGE) {
+        return {
+          code: "NO_ACTIVE_PT_PACKAGE",
+          message: STAFF_SHEET_ERROR_MESSAGES.NO_ACTIVE_PT_PACKAGE,
+        };
+      }
+      if (err.message === SCAN_ERROR_MESSAGES.NO_ACTIVE_PACKAGE) {
+        return {
+          code: "NO_ACTIVE_SPACE_PACKAGE",
+          message: STAFF_SHEET_ERROR_MESSAGES.NO_ACTIVE_SPACE_PACKAGE,
+        };
+      }
+      return {
+        code,
+        message: STAFF_SHEET_ERROR_MESSAGES.NO_ACTIVE_PACKAGE_FOUND,
+      };
+    case "NO_ACCESS_AT_LOCATION":
+      return {
+        code,
+        message: STAFF_SHEET_ERROR_MESSAGES.NO_ACCESS_AT_LOCATION,
+      };
+    case "MEMBER_NOT_FOUND":
+      return { code, message: STAFF_SHEET_ERROR_MESSAGES.MEMBER_NOT_FOUND };
+    case "CLASS_NOT_FOUND":
+      return { code, message: STAFF_SHEET_ERROR_MESSAGES.CLASS_NOT_FOUND };
+    default:
+      break;
+  }
+
+  if (err.message === SCAN_ERROR_MESSAGES.NO_ACTIVE_PT_PACKAGE) {
+    return {
+      code: "NO_ACTIVE_PT_PACKAGE",
+      message: STAFF_SHEET_ERROR_MESSAGES.NO_ACTIVE_PT_PACKAGE,
+    };
+  }
+  if (err.message === SCAN_ERROR_MESSAGES.NO_ACTIVE_PACKAGE) {
+    return {
+      code: "NO_ACTIVE_SPACE_PACKAGE",
+      message: STAFF_SHEET_ERROR_MESSAGES.NO_ACTIVE_SPACE_PACKAGE,
+    };
+  }
+  if (err.message === SCAN_ERROR_MESSAGES.NO_ACCESS_AT_LOCATION) {
+    return { code, message: STAFF_SHEET_ERROR_MESSAGES.NO_ACCESS_AT_LOCATION };
+  }
+  if (err.message === SCAN_ERROR_MESSAGES.MEMBER_NOT_FOUND) {
+    return { code, message: STAFF_SHEET_ERROR_MESSAGES.MEMBER_NOT_FOUND };
+  }
+  if (err.message === SCAN_ERROR_MESSAGES.CLASS_NOT_FOUND) {
+    return { code, message: STAFF_SHEET_ERROR_MESSAGES.CLASS_NOT_FOUND };
+  }
+
+  return { code, message: err.message };
+}
 
 export type InvalidQrReason =
   | "unrecognized"

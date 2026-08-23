@@ -7,6 +7,7 @@ import { IPayment } from "../models/payment";
 import logger from "../config/logger";
 import { refundPaymentToRentalSystem } from "./egygap-erp-service";
 import { startOfDay, endOfDay, startOfMonth, endOfMonth } from "date-fns";
+import { buildCairoDateRangeQuery } from "../utils/date-range-query";
 import { resolveOpenGymPaymentPurposeLabel } from "../utils/open-gym-payment-purpose";
 import { locationIdScalarQuery, locationIdsArrayQuery, toObjectId } from "../utils/location-scope";
 
@@ -17,39 +18,6 @@ export type PaymentListEntry = IPayment & {
   linkedPaymentId?: Types.ObjectId | null;
   paymentLabel?: string | null;
 };
-
-function buildDateRangeQuery(
-  dateField: string,
-  dateString?: string,
-  month?: number,
-  year?: number
-): Record<string, unknown> {
-  const query: Record<string, unknown> = {};
-  const currentYear = new Date().getFullYear();
-  const targetYear = year || currentYear;
-
-  if (dateString && dateString !== "") {
-    const date = new Date(dateString);
-    if (!isNaN(date.getTime())) {
-      query[dateField] = { 
-        $gte: startOfDay(date), 
-        $lte: endOfDay(date) 
-      };
-    }
-  } else if (month) {
-    const m = month - 1;
-    // For month queries, we construct the date strings to ensure they are interpreted correctly
-    const startStr = `${targetYear}-${String(m + 1).padStart(2, '0')}-01T00:00:00`;
-    const startDate = new Date(startStr);
-    
-    query[dateField] = { 
-      $gte: startOfMonth(startDate), 
-      $lte: endOfMonth(startDate) 
-    };
-  }
-
-  return query;
-}
 
 function mapRefundToPaymentEntry(refund: IRefund): PaymentListEntry {
   const isCashOut = refund.type === "CASHOUT";
@@ -94,14 +62,14 @@ export class PaymentsService {
     year?: number,
     locationId?: string | null
   ): Promise<PaymentListEntry[]> {
-    const paymentQuery = buildDateRangeQuery(
+    const paymentQuery = buildCairoDateRangeQuery(
       "paymentTime",
       dateString,
       month,
       year
     );
     const refundQuery = {
-      ...buildDateRangeQuery("createdAt", dateString, month, year),
+      ...buildCairoDateRangeQuery("createdAt", dateString, month, year),
       // Include ALL refunds (both standalone and linked to a payment) so each
       // refund appears as its own negative row alongside the original purchase.
     };
@@ -224,29 +192,12 @@ export class PaymentsService {
     month?: number,
     year?: number
   ): Promise<any> {
-    const query: Record<string, any> = {};
-
-    const currentYear = new Date().getFullYear();
-    const targetYear = year || currentYear;
-
-    if (dateString && dateString !== "") {
-      const date = new Date(dateString);
-      if (!isNaN(date.getTime())) {
-        query.paymentTime = {
-          $gte: startOfDay(date),
-          $lte: endOfDay(date),
-        };
-      }
-    } else if (month) {
-      const m = month - 1;
-      const startStr = `${targetYear}-${String(m + 1).padStart(2, '0')}-01T00:00:00`;
-      const startDate = new Date(startStr);
-      
-      query.paymentTime = { 
-        $gte: startOfMonth(startDate), 
-        $lte: endOfMonth(startDate) 
-      };
-    }
+    const query: Record<string, any> = buildCairoDateRangeQuery(
+      "paymentTime",
+      dateString,
+      month,
+      year
+    );
 
     // Fetch all payments with populated package data
     const allPayments = await Payment.find(query)

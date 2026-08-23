@@ -40,11 +40,17 @@ export class SubscriptionsService {
       session,
     );
     if (exists) {
-      throw new ConflictError("PACKAGE_ALREADY_ADDED", "Package already added", {
-        uid,
-        pkgId,
-        startDate,
-      });
+      const pkg = await Package.findById(pkgId);
+      const pkgName = pkg?.name ? ` "${pkg.name}"` : "";
+      throw new ConflictError(
+        "PACKAGE_ALREADY_ADDED",
+        `This member already has an active package${pkgName} starting on this date`,
+        {
+          uid,
+          pkgId,
+          startDate,
+        },
+      );
     }
   }
 
@@ -66,12 +72,18 @@ export class SubscriptionsService {
     if (session) existingQuery.session(session);
     const existing = await existingQuery;
     if (existing) {
-      throw new ConflictError("PACKAGE_ALREADY_ADDED", "Package already added", {
-        phoneNumber: cleanPhone,
-        pkgId,
-        startDate,
-        nonUserPackageId: String(existing._id),
-      });
+      const pkg = await Package.findById(pkgId);
+      const pkgName = pkg?.name ? ` "${pkg.name}"` : "";
+      throw new ConflictError(
+        "PACKAGE_ALREADY_ADDED",
+        `A pending package${pkgName} has already been added for ${cleanPhone} on this date`,
+        {
+          phoneNumber: cleanPhone,
+          pkgId,
+          startDate,
+          nonUserPackageId: String(existing._id),
+        },
+      );
     }
   }
 
@@ -87,6 +99,28 @@ export class SubscriptionsService {
     locationId?: string,
     pendingDeduction = false,
   ) {
+    if (!uid) {
+      throw new BadRequestError("MEMBER_ID_REQUIRED", "Member ID is required");
+    }
+    if (!pkgId) {
+      throw new BadRequestError("PACKAGE_ID_REQUIRED", "Package ID is required");
+    }
+    if (!startDate) {
+      throw new BadRequestError("START_DATE_REQUIRED", "Start date is required");
+    }
+    if (!paymentMethod) {
+      throw new BadRequestError(
+        "PAYMENT_METHOD_REQUIRED",
+        "Payment method is required",
+      );
+    }
+    if (amount !== undefined && (Number.isNaN(Number(amount)) || Number(amount) < 0)) {
+      throw new BadRequestError(
+        "INVALID_AMOUNT",
+        "Payment amount must be a non-negative number",
+      );
+    }
+
     const member = await Member.findOne({ uid });
     if (!member)
       throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found", {
@@ -593,12 +627,38 @@ export class SubscriptionsService {
     paymentDate?: string,
     amount?: string,
     locationId?: string,
+    note?: string,
   ) {
+    if (!name || !name.trim()) {
+      throw new BadRequestError("NAME_REQUIRED", "Name is required");
+    }
+    if (!phoneNumber) {
+      throw new BadRequestError("PHONE_REQUIRED", "Phone number is required");
+    }
+    if (!pkgId) {
+      throw new BadRequestError("PACKAGE_ID_REQUIRED", "Package ID is required");
+    }
+    if (!pkgStartDate) {
+      throw new BadRequestError("START_DATE_REQUIRED", "Start date is required");
+    }
+    if (!paymentMethod) {
+      throw new BadRequestError("PAYMENT_METHOD_REQUIRED", "Payment method is required");
+    }
+    if (amount !== undefined && (Number.isNaN(Number(amount)) || Number(amount) < 0)) {
+      throw new BadRequestError("INVALID_AMOUNT", "Amount must be a non-negative number");
+    }
+
     name = name.trim();
     phoneNumber = normalizePhoneNumber(phoneNumber);
     const pkg = await Package.findById(pkgId);
     if (!pkg)
       throw new NotFoundError("PACKAGE_NOT_FOUND", "The package was not found");
+    if (pendingDeduction && pkg.numberOfSessions < 1) {
+      throw new BadRequestError(
+        "INVALID_DEDUCTION",
+        "This package has no sessions to deduct",
+      );
+    }
     pkgStartDate = toStoredPackageDate(pkgStartDate).toISOString();
     if (paymentDate) {
       paymentDate = toStoredPackageDate(paymentDate).toISOString();
@@ -633,7 +693,7 @@ export class SubscriptionsService {
         undefined,
         (pkg as any)._id,
         paymentDate ? paymentDate : undefined,
-        undefined,
+        note,
         name,
         phoneNumber,
         locationId
