@@ -192,4 +192,51 @@ describe("BookingsService branch open gym scans", () => {
       expect.objectContaining({ code: "LEGACY_OPEN_GYM_UNAVAILABLE" }),
     );
   });
+
+  it("handles members with corrupted non-ObjectId booking scid without throwing", async () => {
+    (Member.findOne as jest.Mock).mockImplementation(() => ({
+      populate: jest.fn().mockResolvedValue({
+        uid: { name: "Corrupted Booking Member" },
+        bookings: [
+          {
+            scid: "opengym:69ec4abad8394559ce7ca77c",
+            isDropIn: true,
+            bookingTime: new Date(),
+          },
+        ],
+      }),
+      uid: { name: "Corrupted Booking Member" },
+      bookings: [
+        {
+          scid: "opengym:69ec4abad8394559ce7ca77c",
+          isDropIn: true,
+          bookingTime: new Date(),
+        },
+      ],
+    }));
+
+    (Location.findById as jest.Mock).mockReturnValue({
+      select: jest.fn().mockResolvedValue({ _id: branchA }),
+    });
+    (Member.recordSpaceWalkAttendance as jest.Mock).mockResolvedValue(
+      new Types.ObjectId().toString(),
+    );
+    (Package.findById as jest.Mock).mockResolvedValue({ name: "Open Gym" });
+    (DailyAttendance.recordOpenGymAttendance as jest.Mock).mockResolvedValue(
+      undefined,
+    );
+
+    await expect(
+      BookingsService.recordOpenGymAttendance(uid, io, branchA),
+    ).resolves.not.toThrow();
+
+    expect(DailyAttendance.recordOpenGymAttendance).toHaveBeenCalledWith(
+      uid,
+      "Open Gym",
+      mockSession,
+      "SUCCESS",
+      io,
+      branchA,
+    );
+  });
 });

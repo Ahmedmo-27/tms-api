@@ -629,26 +629,31 @@ export class BookingsService {
     uid: string,
     locationId: string,
   ): Promise<boolean> {
-    const member = await Member.findOne({ uid }).populate({
-      path: "bookings.scid",
-      populate: [{ path: "cid" }, { path: "locationId" }],
-    });
-    if (!member) {
+    const member = await Member.findOne({ uid });
+    if (!member || !member.bookings?.length) {
       return false;
     }
 
-    if (!member?.bookings?.length) {
+    const dropInScids = member.bookings
+      .filter(
+        (booking) =>
+          booking.isDropIn &&
+          booking.scid &&
+          Types.ObjectId.isValid(booking.scid.toString()),
+      )
+      .map((booking) => new Types.ObjectId(booking.scid.toString()));
+
+    if (!dropInScids.length) {
       return false;
     }
 
-    return member.bookings.some((booking) => {
-      if (!booking.isDropIn) {
-        return false;
-      }
-      const scheduledClass = booking.scid as any;
-      if (!scheduledClass || typeof scheduledClass !== "object") {
-        return false;
-      }
+    const scheduledClasses = await ScheduledClass.find({
+      _id: { $in: dropInScids },
+    })
+      .populate({ path: "cid" })
+      .populate({ path: "locationId" });
+
+    return scheduledClasses.some((scheduledClass: any) => {
       const classDoc = scheduledClass.cid;
       if (!classDoc || classDoc.category !== "WORKSPACE") {
         return false;
