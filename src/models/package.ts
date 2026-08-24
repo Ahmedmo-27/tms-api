@@ -68,6 +68,7 @@ export interface IPackage {
   locationId?: Types.ObjectId;
   coachId?: string;
   hidden?: boolean;
+  isDeprecated?: boolean;
   classRestrictions?: IClassRestriction[];
   opensClasses: Types.ObjectId[];
 }
@@ -141,6 +142,11 @@ const PackageSchema = new Schema<IPackage, IPackageModel, IPackageMethods>({
     type: Boolean,
     required: false,
   },
+  isDeprecated: {
+    type: Boolean,
+    required: false,
+    default: false,
+  },
   coachId: {
     type: Schema.Types.ObjectId,
     ref: "Coach",
@@ -189,6 +195,7 @@ PackageSchema.static(
 PackageSchema.index({ coachId: 1 });
 PackageSchema.index({ locationId: 1 });
 PackageSchema.index({ name: 1 });
+PackageSchema.index({ isDeprecated: 1 });
 
 const Package = mongoose.model<IPackage, IPackageModel>(
   "Package",

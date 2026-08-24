@@ -15,7 +15,7 @@ import { resolveLocationFilter, resolveLocationIdForWrite, locationIdScalarQuery
 import { normalizePhoneNumber } from "../../utils/phone";
 import { normalizeOpenGymPackageFields } from "../../utils/open-gym-package";
 import { Types } from "mongoose";
-import { getPackageDeletionImpact } from "../../services/package-deletion-guard";
+import { getPackageDeletionImpact, cleanUpDeprecatedPackages } from "../../services/package-deletion-guard";
 import logger from "../../config/logger";
 import {
   isSameCairoDay,
@@ -159,6 +159,7 @@ export const getPackage = asyncHandler(async function (
   req: Request,
   res: Response
 ): Promise<void> {
+  await cleanUpDeprecatedPackages();
   const { name, category, coachId } = req.query;
   const query: any = {};
   if (name) {
@@ -259,37 +260,26 @@ export const getPackageDeletionImpactReport = asyncHandler(
 export const deletePackage = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const { id } = req.params;
-    const force = req.query.force === "true";
     const impact = await getPackageDeletionImpact(id);
 
-    const hasRisk =
-      impact.activeSubscriptions > 0 || impact.nonRefundedPaymentCount > 0;
-
-    if (hasRisk && !force) {
-      throw new ConflictError(
-        "PACKAGE_HAS_ACTIVE_SUBSCRIBERS",
-        impact.warningMessage,
-        {
-          impact,
-          hint: "Pass ?force=true to delete anyway. Member subscriptions and payments will keep referencing a missing package until repaired.",
-        },
-      );
-    }
-
-    if (hasRisk && force) {
-      logger.warn("Force-deleting package with active subscribers", {
-        packageId: id,
-        impact,
-      });
-    }
-
-    const pkg = await Package.findByIdAndDelete(id);
+    const pkg = await Package.findById(id);
     if (!pkg)
       throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found", { id });
-    new SuccessResponse("Package Deleted!", {
-      deletedPackage: pkg,
-      orphanedImpact: hasRisk ? impact : null,
-    }).send(res);
+
+    if (impact.activeSubscriptions > 0) {
+      pkg.isDeprecated = true;
+      await pkg.save();
+      new SuccessResponse("Package Deprecated!", {
+        deletedPackage: pkg,
+        message: "Package has been deprecated (soft-deleted) because it has active subscribers.",
+      }).send(res);
+    } else {
+      await Package.findByIdAndDelete(id);
+      new SuccessResponse("Package Deleted!", {
+        deletedPackage: pkg,
+        message: "Package has been completely deleted.",
+      }).send(res);
+    }
   },
 );
 
