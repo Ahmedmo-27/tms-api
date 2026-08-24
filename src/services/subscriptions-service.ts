@@ -8,6 +8,7 @@ import { runInTransaction } from "../utils/transaction";
 import { ClientSession } from "mongoose";
 import logger from "../config/logger";
 import NonUserPackage from "../models/nonUserPackage";
+import { cleanUpDeprecatedPackages } from "./package-deletion-guard";
 import { sendPaymentToRentalSystem } from "./egygap-erp-service";
 import { IClassRestrictionRecord } from "../models/member";
 import { ChallengeService } from "./challenge-service";
@@ -131,6 +132,12 @@ export class SubscriptionsService {
       throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found", {
         pkgId,
       });
+    if (pkg.isDeprecated) {
+      throw new BadRequestError(
+        "PACKAGE_DEPRECATED",
+        "This package has been deprecated and cannot be subscribed to",
+      );
+    }
     if (
       pkg.category === "OPEN_GYM" &&
       pkg.locationId &&
@@ -289,6 +296,12 @@ export class SubscriptionsService {
       throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found", {
         pkgId,
       });
+    if (pkg.isDeprecated) {
+      throw new BadRequestError(
+        "PACKAGE_DEPRECATED",
+        "This package has been deprecated and cannot be subscribed to",
+      );
+    }
 
     const pendingMember = await isPendingMember(uid);
     if (pendingMember) {
@@ -565,6 +578,7 @@ export class SubscriptionsService {
     await runInTransaction(async (session: ClientSession) => {
       await Member.removePackage(uid, pkgId, pkgStartDate, session);
     });
+    await cleanUpDeprecatedPackages();
   }
 
   static async transferStagedPackagesToMember(
@@ -653,6 +667,12 @@ export class SubscriptionsService {
     const pkg = await Package.findById(pkgId);
     if (!pkg)
       throw new NotFoundError("PACKAGE_NOT_FOUND", "The package was not found");
+    if (pkg.isDeprecated) {
+      throw new BadRequestError(
+        "PACKAGE_DEPRECATED",
+        "This package has been deprecated and cannot be subscribed to",
+      );
+    }
     if (pendingDeduction && pkg.numberOfSessions < 1) {
       throw new BadRequestError(
         "INVALID_DEDUCTION",

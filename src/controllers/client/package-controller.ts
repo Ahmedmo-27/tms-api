@@ -11,14 +11,16 @@ import {
   buildMatchaPackageFilter,
   isPendingMember,
 } from "../../utils/matcha-branch";
+import { cleanUpDeprecatedPackages } from "../../services/package-deletion-guard";
 
 // GET all packages to subscribe
 export const getPackage = asyncHandler(async function (
   req: Request,
   res: Response
 ): Promise<void> {
+  await cleanUpDeprecatedPackages();
   const { name, category, coachId } = req.query;
-  const query: any = {};
+  const query: any = { isDeprecated: { $ne: true } };
   if (name) {
     query.name = { $regex: String(name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" };
   }

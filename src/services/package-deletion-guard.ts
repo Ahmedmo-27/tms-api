@@ -133,3 +133,20 @@ export async function getPackageDeletionImpact(
     warningMessage: buildWarningMessage(base),
   };
 }
+
+export async function cleanUpDeprecatedPackages(): Promise<void> {
+  const deprecatedPackages = await Package.find({ isDeprecated: true });
+  for (const pkg of deprecatedPackages) {
+    const activeSubscribersCount = await Member.countDocuments({
+      packages: {
+        $elemMatch: {
+          pkgId: pkg._id,
+          status: "ACTIVE",
+        },
+      },
+    });
+    if (activeSubscribersCount === 0) {
+      await Package.findByIdAndDelete(pkg._id);
+    }
+  }
+}
