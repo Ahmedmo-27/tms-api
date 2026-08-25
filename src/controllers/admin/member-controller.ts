@@ -1,4 +1,5 @@
 import { Request, Response } from "express";
+import { Types } from "mongoose";
 import Member from "../../models/member";
 import User from "../../models/user";
 import { NotFoundError } from "../../core/ApiError";
@@ -47,7 +48,7 @@ export const getMember = asyncHandler(async function (
   res: Response
 ): Promise<void> {
   // Our Members is intentionally global — all staff roles see members across branches.
-  const { uid, limit = "10", page = "1", name, phone } = req.query;
+  const { uid, limit = "10", page = "1", name, phone, pkgId } = req.query;
 
   const userQuery: any = {};
   if (uid) {
@@ -72,10 +73,19 @@ export const getMember = asyncHandler(async function (
   const limitNumber = parseInt(limit as string, 10);
   const skip = (pageNumber - 1) * limitNumber;
 
-  const memberQuery = {
+  const memberQuery: any = {
     uid: { $in: uids },
     isActive: true,
   };
+
+  if (pkgId && Types.ObjectId.isValid(pkgId as string)) {
+    memberQuery.packages = {
+      $elemMatch: {
+        pkgId: new Types.ObjectId(pkgId as string),
+        status: "ACTIVE",
+      },
+    };
+  }
 
   let [members, total] = await Promise.all([
     Member.find(memberQuery)
