@@ -100,6 +100,12 @@ import {
   getMemberRecentPayments,
 } from "../controllers/admin/refunds-controller";
 import { sendMail, getLogs, getInbox } from "../controllers/admin/mail-controller";
+import {
+  getSheetDay,
+  getSheetMemberEligibility,
+  commitSheetRows,
+  importSheetDay,
+} from "../controllers/admin/sheet-controller";
 
 const adminRoutes = express.Router();
 
@@ -660,6 +666,35 @@ adminRoutes.get(
   authenticateUser,
   authorizeUser(["management"]),
   getInbox
+);
+
+// Daily Sheet Routes
+adminRoutes.get(
+  "/sheet",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  getSheetDay
+);
+
+adminRoutes.get(
+  "/sheet/member-eligibility",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  getSheetMemberEligibility
+);
+
+adminRoutes.post(
+  "/sheet/commit",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  commitSheetRows
+);
+
+adminRoutes.post(
+  "/sheet/import",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  importSheetDay
 );
 
 export default adminRoutes;

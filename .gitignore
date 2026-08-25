@@ -14,3 +14,4 @@ migration/
 dev.env
 prod.env
 tmp-*
+/docs
