@@ -206,16 +206,38 @@ UserSchema.method(
       jti: crypto.randomUUID(),
       iat: Math.floor(Date.now() / 1000),
     };
-    const token = jwt.sign(tokenData, secret, { expiresIn: "30d" });
-    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    const isMobile = deviceType === "mobile";
+    // Mobile app tokens do not expire so members only log in once.
+    // Web / dashboard tokens expire in 30 days.
+    const token = isMobile
+      ? jwt.sign(tokenData, secret)
+      : jwt.sign(tokenData, secret, { expiresIn: "30d" });
+    const expiresAt = isMobile
+      ? undefined
+      : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
     // Clean up expired tokens to prevent array growth
     user.tokens = user.tokens.filter((t) => !t.expiresIn || new Date(t.expiresIn) > new Date());
 
+    // Limit active mobile tokens per user to prevent unbounded growth from re-installations
+    const MAX_MOBILE_TOKENS = 5;
+    if (isMobile) {
+      const mobileTokens = user.tokens.filter((t) => t.device === "mobile");
+      if (mobileTokens.length >= MAX_MOBILE_TOKENS) {
+        const tokensToKeep = new Set(
+          mobileTokens.slice(-(MAX_MOBILE_TOKENS - 1)).map((t) => t.token)
+        );
+        user.tokens = user.tokens.filter(
+          (t) => t.device !== "mobile" || tokensToKeep.has(t.token)
+        );
+      }
+    }
+
     user.tokens.push({
       token,
       device: deviceType,
-      expiresIn: expiresAt,
+      ...(expiresAt ? { expiresIn: expiresAt } : {}),
     });
     logger.info("Generated auth token for user", {
       data: { userId: user._id, deviceType, fcmToken },

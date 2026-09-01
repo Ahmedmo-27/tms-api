@@ -104,7 +104,7 @@ export const registerUser = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const { name, email, password, phoneNumber, fcmToken } = req.body;
     assertPasswordStrength(password);
-    const deviceType = req.headers["x-device-type"] ? "mobile" : "web";
+    const deviceType = (req.headers["x-device-type"] || req.headers["xdevice-type"]) ? "mobile" : "web";
     logger.info("Started user registeration", {
       data: { name, email, phoneNumber },
     });
@@ -142,7 +142,7 @@ export const registerUser = asyncHandler(
 export const loginUser = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const { phoneNumber, password, fcmToken } = req.body;
-    const deviceType = req.headers["x-device-type"] ? "mobile" : "web";
+    const deviceType = (req.headers["x-device-type"] || req.headers["xdevice-type"]) ? "mobile" : "web";
     logger.info("Started user login", {
       data: { phoneNumber, deviceType },
     });
