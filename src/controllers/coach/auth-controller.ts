@@ -14,7 +14,7 @@ import { CoachAuthRequest } from "../../middlewares/coach.middleware";
 export const coachLogin = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const { phoneNumber, password } = req.body;
-    const deviceType = req.headers["x-device-type"] ? "mobile" : "web";
+    const deviceType = (req.headers["x-device-type"] || req.headers["xdevice-type"]) ? "mobile" : "web";
 
     if (!phoneNumber || !password) {
       throw new BadRequestError("MISSING_FIELDS", "Phone number and password are required");
