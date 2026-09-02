@@ -268,6 +268,7 @@ export const deletePackage = asyncHandler(
 
     if (impact.activeSubscriptions > 0) {
       pkg.isDeprecated = true;
+      pkg.hidden = true;
       await pkg.save();
       new SuccessResponse("Package Deprecated!", {
         deletedPackage: pkg,
@@ -531,13 +532,20 @@ export const getNonUserPackages = asyncHandler(async function (
   req: Request,
   res: Response
 ): Promise<void> {
-  const { name, phoneNumber, date } = req.query;
+  const { name, phoneNumber, date, search } = req.query;
+  const searchTerm = (search || name || phoneNumber) ? String(search || name || phoneNumber).trim() : "";
   const query: any = {};
-  if (name) {
-    query.name = { $regex: String(name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" };
-  }
-  if (phoneNumber) {
-    query.phoneNumber = phoneNumber;
+  if (searchTerm) {
+    const escaped = escapeRegex(searchTerm);
+    const cleanPhone = searchTerm.replace(/[\s\-+]/g, "");
+    const orConditions: any[] = [
+      { name: { $regex: escaped, $options: "i" } },
+      { phoneNumber: { $regex: escaped, $options: "i" } },
+    ];
+    if (cleanPhone && cleanPhone !== searchTerm) {
+      orConditions.push({ phoneNumber: { $regex: escapeRegex(cleanPhone), $options: "i" } });
+    }
+    query.$or = orConditions;
   }
   if (date) {
     query.createdAt = { $gte: new Date(date as string) };

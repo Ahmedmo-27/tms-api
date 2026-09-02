@@ -31,13 +31,21 @@ export const getUser = asyncHandler(
 
 export const getPendingMembers = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
-    const { limit, page, name, phone } = req.query;
+    const { limit, page, name, phone, search } = req.query;
+    const searchTerm = (search || name || phone) ? String(search || name || phone).trim() : "";
     const query: any = {};
-    if (name) {
-      query.name = { $regex: escapeRegex(String(name)), $options: "i" };
-    }
-    if (phone) {
-      query.phoneNumber = { $regex: escapeRegex(String(phone)), $options: "i" };
+    if (searchTerm) {
+      const escaped = escapeRegex(searchTerm);
+      const cleanPhone = searchTerm.replace(/[\s\-+]/g, "");
+      const orConditions: any[] = [
+        { name: { $regex: escaped, $options: "i" } },
+        { phoneNumber: { $regex: escaped, $options: "i" } },
+        { email: { $regex: escaped, $options: "i" } },
+      ];
+      if (cleanPhone && cleanPhone !== searchTerm) {
+        orConditions.push({ phoneNumber: { $regex: escapeRegex(cleanPhone), $options: "i" } });
+      }
+      query.$or = orConditions;
     }
     query.role = "user";
     const skip = ((page as any) - 1) * (limit as any);

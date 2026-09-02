@@ -176,6 +176,7 @@ export async function buildMatchaPackageFilter(): Promise<Record<string, unknown
   }
   return {
     hidden: { $ne: true },
+    isDeprecated: { $ne: true },
     locationId: new Types.ObjectId(matchaId),
   };
 }
