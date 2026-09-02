@@ -135,6 +135,12 @@ export async function getPackageDeletionImpact(
 }
 
 export async function cleanUpDeprecatedPackages(): Promise<void> {
+  // Ensure all deprecated packages are treated as hidden so older clients and queries never see them
+  await Package.updateMany(
+    { isDeprecated: true, hidden: { $ne: true } },
+    { $set: { hidden: true } },
+  );
+
   const deprecatedPackages = await Package.find({ isDeprecated: true });
   for (const pkg of deprecatedPackages) {
     const activeSubscribersCount = await Member.countDocuments({

@@ -48,17 +48,25 @@ export const getMember = asyncHandler(async function (
   res: Response
 ): Promise<void> {
   // Our Members is intentionally global — all staff roles see members across branches.
-  const { uid, limit = "10", page = "1", name, phone, pkgId } = req.query;
+  const { uid, limit = "10", page = "1", name, phone, search, pkgId } = req.query;
 
+  const searchTerm = (search || name || phone) ? String(search || name || phone).trim() : "";
   const userQuery: any = {};
   if (uid) {
     userQuery._id = uid;
   }
-  if (name) {
-    userQuery.name = { $regex: escapeRegex(String(name)), $options: "i" };
-  }
-  if (phone) {
-    userQuery.phoneNumber = { $regex: escapeRegex(String(phone)), $options: "i" };
+  if (searchTerm) {
+    const escaped = escapeRegex(searchTerm);
+    const cleanPhone = searchTerm.replace(/[\s\-+]/g, "");
+    const orConditions: any[] = [
+      { name: { $regex: escaped, $options: "i" } },
+      { phoneNumber: { $regex: escaped, $options: "i" } },
+      { email: { $regex: escaped, $options: "i" } },
+    ];
+    if (cleanPhone && cleanPhone !== searchTerm) {
+      orConditions.push({ phoneNumber: { $regex: escapeRegex(cleanPhone), $options: "i" } });
+    }
+    userQuery.$or = orConditions;
   }
 
   const users = await User.find(userQuery).select("_id");
@@ -75,7 +83,7 @@ export const getMember = asyncHandler(async function (
 
   const memberQuery: any = {
     uid: { $in: uids },
-    isActive: true,
+    isActive: { $ne: false },
   };
 
   if (pkgId && Types.ObjectId.isValid(pkgId as string)) {
@@ -111,10 +119,14 @@ export const getMember = asyncHandler(async function (
     ],
   });
 
+  members = members.filter((m) => m && m.uid != null);
+
   members.forEach((member) => {
-    member.bookings = member.bookings.filter(
-      (b) => b.scid && typeof b.scid === "object" && b.scid._id
-    );
+    if (member.bookings) {
+      member.bookings = member.bookings.filter(
+        (b) => b.scid && typeof b.scid === "object" && b.scid._id
+      );
+    }
   });
 
   new SuccessResponse("Members Found!", { members, total }).send(res);
