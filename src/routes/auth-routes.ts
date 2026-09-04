@@ -39,7 +39,9 @@ authRoutes.post(
 );
 authRoutes.post("/login", loginLimiter, loginUser);
 authRoutes.get("/logout", authenticateUser, logoutUser);
+authRoutes.post("/logout", authenticateUser, logoutUser);
 authRoutes.get("/logout-all", authenticateUser, logoutFromAllDevices);
+authRoutes.post("/logout-all", authenticateUser, logoutFromAllDevices);
 authRoutes.post(
   "/reset-password",
   resetPasswordGlobalLimiter,

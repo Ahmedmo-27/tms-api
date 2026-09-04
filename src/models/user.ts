@@ -221,7 +221,7 @@ UserSchema.method(
     user.tokens = user.tokens.filter((t) => !t.expiresIn || new Date(t.expiresIn) > new Date());
 
     // Limit active mobile tokens per user to prevent unbounded growth from re-installations
-    const MAX_MOBILE_TOKENS = 5;
+    const MAX_MOBILE_TOKENS = 10;
     if (isMobile) {
       const mobileTokens = user.tokens.filter((t) => t.device === "mobile");
       if (mobileTokens.length >= MAX_MOBILE_TOKENS) {

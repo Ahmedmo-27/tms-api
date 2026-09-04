@@ -46,7 +46,7 @@ function roleIsAllowed(userRole: string, allowedRoles: UserRole[]): boolean {
   return expandedRoles.has(normalizedUserRole as UserRole);
 }
 
-// CHANGE ERROR CODES AFTER UPDATE
+// Error codes for auth middleware
 export const authenticateUser = asyncHandler(
   async (req: Request, res: Response, next: NextFunction) => {
     let token: string;
@@ -58,7 +58,7 @@ export const authenticateUser = asyncHandler(
         token = parts[1];
         deviceType = "mobile";
       } else {
-        throw new BadTokenError("MEMBER_NOT_FOUND", "Invalid token - invalid format");
+        throw new BadTokenError("INVALID_TOKEN", "Invalid token - invalid format");
       }
     } else {
       token = req.cookies.token;
@@ -81,15 +81,15 @@ export const authenticateUser = asyncHandler(
        };
     } catch (error) {
       if (error instanceof jwt.TokenExpiredError) {
-        throw new TokenExpiredError("MEMBER_NOT_FOUND", "Token expired");
+        throw new TokenExpiredError("TOKEN_EXPIRED", "Token expired");
       }
-      throw new BadTokenError("MEMBER_NOT_FOUND", "Invalid token!");
+      throw new BadTokenError("INVALID_TOKEN", "Invalid token!");
     }
     const user = await User.findOne({
       _id: new Types.ObjectId(decoded.uid),
       "tokens.token": token,
     });
-    if (!user) throw new BadTokenError("MEMBER_NOT_FOUND", "Invalid token - user not found or token revoked");
+    if (!user) throw new BadTokenError("INVALID_TOKEN", "Invalid token - user not found or token revoked");
     (req as AuthRequest).user = user;
     (req as AuthRequest).deviceType = deviceType;
     next();

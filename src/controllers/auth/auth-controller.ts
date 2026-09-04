@@ -104,7 +104,12 @@ export const registerUser = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const { name, email, password, phoneNumber, fcmToken } = req.body;
     assertPasswordStrength(password);
-    const deviceType = (req.headers["x-device-type"] || req.headers["xdevice-type"]) ? "mobile" : "web";
+    const deviceType = (
+      req.headers["x-device-type"] ||
+      req.headers["xdevice-type"] ||
+      req.body.deviceType === "mobile" ||
+      fcmToken
+    ) ? "mobile" : "web";
     logger.info("Started user registeration", {
       data: { name, email, phoneNumber },
     });
@@ -142,7 +147,12 @@ export const registerUser = asyncHandler(
 export const loginUser = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const { phoneNumber, password, fcmToken } = req.body;
-    const deviceType = (req.headers["x-device-type"] || req.headers["xdevice-type"]) ? "mobile" : "web";
+    const deviceType = (
+      req.headers["x-device-type"] ||
+      req.headers["xdevice-type"] ||
+      req.body.deviceType === "mobile" ||
+      fcmToken
+    ) ? "mobile" : "web";
     logger.info("Started user login", {
       data: { phoneNumber, deviceType },
     });
@@ -191,17 +201,24 @@ export const loginUser = asyncHandler(
 export const logoutUser = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const authReq = req as AuthRequest;
-    const { fcmToken } = req.body;
+    const { fcmToken } = req.body || {};
     logger.info("Started user logout", {
       data: { userId: authReq.user._id },
     });
     const token =
-      authReq.deviceType === "web"
-        ? authReq.cookies.token
-        : authReq.headers.authorization?.split(" ")[1];
+      authReq.headers.authorization?.startsWith("Bearer ")
+        ? authReq.headers.authorization.split(" ")[1]
+        : authReq.cookies?.token;
     const user = authReq.user;
-    await user.removeToken(token, fcmToken);
-    if (authReq.deviceType === "web") res.clearCookie("token");
+    if (token) {
+      await user.removeToken(token, fcmToken);
+    } else if (fcmToken) {
+      user.fcmTokens = user.fcmTokens.filter((fcm) => fcm !== fcmToken);
+      await user.save();
+    }
+    if (authReq.deviceType === "web" || authReq.cookies?.token) {
+      res.clearCookie("token", authCookieOptions());
+    }
     new SuccessResponse("User Logged Out!", { userId: String(user._id) }).send(res);
   }
 );
@@ -214,7 +231,9 @@ export const logoutFromAllDevices = asyncHandler(
     });
     const user = authReq.user;
     await user.removeAllTokens();
-    if (authReq.deviceType === "web") res.clearCookie("token");
+    if (authReq.deviceType === "web" || authReq.cookies?.token) {
+      res.clearCookie("token", authCookieOptions());
+    }
     new SuccessResponse("User Logged Out From All Devices!", {
       userId: String(user._id),
     }).send(res);
