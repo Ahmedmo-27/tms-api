@@ -16,6 +16,7 @@ jest.mock("../models/package", () => {
       findById: jest.fn(),
       findByIdAndDelete: jest.fn(),
       countDocuments: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({}),
     },
   };
 });
