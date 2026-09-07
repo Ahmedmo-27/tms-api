@@ -10,6 +10,7 @@ import ScheduledClass from "../../models/scheduledClass";
 import { authCookieOptions } from "../../utils/authCookies";
 import { CoachService } from "../../services/coach-service";
 import { CoachAuthRequest } from "../../middlewares/coach.middleware";
+import { assertPasswordStrength } from "../auth/auth-controller";
 
 export const coachLogin = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
@@ -73,12 +74,7 @@ export const changeCoachPassword = asyncHandler(
       );
     }
 
-    if (typeof newPassword !== "string" || newPassword.length < 10) {
-      throw new BadRequestError(
-        "WEAK_PASSWORD",
-        "Password must be at least 10 characters",
-      );
-    }
+    assertPasswordStrength(newPassword);
 
     const user = await User.findById(coachReq.coachId);
     if (!user) {

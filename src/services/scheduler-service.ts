@@ -56,6 +56,9 @@ export class SchedulerService {
     scid: string,
     locationId?: string | Types.ObjectId | null,
   ) {
+    if (!scid || !Types.ObjectId.isValid(scid))
+      throw new NotFoundError("CLASS_NOT_FOUND", "Class not found", { scid });
+
     const resolved = this.toLocationObjectId(locationId);
     if (!resolved) return;
 
@@ -286,6 +289,9 @@ export class SchedulerService {
     scid: string,
     restrictToLocationId?: string | Types.ObjectId | null,
   ) {
+    if (!scid || !Types.ObjectId.isValid(scid))
+      throw new NotFoundError("CLASS_NOT_FOUND", "Class not found", { scid });
+
     await this.assertSessionAtLocation(scid, restrictToLocationId);
 
     const scheduledClass = await ScheduledClass.findById(scid).populate({
@@ -349,6 +355,9 @@ export class SchedulerService {
     scid: string,
     restrictToLocationId?: string | Types.ObjectId | null,
   ): Promise<IScheduledClass | null> {
+    if (!scid || !Types.ObjectId.isValid(scid))
+      throw new NotFoundError("CLASS_NOT_FOUND", "Class not found", { scid });
+
     await this.assertSessionAtLocation(scid, restrictToLocationId);
     const validUpdates = [
       "startTime",

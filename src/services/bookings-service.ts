@@ -83,6 +83,9 @@ export class BookingsService {
     isAdminOverride: boolean = false,
     audience: "member" | "admin" = "member",
   ) {
+    if (!scid || !Types.ObjectId.isValid(scid))
+      throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
+
     const scheduledClass = await ScheduledClass.findById(scid).populate({
       path: "cid",
       populate: { path: "locations" },
@@ -293,6 +296,8 @@ export class BookingsService {
   // Refund policy
   // 3-hours before class
   static async cancelBooking(uid: string, scid: string): Promise<void> {
+    if (!scid || !Types.ObjectId.isValid(scid))
+      throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
     const member = await Member.findOne({ uid });
     if (!member)
       throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
@@ -348,6 +353,11 @@ export class BookingsService {
   }
 
   static async cancelDropIn(uid: string, scid: string): Promise<void> {
+    if (!scid || !Types.ObjectId.isValid(scid))
+      throw new NotFoundError(
+        "CLASS_NOT_FOUND",
+        SCAN_ERROR_MESSAGES.CLASS_NOT_FOUND,
+      );
     const member = await Member.findOne({ uid });
     if (!member)
       throw new NotFoundError(
@@ -399,6 +409,11 @@ export class BookingsService {
   }
 
   static async recordAttendance(uid: string, scid: string, io: Server) {
+    if (!scid || !Types.ObjectId.isValid(scid))
+      throw new NotFoundError(
+        "CLASS_NOT_FOUND",
+        SCAN_ERROR_MESSAGES.CLASS_NOT_FOUND,
+      );
     const member = await Member.findOne({ uid }).populate({ path: "uid" });
     if (!member)
       throw new NotFoundError(
@@ -460,6 +475,11 @@ export class BookingsService {
     scid: string,
     io: Server,
   ) {
+    if (!scid || !Types.ObjectId.isValid(scid))
+      throw new NotFoundError(
+        "CLASS_NOT_FOUND",
+        SCAN_ERROR_MESSAGES.CLASS_NOT_FOUND,
+      );
     const member = await Member.findOne({ uid }).populate({ path: "uid" });
     if (!member)
       throw new NotFoundError(
@@ -497,6 +517,8 @@ export class BookingsService {
   }
 
   static async manualRemoveClassAttendance(uid: string, scid: string) {
+    if (!scid || !Types.ObjectId.isValid(scid))
+      throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
     await runInTransaction(async (session: ClientSession) => {
       await Member.removeClassAttendance(uid, scid, session);
       await ScheduledClass.removeSuccessfulMemberScan(scid, uid, session);
@@ -1115,6 +1137,8 @@ export class BookingsService {
     merchantReferenceId: string,
     promoCode?: string,
   ) {
+    if (!scid || !Types.ObjectId.isValid(scid))
+      throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
     const scheduledClass: any = await ScheduledClass.findById(scid).populate({
       path: "cid",
     });
@@ -1341,6 +1365,8 @@ export class BookingsService {
     scid: string,
     session?: ClientSession,
   ): Promise<INonUserBooking> {
+    if (!scid || !Types.ObjectId.isValid(scid))
+      throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
     let booking;
     const scheduledClass = await ScheduledClass.findById(scid).populate<{ cid: { allowDropIn: boolean } }>("cid");
     if (!scheduledClass)
@@ -1368,12 +1394,16 @@ export class BookingsService {
   }
 
   static async adminPromoteFromWaitlist(uid: string, scid: string) {
+    if (!scid || !Types.ObjectId.isValid(scid))
+      throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
     await ScheduledClass.assertOnWaitlist(scid, uid);
     await BookingsService.addBooking(uid, scid, true);
     await ScheduledClass.removeMemberFromWaitlist(scid, uid);
   }
 
   static async adminAddToWaitlist(uid: string, scid: string) {
+    if (!scid || !Types.ObjectId.isValid(scid))
+      throw new NotFoundError("CLASS_NOT_FOUND", "Scheduled class not found");
     const member = await Member.findOne({ uid });
     if (!member)
       throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
@@ -1384,6 +1414,8 @@ export class BookingsService {
   }
 
   static async adminRemoveFromWaitlist(uid: string, scid: string) {
+    if (!scid || !Types.ObjectId.isValid(scid))
+      throw new NotFoundError("CLASS_NOT_FOUND", "Scheduled class not found");
     const scheduledClass = await ScheduledClass.findById(scid);
     if (!scheduledClass)
       throw new NotFoundError("CLASS_NOT_FOUND", "Scheduled class not found");
@@ -1391,6 +1423,8 @@ export class BookingsService {
   }
 
   static async getWaitlistedMembers(scid: string) {
+    if (!scid || !Types.ObjectId.isValid(scid))
+      throw new NotFoundError("CLASS_NOT_FOUND", "Scheduled class not found");
     const scheduledClass = await ScheduledClass.findById(scid).populate({
       path: "waitlistedMembers.uid",
       model: "User",
@@ -1406,6 +1440,8 @@ export class BookingsService {
     fcmToken: string,
     scid: string,
   ) {
+    if (!scid || !Types.ObjectId.isValid(scid))
+      throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
     // Also save the FCM token to the user if not exists
     const user = await User.findById(uid);
     if (user && !user.fcmTokens.includes(fcmToken)) {
