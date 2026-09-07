@@ -23,11 +23,35 @@ import { runInTransaction } from "../../utils/transaction";
 import { normalizePhoneNumber } from "../../utils/phone";
 import { authCookieOptions } from "../../utils/authCookies";
 
-function assertPasswordStrength(password: unknown): string {
-  if (typeof password !== "string" || password.length < 10) {
+export function assertPasswordStrength(password: unknown): string {
+  if (typeof password !== "string") {
+    throw new BadRequestError(
+      "WEAK_PASSWORD",
+      "Password must be a valid string",
+    );
+  }
+  if (password.length < 10) {
     throw new BadRequestError(
       "WEAK_PASSWORD",
       "Password must be at least 10 characters",
+    );
+  }
+  if (!/[a-zA-Z]/.test(password)) {
+    throw new BadRequestError(
+      "WEAK_PASSWORD",
+      "Password must contain at least one letter",
+    );
+  }
+  if (!/[0-9]/.test(password)) {
+    throw new BadRequestError(
+      "WEAK_PASSWORD",
+      "Password must contain at least one number",
+    );
+  }
+  if (!/[^a-zA-Z0-9]/.test(password)) {
+    throw new BadRequestError(
+      "WEAK_PASSWORD",
+      "Password must contain at least one special character",
     );
   }
   return password;

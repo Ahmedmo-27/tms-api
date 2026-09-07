@@ -21,6 +21,9 @@ const HOUR = 60 * MINUTE;
 
 export class WaitlistService {
   static async joinWaitlist(uid: string, scid: string) {
+    if (!scid || !Types.ObjectId.isValid(scid)) {
+      throw new NotFoundError("CLASS_NOT_FOUND", "Scheduled Class not found");
+    }
     const scheduledClass = await ScheduledClass.findById(scid);
     if (!scheduledClass) {
       throw new NotFoundError("CLASS_NOT_FOUND", "Scheduled Class not found");
@@ -64,6 +67,9 @@ export class WaitlistService {
   }
 
   static async leaveWaitlist(uid: string, scid: string) {
+    if (!scid || !Types.ObjectId.isValid(scid)) {
+      throw new NotFoundError("WAITLIST_ENTRY_NOT_FOUND", "Waitlist entry not found");
+    }
     const entry = await WaitlistEntry.findOneAndUpdate(
       {
         sessionId: new Types.ObjectId(scid),
@@ -96,6 +102,7 @@ export class WaitlistService {
   }
 
   static async processWaitlist(scid: string) {
+    if (!scid || !Types.ObjectId.isValid(scid)) return;
     const scheduledClass = await ScheduledClass.findById(scid).populate({
       path: "cid",
     });
