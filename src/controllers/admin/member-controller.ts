@@ -6,6 +6,7 @@ import { NotFoundError } from "../../core/ApiError";
 import { SuccessResponse } from "../../core/ApiResponse";
 import asyncHandler from "../../utils/asyncHandler";
 import { SubscriptionsService } from "../../services/subscriptions-service";
+import { PackageStatusService } from "../../services/package-status-service";
 import { runInTransaction } from "../../utils/transaction";
 import { escapeRegex } from "../../utils/escapeRegex";
 
@@ -91,6 +92,7 @@ export const getMember = asyncHandler(async function (
       $elemMatch: {
         pkgId: new Types.ObjectId(pkgId as string),
         status: "ACTIVE",
+        pkgEndDate: { $gte: new Date() },
       },
     };
   }
@@ -122,6 +124,13 @@ export const getMember = asyncHandler(async function (
   members = members.filter((m) => m && m.uid != null);
 
   members.forEach((member) => {
+    const isDirty = PackageStatusService.syncMemberPackageStatuses(member);
+    if (isDirty) {
+      member.save().catch((err: any) => {
+        // Silently catch background save error to avoid blocking the response
+      });
+    }
+
     if (member.bookings) {
       member.bookings = member.bookings.filter(
         (b) => b.scid && typeof b.scid === "object" && b.scid._id

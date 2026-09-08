@@ -5,6 +5,7 @@ import { InternalError, NotFoundError } from "../../core/ApiError";
 import { SuccessResponse } from "../../core/ApiResponse";
 import asyncHandler from "../../utils/asyncHandler";
 import logger from "../../config/logger";
+import { PackageStatusService } from "../../services/package-status-service";
 
 export const getMemberProfile: RequestHandler = asyncHandler(async function (
   req: Request,
@@ -31,6 +32,11 @@ export const getMemberProfile: RequestHandler = asyncHandler(async function (
 
   if (!member)
     throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found", { _id });
+
+  const isDirty = PackageStatusService.syncMemberPackageStatuses(member);
+  if (isDirty) {
+    await member.save();
+  }
 
   member = await Member.populate(member, {
     path: "bookings.scid",

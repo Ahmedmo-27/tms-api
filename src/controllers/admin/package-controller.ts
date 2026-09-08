@@ -419,14 +419,21 @@ export const editMemberPackage = asyncHandler(async function (
     });
 
   if (pkgEndDate) {
-    pkg.pkgEndDate = toStoredPackageDate(pkgEndDate);
+    const normalizedEnd = toStoredPackageDate(pkgEndDate);
+    pkg.pkgEndDate = normalizedEnd;
 
-    if (toStoredPackageDate(pkgEndDate) < startOfTodayCairo()) {
-      pkg.status = "EXPIRED";
-    } else {
-      pkg.status = "ACTIVE";
+    const isFrozen = pkg.status === "FROZEN" || Boolean(pkg.freezeInfo?.isFrozen);
+    if (pkg.status !== "DELETED") {
+      if (isFrozen) {
+        pkg.status = "FROZEN";
+      } else if (normalizedEnd < startOfTodayCairo()) {
+        pkg.status = "EXPIRED";
+      } else if (pkg.remainingClasses <= 0) {
+        pkg.status = "COMPLETED";
+      } else {
+        pkg.status = "ACTIVE";
+      }
     }
-    // Member.editExpiryDate(uid, pkgId, pkgStartDate, pkgEndDate);
   }
   await member.save();
   new SuccessResponse("Package Updated!", pkg).send(res);

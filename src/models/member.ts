@@ -16,6 +16,7 @@ import { Server } from "http";
 import Package, {
   isUnlimitedSpaceAccess,
   spaceAccessPriority,
+  resolvePackageAllowedFreezeDays,
 } from "./package";
 import { memberPackageGrantsAccessAtLocation } from "../utils/open-gym-location";
 import {
@@ -63,16 +64,37 @@ export interface IClassRestrictionRecord {
   ];
 }
 
+export interface IFreezeHistory {
+  startDate: Date;
+  endDate?: Date;
+  durationDays: number;
+  type: "STANDARD" | "EXTRA" | "ADMIN";
+  reason?: string;
+  approvedBy?: Types.ObjectId;
+  createdAt?: Date;
+}
+
+export interface IFreezeInfo {
+  isFrozen: boolean;
+  freezeStartDate?: Date;
+  freezeEndDate?: Date;
+  allowedFreezeDays: number;
+  usedFreezeDays: number;
+  extraFreezeDaysApproved: number;
+  freezeHistory?: IFreezeHistory[];
+}
+
 export interface IMemberPackageData {
   [x: string]: any;
   pkgId: Types.ObjectId;
   name: string;
   pkgStartDate: Date;
   pkgEndDate: Date;
-  status: "ACTIVE" | "EXPIRED" | "DELETED" | "COMPLETED";
+  status: "ACTIVE" | "EXPIRED" | "DELETED" | "COMPLETED" | "FROZEN";
   remainingClasses: number;
   classRestrictionsRecord?: IClassRestrictionRecord[];
   adjustmentHistory?: IAdjustmentRecord[];
+  freezeInfo?: IFreezeInfo;
   locationId?: Types.ObjectId;
 }
 
@@ -280,6 +302,30 @@ const AdjustmentRecordSchema = new Schema<IAdjustmentRecord>({
   },
 });
 
+const FreezeHistorySchema = new Schema<IFreezeHistory>({
+  startDate: { type: Date, required: true },
+  endDate: { type: Date, required: false },
+  durationDays: { type: Number, required: true },
+  type: {
+    type: String,
+    enum: ["STANDARD", "EXTRA", "ADMIN"],
+    required: true,
+  },
+  reason: { type: String, required: false },
+  approvedBy: { type: Schema.Types.ObjectId, ref: "User", required: false },
+  createdAt: { type: Date, default: Date.now },
+});
+
+const FreezeInfoSchema = new Schema<IFreezeInfo>({
+  isFrozen: { type: Boolean, default: false },
+  freezeStartDate: { type: Date, required: false },
+  freezeEndDate: { type: Date, required: false },
+  allowedFreezeDays: { type: Number, default: 0 },
+  usedFreezeDays: { type: Number, default: 0 },
+  extraFreezeDaysApproved: { type: Number, default: 0 },
+  freezeHistory: [FreezeHistorySchema],
+});
+
 // Define Package Schema
 const MemberPackageSchema: Schema = new Schema({
   pkgId: {
@@ -299,7 +345,7 @@ const MemberPackageSchema: Schema = new Schema({
   status: {
     type: String,
     required: true,
-    enum: ["ACTIVE", "EXPIRED", "DELETED", "COMPLETED"],
+    enum: ["ACTIVE", "EXPIRED", "DELETED", "COMPLETED", "FROZEN"],
   },
   remainingClasses: {
     type: Number,
@@ -307,6 +353,7 @@ const MemberPackageSchema: Schema = new Schema({
   },
   classRestrictionsRecord: [ClassRestrictionsRecordSchema],
   adjustmentHistory: [AdjustmentRecordSchema],
+  freezeInfo: FreezeInfoSchema,
   locationId: {
     type: Schema.Types.ObjectId,
     ref: "Location",
@@ -443,6 +490,29 @@ MemberSchema.static(
         pkgs.includes(p.pkgId.toString())
       );
       if (matchingAnyStatus.length > 0) {
+        const frozen = matchingAnyStatus.find(
+          (p) => p.status === "FROZEN" || (p as any).freezeInfo?.isFrozen
+        );
+        if (frozen) {
+          const freezeEnd = (frozen as any).freezeInfo?.freezeEndDate;
+          const dateStr = freezeEnd
+            ? new Date(freezeEnd).toLocaleDateString("en-GB", {
+                day: "numeric",
+                month: "short",
+                year: "numeric",
+              })
+            : undefined;
+          throw new ForbiddenError(
+            "PACKAGE_FROZEN",
+            bookingPackageErrorMessage("PACKAGE_FROZEN", className, {
+              packageName: frozen.name,
+              date: dateStr,
+              audience,
+            }),
+            { className, packageName: frozen.name, unfreezeDate: freezeEnd }
+          );
+        }
+
         const expired = matchingAnyStatus.find(
           (p) => p.status === "EXPIRED" || new Date(p.pkgEndDate) < new Date()
         );
@@ -1064,6 +1134,64 @@ MemberSchema.static(
     );
 
     if (memberPkgs.length <= 0) {
+      const candidatePkgs = member.packages.filter((p) =>
+        pkgIds.includes(p.pkgId.toString())
+      );
+      const frozenPkg = candidatePkgs.find(
+        (p) => p.status === "FROZEN" || p.freezeInfo?.isFrozen
+      );
+      if (frozenPkg) {
+        const freezeEndFormatted = frozenPkg.freezeInfo?.freezeEndDate
+          ? new Date(frozenPkg.freezeInfo.freezeEndDate).toLocaleDateString("en-GB", {
+              day: "numeric",
+              month: "short",
+              year: "numeric",
+            })
+          : undefined;
+
+        const message = freezeEndFormatted
+          ? `Package "${pkgName}" is currently frozen until ${freezeEndFormatted}. Please unfreeze in app to check in.`
+          : `Package "${pkgName}" is currently frozen. Please unfreeze in app to check in.`;
+
+        io.emit("FAILED-SCAN", {
+          code: "PACKAGE_FROZEN",
+          message,
+          member: (member.uid as any).name,
+          packageName: pkgName,
+          status: "FROZEN",
+          freezeStartDate: frozenPkg.freezeInfo?.freezeStartDate,
+          freezeEndDate: frozenPkg.freezeInfo?.freezeEndDate,
+        });
+        throw new ForbiddenError("PACKAGE_FROZEN", message);
+      }
+
+      const expiredPkg = candidatePkgs.find(
+        (p) => p.status === "EXPIRED" || new Date(p.pkgEndDate) < new Date()
+      );
+      if (expiredPkg) {
+        const expDateFormatted = new Date(expiredPkg.pkgEndDate).toLocaleDateString("en-GB", {
+          day: "numeric",
+          month: "short",
+          year: "numeric",
+        });
+        const message = `Package "${pkgName}" expired on ${expDateFormatted}.`;
+
+        io.emit("FAILED-SCAN", {
+          code: "PACKAGE_EXPIRED",
+          message,
+          member: (member.uid as any).name,
+          packageName: pkgName,
+          status: "EXPIRED",
+          expiryDate: expiredPkg.pkgEndDate,
+        });
+        throw new ForbiddenError("PACKAGE_EXPIRED", message);
+      }
+
+      io.emit("FAILED-SCAN", {
+        code: "NO_ACTIVE_PACKAGE_FOUND",
+        message: "No active packages found",
+        member: (member.uid as any).name,
+      });
       throw new ForbiddenError(
         "NO_ACTIVE_PACKAGE_FOUND",
         "No active packages found"
@@ -1206,9 +1334,40 @@ MemberSchema.static(
       return pkg.pkgId.toString();
     }
 
+    const candidatePkgs = member.packages.filter((p) =>
+      pkgIds.includes(p.pkgId.toString())
+    );
+    const frozenPkg = candidatePkgs.find(
+      (p) => p.status === "FROZEN" || p.freezeInfo?.isFrozen
+    );
+    if (frozenPkg) {
+      const freezeEndFormatted = frozenPkg.freezeInfo?.freezeEndDate
+        ? new Date(frozenPkg.freezeInfo.freezeEndDate).toLocaleDateString("en-GB", {
+            day: "numeric",
+            month: "short",
+            year: "numeric",
+          })
+        : undefined;
+
+      const message = freezeEndFormatted
+        ? `Package "${pkgName}" is currently frozen until ${freezeEndFormatted}. Please unfreeze in app to check in.`
+        : `Package "${pkgName}" is currently frozen. Please unfreeze in app to check in.`;
+
+      io.emit("FAILED-SCAN", {
+        code: "PACKAGE_FROZEN",
+        message,
+        member: (member.uid as any).name,
+        packageName: pkgName,
+        status: "FROZEN",
+        freezeStartDate: frozenPkg.freezeInfo?.freezeStartDate,
+        freezeEndDate: frozenPkg.freezeInfo?.freezeEndDate,
+      });
+      return null;
+    }
+
     io.emit("FAILED-SCAN", {
       code: "NO_ACTIVE_PACKAGE_FOUND",
-      message: "No active package found!",
+      message: "No active package found for this member.",
       member: (member.uid as any).name,
     });
     return null;
@@ -1236,10 +1395,95 @@ MemberSchema.static(
     );
 
     if (memberPkgs.length <= 0) {
+      const candidatePkgs = member.packages.filter((p) =>
+        pkgIds.includes(p.pkgId.toString())
+      );
+      const frozenPkg = candidatePkgs.find(
+        (p) => p.status === "FROZEN" || p.freezeInfo?.isFrozen
+      );
+      if (frozenPkg) {
+        const catalogDoc = await Package.findById(frozenPkg.pkgId).session(session);
+        const pkgName = catalogDoc?.name || "Package";
+        const freezeEndFormatted = frozenPkg.freezeInfo?.freezeEndDate
+          ? new Date(frozenPkg.freezeInfo.freezeEndDate).toLocaleDateString("en-GB", {
+              day: "numeric",
+              month: "short",
+              year: "numeric",
+            })
+          : undefined;
+
+        const message = freezeEndFormatted
+          ? `Package "${pkgName}" is currently frozen until ${freezeEndFormatted}. Please unfreeze in app to check in.`
+          : `Package "${pkgName}" is currently frozen. Please unfreeze in app to check in.`;
+
+        io.emit("FAILED-SCAN", {
+          code: "PACKAGE_FROZEN",
+          message,
+          member: (member.uid as any).name,
+          packageName: pkgName,
+          status: "FROZEN",
+          freezeStartDate: frozenPkg.freezeInfo?.freezeStartDate,
+          freezeEndDate: frozenPkg.freezeInfo?.freezeEndDate,
+          allowedFreezeDays: frozenPkg.freezeInfo?.allowedFreezeDays,
+          remainingFreezeDays:
+            (frozenPkg.freezeInfo?.allowedFreezeDays ?? 0) +
+            (frozenPkg.freezeInfo?.extraFreezeDaysApproved ?? 0) -
+            (frozenPkg.freezeInfo?.usedFreezeDays ?? 0),
+          ...(locationId ? { locationId } : {}),
+        });
+        return null;
+      }
+
+      const expiredPkg = candidatePkgs.find(
+        (p) => p.status === "EXPIRED" || new Date(p.pkgEndDate) < new Date()
+      );
+      if (expiredPkg) {
+        const catalogDoc = await Package.findById(expiredPkg.pkgId).session(session);
+        const pkgName = catalogDoc?.name || "Package";
+        const expDateFormatted = new Date(expiredPkg.pkgEndDate).toLocaleDateString("en-GB", {
+          day: "numeric",
+          month: "short",
+          year: "numeric",
+        });
+        const message = `Package "${pkgName}" expired on ${expDateFormatted}.`;
+
+        io.emit("FAILED-SCAN", {
+          code: "PACKAGE_EXPIRED",
+          message,
+          member: (member.uid as any).name,
+          packageName: pkgName,
+          status: "EXPIRED",
+          expiryDate: expiredPkg.pkgEndDate,
+          ...(locationId ? { locationId } : {}),
+        });
+        return null;
+      }
+
+      const completedPkg = candidatePkgs.find(
+        (p) => p.status === "COMPLETED" || Number(p.remainingClasses) <= 0
+      );
+      if (completedPkg) {
+        const catalogDoc = await Package.findById(completedPkg.pkgId).session(session);
+        const pkgName = catalogDoc?.name || "Package";
+        const message = `Package "${pkgName}" has no remaining sessions.`;
+
+        io.emit("FAILED-SCAN", {
+          code: "NO_REMAINING_SESSIONS",
+          message,
+          member: (member.uid as any).name,
+          packageName: pkgName,
+          status: "COMPLETED",
+          remainingClasses: 0,
+          ...(locationId ? { locationId } : {}),
+        });
+        return null;
+      }
+
       io.emit("FAILED-SCAN", {
         code: "NO_ACTIVE_PACKAGE_FOUND",
-        message: "No active package found!",
+        message: "No active package found for this member.",
         member: (member.uid as any).name,
+        ...(locationId ? { locationId } : {}),
       });
       return null;
     }
@@ -1401,10 +1645,45 @@ MemberSchema.static(
       return pkg.pkgId.toString();
     }
 
+    const candidatePkgs = member.packages.filter((p) =>
+      pkgIds.includes(p.pkgId.toString())
+    );
+    const frozenPkg = candidatePkgs.find(
+      (p) => p.status === "FROZEN" || p.freezeInfo?.isFrozen
+    );
+    if (frozenPkg) {
+      const catalogDoc = await Package.findById(frozenPkg.pkgId).session(session);
+      const pkgName = catalogDoc?.name || "Package";
+      const freezeEndFormatted = frozenPkg.freezeInfo?.freezeEndDate
+        ? new Date(frozenPkg.freezeInfo.freezeEndDate).toLocaleDateString("en-GB", {
+            day: "numeric",
+            month: "short",
+            year: "numeric",
+          })
+        : undefined;
+
+      const message = freezeEndFormatted
+        ? `Package "${pkgName}" is currently frozen until ${freezeEndFormatted}. Please unfreeze in app to check in.`
+        : `Package "${pkgName}" is currently frozen. Please unfreeze in app to check in.`;
+
+      io.emit("FAILED-SCAN", {
+        code: "PACKAGE_FROZEN",
+        message,
+        member: (member.uid as any).name,
+        packageName: pkgName,
+        status: "FROZEN",
+        freezeStartDate: frozenPkg.freezeInfo?.freezeStartDate,
+        freezeEndDate: frozenPkg.freezeInfo?.freezeEndDate,
+        ...(locationId ? { locationId } : {}),
+      });
+      return null;
+    }
+
     io.emit("FAILED-SCAN", {
       code: "NO_ACTIVE_PACKAGE_FOUND",
-      message: "No active package found!",
+      message: "No active package found for this member.",
       member: (member.uid as any).name,
+      ...(locationId ? { locationId } : {}),
     });
     return null;
   }
@@ -1476,8 +1755,11 @@ MemberSchema.static(
     classRestrictions?: IClassRestrictionRecord[],
     locationId?: string
   ): Promise<boolean> {
+    const catalogPkg = await Package.findById(pkgId).session(session || null);
+    const allowedFreezeDays = catalogPkg ? resolvePackageAllowedFreezeDays(catalogPkg) : 0;
     const { cairoDayRange } = await import("../utils/timezone");
     const { start, end } = cairoDayRange(startDate);
+
     const result = await this.findOneAndUpdate(
       {
         uid,
@@ -1501,6 +1783,13 @@ MemberSchema.static(
             remainingClasses: numberOfSessions,
             classRestrictionsRecord: classRestrictions,
             locationId: locationId ? new Types.ObjectId(locationId) : null,
+            freezeInfo: {
+              isFrozen: false,
+              allowedFreezeDays,
+              usedFreezeDays: 0,
+              extraFreezeDaysApproved: 0,
+              freezeHistory: [],
+            },
           },
         },
       },
@@ -1573,60 +1862,48 @@ MemberSchema.static(
         "INVALID_CLASSES_NUMBER",
         "Invalid classes number"
       );
-    if (newClasses <= 0) {
-      await this.updateOne(
-        {
-          uid,
-          packages: {
-            $elemMatch: {
-              pkgId: new Types.ObjectId(pkgId),
-              pkgStartDate: storedStart,
-            },
-          },
-        },
-        {
-          $set: {
-            "packages.$[pkg].remainingClasses": newClasses,
-            "packages.$[pkg].status": "COMPLETED",
-          },
-        },
-        {
-          arrayFilters: [
-            {
-              "pkg.pkgId": new Types.ObjectId(pkgId),
-              "pkg.pkgStartDate": storedStart,
-            },
-          ],
-        }
-      );
-    } else {
-      logger.info("Changing status to active", { newClasses });
-      await this.updateOne(
-        {
-          uid,
-          packages: {
-            $elemMatch: {
-              pkgId: new Types.ObjectId(pkgId),
-              pkgStartDate: storedStart,
-            },
-          },
-        },
-        {
-          $set: {
-            "packages.$[pkg].remainingClasses": newClasses,
-            "packages.$[pkg].status": "ACTIVE",
-          },
-        },
-        {
-          arrayFilters: [
-            {
-              "pkg.pkgId": new Types.ObjectId(pkgId),
-              "pkg.pkgStartDate": storedStart,
-            },
-          ],
-        }
-      );
+
+    const now = new Date();
+    const isFrozen = p.status === "FROZEN" || Boolean(p.freezeInfo?.isFrozen);
+    let targetStatus: "ACTIVE" | "EXPIRED" | "COMPLETED" | "FROZEN" | "DELETED" = p.status;
+
+    if (p.status !== "DELETED") {
+      if (isFrozen) {
+        targetStatus = "FROZEN";
+      } else if (new Date(p.pkgEndDate) < now) {
+        targetStatus = "EXPIRED";
+      } else if (newClasses <= 0) {
+        targetStatus = "COMPLETED";
+      } else {
+        targetStatus = "ACTIVE";
+      }
     }
+
+    await this.updateOne(
+      {
+        uid,
+        packages: {
+          $elemMatch: {
+            pkgId: new Types.ObjectId(pkgId),
+            pkgStartDate: storedStart,
+          },
+        },
+      },
+      {
+        $set: {
+          "packages.$[pkg].remainingClasses": newClasses,
+          "packages.$[pkg].status": targetStatus,
+        },
+      },
+      {
+        arrayFilters: [
+          {
+            "pkg.pkgId": new Types.ObjectId(pkgId),
+            "pkg.pkgStartDate": storedStart,
+          },
+        ],
+      }
+    );
   }
 );
 
@@ -1654,61 +1931,48 @@ MemberSchema.static(
     if (!p) throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found");
     const storedStart = p.pkgStartDate;
     const normalizedEnd = toStoredPackageDate(newDate);
-    if (normalizedEnd < startOfTodayCairo()) {
-      await this.updateOne(
-        {
-          uid,
-          packages: {
-            $elemMatch: {
-              pkgId: new Types.ObjectId(pkgId),
-              pkgStartDate: storedStart,
-            },
-          },
-        },
-        {
-          $set: {
-            "packages.$[pkg].pkgEndDate": normalizedEnd,
-            "packages.$[pkg].status": "EXPIRED",
-          },
-        },
-        {
-          arrayFilters: [
-            {
-              "pkg.pkgId": new Types.ObjectId(pkgId),
-              "pkg.pkgStartDate": storedStart,
-            },
-          ],
-          session,
-        }
-      );
-    } else {
-      await this.updateOne(
-        {
-          uid,
-          packages: {
-            $elemMatch: {
-              pkgId: new Types.ObjectId(pkgId),
-              pkgStartDate: storedStart,
-            },
-          },
-        },
-        {
-          $set: {
-            "packages.$[pkg].pkgEndDate": normalizedEnd,
-            "packages.$[pkg].status": "ACTIVE",
-          },
-        },
-        {
-          arrayFilters: [
-            {
-              "pkg.pkgId": new Types.ObjectId(pkgId),
-              "pkg.pkgStartDate": storedStart,
-            },
-          ],
-          session,
-        }
-      );
+
+    const isFrozen = p.status === "FROZEN" || Boolean(p.freezeInfo?.isFrozen);
+    let targetStatus: "ACTIVE" | "EXPIRED" | "COMPLETED" | "FROZEN" | "DELETED" = p.status;
+
+    if (p.status !== "DELETED") {
+      if (isFrozen) {
+        targetStatus = "FROZEN";
+      } else if (normalizedEnd < startOfTodayCairo()) {
+        targetStatus = "EXPIRED";
+      } else if (p.remainingClasses <= 0) {
+        targetStatus = "COMPLETED";
+      } else {
+        targetStatus = "ACTIVE";
+      }
     }
+
+    await this.updateOne(
+      {
+        uid,
+        packages: {
+          $elemMatch: {
+            pkgId: new Types.ObjectId(pkgId),
+            pkgStartDate: storedStart,
+          },
+        },
+      },
+      {
+        $set: {
+          "packages.$[pkg].pkgEndDate": normalizedEnd,
+          "packages.$[pkg].status": targetStatus,
+        },
+      },
+      {
+        arrayFilters: [
+          {
+            "pkg.pkgId": new Types.ObjectId(pkgId),
+            "pkg.pkgStartDate": storedStart,
+          },
+        ],
+        session,
+      }
+    );
   }
 );
 

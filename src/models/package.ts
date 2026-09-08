@@ -38,6 +38,29 @@ export function resolvePackageExpiryDays(pkg: {
   return pkg.expiryPeriod;
 }
 
+export function getDefaultAllowedFreezeDays(expiryPeriodDays: number): number {
+  if (expiryPeriodDays >= 360) {
+    return 42; // 6 weeks (1 Year)
+  } else if (expiryPeriodDays >= 170) {
+    return 21; // 3 weeks (6 Months)
+  } else if (expiryPeriodDays >= 80) {
+    return 14; // 2 weeks (3 Months)
+  } else if (expiryPeriodDays >= 25) {
+    return 7; // 1 week (1 Month)
+  }
+  return 0;
+}
+
+export function resolvePackageAllowedFreezeDays(pkg: {
+  expiryPeriod: number;
+  allowedFreezeDays?: number;
+}): number {
+  if (typeof pkg.allowedFreezeDays === "number" && pkg.allowedFreezeDays >= 0) {
+    return pkg.allowedFreezeDays;
+  }
+  return getDefaultAllowedFreezeDays(pkg.expiryPeriod);
+}
+
 export function getPackageEndDate(
   startDate: string | Date,
   pkg: {
@@ -64,6 +87,7 @@ export interface IPackage {
   category: string;
   price: number;
   expiryPeriod: number;
+  allowedFreezeDays?: number;
   renewalPeriod?: string;
   locationId?: Types.ObjectId;
   coachId?: string;
@@ -109,6 +133,10 @@ const PackageSchema = new Schema<IPackage, IPackageModel, IPackageMethods>({
   expiryPeriod: {
     type: Number,
     required: true,
+  },
+  allowedFreezeDays: {
+    type: Number,
+    required: false,
   },
   renewalPeriod: {
     type: String,
