@@ -55,6 +55,12 @@ export const getMemberProfile: RequestHandler = asyncHandler(async function (
     (b) => b.scid && typeof b.scid === "object" && b.scid._id
   );
 
-  member.packages = member.packages.filter((p: any) => p.status !== "DELETED");
+  member.packages = member.packages.filter(
+    (p: any) =>
+      p.status !== "DELETED" &&
+      p.pkgId &&
+      typeof p.pkgId === "object" &&
+      p.pkgId._id
+  );
   new SuccessResponse("Member Found!", member).send(res);
 });
