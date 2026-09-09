@@ -88,8 +88,24 @@ export function selectEligiblePackage(input: {
     );
 
   if (candidates.length === 0) {
-    // Check if member has matching packages in non-active or expired states
+    // Check if member has matching packages in non-active, frozen, or expired states
     if (matchingAll.length > 0) {
+      const frozen = matchingAll.find(
+        (p) => p.status === "FROZEN" || (p as any).freezeInfo?.isFrozen
+      );
+      if (frozen) {
+        return {
+          ok: false,
+          code: "PACKAGE_FROZEN",
+          context: {
+            packageName: frozen.name,
+            date: formatDateShort(
+              (frozen as any).freezeInfo?.freezeEndDate || (frozen as any).freezeEndDate
+            ),
+          },
+        };
+      }
+
       const expired = matchingAll.find(
         (p) => p.status === "EXPIRED" || new Date(p.pkgEndDate) < now,
       );

@@ -7,6 +7,7 @@ import { SuccessResponse } from "../../core/ApiResponse";
 import asyncHandler from "../../utils/asyncHandler";
 import logger from "../../config/logger";
 import { SubscriptionsService } from "../../services/subscriptions-service";
+import { PackageStatusService } from "../../services/package-status-service";
 import {
   buildMatchaPackageFilter,
   isPendingMember,
@@ -61,8 +62,13 @@ export const getMemberPackages = asyncHandler(async function (
   }
   if (!member)
     throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found", { _id });
-  logger.info(member.packages);
-  new SuccessResponse("Packages Found!", member.packages).send(res);
+  const isDirty = PackageStatusService.syncMemberPackageStatuses(member);
+  if (isDirty) {
+    await member.save();
+  }
+  const packages = member.packages.filter((p: any) => p.status !== "DELETED");
+  logger.info(packages);
+  new SuccessResponse("Packages Found!", packages).send(res);
 });
 
 export const subToPackage = asyncHandler(async function (

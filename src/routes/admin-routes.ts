@@ -54,6 +54,14 @@ import {
   getNonUserPackages,
 } from "../controllers/admin/package-controller";
 import {
+  getFreezeRequests,
+  getFrozenPackages,
+  approveFreezeRequest,
+  rejectFreezeRequest,
+  adminFreezePackage,
+  adminUnfreezePackage,
+} from "../controllers/admin/freeze-controller";
+import {
   addCoach,
   getCoaches,
   updateCoach,
@@ -429,6 +437,44 @@ adminRoutes.patch(
   authenticateUser,
   authorizeUser(["management", "branch_admin"]),
   adjustMemberPackageClasses
+);
+adminRoutes.post(
+  "/member-packages/freeze",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  adminFreezePackage
+);
+adminRoutes.post(
+  "/member-packages/unfreeze",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  adminUnfreezePackage
+);
+
+// Freeze Requests & Frozen Packages Routes
+adminRoutes.get(
+  "/freeze-requests",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  getFreezeRequests
+);
+adminRoutes.get(
+  "/frozen-packages",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  getFrozenPackages
+);
+adminRoutes.patch(
+  "/freeze-requests/:id/approve",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  approveFreezeRequest
+);
+adminRoutes.patch(
+  "/freeze-requests/:id/reject",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  rejectFreezeRequest
 );
 
 // Notification Routes

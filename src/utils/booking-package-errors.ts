@@ -5,6 +5,7 @@ export type BookingPackageFailureCode =
   | "NO_ACTIVE_PACKAGE_FOUND"
   | "PACKAGE_DOES_NOT_OPEN_CLASS"
   | "PACKAGE_EXPIRED"
+  | "PACKAGE_FROZEN"
   | "NO_REMAINING_SESSIONS"
   | "CLASS_RESTRICTION_REACHED"
   | "PACKAGE_NOT_YET_ACTIVE"
@@ -104,6 +105,25 @@ export const BOOKING_ERROR_MESSAGES = {
       ? `The package "${pkgName}" covering ${quoteClassName(className)} has expired.`
       : `The package that includes ${quoteClassName(className)} has expired.`;
   },
+  PACKAGE_FROZEN: (
+    className?: string,
+    pkgName?: string,
+    date?: string,
+    audience: BookingAudience = "member",
+  ) => {
+    if (audience === "member") {
+      return pkgName && date
+        ? `Your package "${pkgName}" is currently frozen until ${date}. You cannot book ${quoteClassName(className)} while it is frozen.`
+        : pkgName
+        ? `Your package "${pkgName}" is currently frozen. You cannot book ${quoteClassName(className)} while it is frozen.`
+        : `Your package is currently frozen. You cannot book ${quoteClassName(className)} while it is frozen.`;
+    }
+    return pkgName && date
+      ? `The package "${pkgName}" is frozen until ${date} and cannot be used for ${quoteClassName(className)}.`
+      : pkgName
+      ? `The package "${pkgName}" is currently frozen and cannot be used for ${quoteClassName(className)}.`
+      : `The package covering ${quoteClassName(className)} is currently frozen.`;
+  },
   NO_REMAINING_SESSIONS: (
     className?: string,
     pkgName?: string,
@@ -179,6 +199,13 @@ export function bookingPackageErrorMessage(
       );
     case "PACKAGE_EXPIRED":
       return BOOKING_ERROR_MESSAGES.PACKAGE_EXPIRED(
+        className,
+        extra?.packageName,
+        extra?.date,
+        audience,
+      );
+    case "PACKAGE_FROZEN":
+      return BOOKING_ERROR_MESSAGES.PACKAGE_FROZEN(
         className,
         extra?.packageName,
         extra?.date,

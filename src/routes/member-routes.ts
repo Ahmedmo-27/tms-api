@@ -15,6 +15,12 @@ import {
   subToPackage,
   unsubFromPackage,
 } from "../controllers/client/package-controller";
+import {
+  freezeMyPackage,
+  unfreezeMyPackage,
+  requestExtraFreeze,
+  getMyFreezeRequests,
+} from "../controllers/client/freeze-controller";
 import { getPackage } from "../controllers/client/package-controller";
 import { getCoaches } from "../controllers/admin/coach-controller";
 import { getLocation } from "../controllers/admin/location-controller";
@@ -106,6 +112,32 @@ memberRoutes.delete(
   authenticateUser,
   authorizeUser(["member"]),
   unsubFromPackage
+);
+
+// Freeze Routes
+memberRoutes.post(
+  "/packages/freeze",
+  authenticateUser,
+  authorizeUser(["member"]),
+  freezeMyPackage
+);
+memberRoutes.post(
+  "/packages/unfreeze",
+  authenticateUser,
+  authorizeUser(["member"]),
+  unfreezeMyPackage
+);
+memberRoutes.post(
+  "/packages/freeze-request",
+  authenticateUser,
+  authorizeUser(["member"]),
+  requestExtraFreeze
+);
+memberRoutes.get(
+  "/packages/freeze-requests",
+  authenticateUser,
+  authorizeUser(["member"]),
+  getMyFreezeRequests
 );
 
 // Schedule Routes
