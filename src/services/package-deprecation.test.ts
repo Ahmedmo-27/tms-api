@@ -5,7 +5,10 @@ import Package from "../models/package";
 import { cleanUpDeprecatedPackages } from "./package-deletion-guard";
 import { BadRequestError } from "../core/ApiError";
 
+import Payment from "../models/payment";
+
 jest.mock("../models/member");
+jest.mock("../models/payment");
 jest.mock("../models/package", () => {
   const actual = jest.requireActual("../models/package");
   return {
@@ -43,30 +46,30 @@ describe("Package Deprecation and Soft-Deletion", () => {
   });
 
   describe("cleanUpDeprecatedPackages", () => {
-    it("deletes deprecated package if it has 0 active subscribers", async () => {
+    it("deletes deprecated package if it has 0 subscribers and 0 payments", async () => {
       (Package.find as jest.Mock).mockResolvedValue([
         { _id: pkgId, name: "Test Package", isDeprecated: true },
       ]);
       (Member.countDocuments as jest.Mock).mockResolvedValue(0);
+      (Payment.countDocuments as jest.Mock).mockResolvedValue(0);
 
       await cleanUpDeprecatedPackages();
 
       expect(Member.countDocuments).toHaveBeenCalledWith({
-        packages: {
-          $elemMatch: {
-            pkgId: pkgId,
-            status: "ACTIVE",
-          },
-        },
+        "packages.pkgId": pkgId,
+      });
+      expect(Payment.countDocuments).toHaveBeenCalledWith({
+        pkgId: pkgId,
       });
       expect(Package.findByIdAndDelete).toHaveBeenCalledWith(pkgId);
     });
 
-    it("does not delete deprecated package if it has active subscribers", async () => {
+    it("does not delete deprecated package if it has subscription history", async () => {
       (Package.find as jest.Mock).mockResolvedValue([
         { _id: pkgId, name: "Test Package", isDeprecated: true },
       ]);
       (Member.countDocuments as jest.Mock).mockResolvedValue(2);
+      (Payment.countDocuments as jest.Mock).mockResolvedValue(0);
 
       await cleanUpDeprecatedPackages();
 
