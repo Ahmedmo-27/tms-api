@@ -337,13 +337,13 @@ export const getNonUserBookings = asyncHandler(async function (
   req: Request,
   res: Response
 ): Promise<void> {
-  const startDate = req.query.startDate || req.body?.startDate;
-  const endDate = req.query.endDate || req.body?.endDate;
-  const scid = req.query.scid || req.body?.scid;
+  const startDate = (req.query.startDate || req.query.date || req.body?.startDate) as string | undefined;
+  const endDate = (req.query.endDate || req.body?.endDate) as string | undefined;
+  const scid = (req.query.scid || req.body?.scid) as string | undefined;
   const targetLocationId = resolveLocationFilter(req) ?? undefined;
   const bookings = await BookingsService.getNonUserBookings(
-    startDate,
-    endDate,
+    startDate ? new Date(startDate) : undefined,
+    endDate ? new Date(endDate) : undefined,
     scid,
     targetLocationId
   );

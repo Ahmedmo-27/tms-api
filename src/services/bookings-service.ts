@@ -1340,8 +1340,17 @@ export class BookingsService {
     locationId?: string,
   ): Promise<INonUserBooking[]> {
     const query: any = {};
-    if (startTime) query.startTime = { $gte: startTime };
-    if (endTime) query.endTime = { $lte: endTime };
+    if (startTime && endTime) {
+      query.startTime = { $gte: startTime, $lte: endTime };
+    } else if (startTime) {
+      const start = new Date(startTime);
+      start.setUTCHours(0, 0, 0, 0);
+      const end = new Date(startTime);
+      end.setUTCHours(23, 59, 59, 999);
+      query.startTime = { $gte: start, $lte: end };
+    } else if (endTime) {
+      query.startTime = { $lte: endTime };
+    }
     if (scid) query.scid = scid;
     
     if (locationId) {
@@ -1356,7 +1365,7 @@ export class BookingsService {
       }
     }
     
-    return NonUserBooking.find(query);
+    return NonUserBooking.find(query).lean();
   }
 
   static async addNonUserBooking(
