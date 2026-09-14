@@ -19,6 +19,7 @@ import Payment from "../models/payment";
 import { PaymentsService } from "./payments-service";
 import { NotificationsService } from "./notifications-service";
 import { WaitlistService } from "./waitlist-service";
+import { startOfDateCairo, endOfDateCairo } from "../utils/timezone";
 
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -176,11 +177,8 @@ export class SchedulerService {
     date: string,
     locationId?: string,
   ): Promise<IScheduledClass[]> {
-    const targetDate = new Date(date);
-    const startOfDay = new Date(targetDate);
-    startOfDay.setUTCHours(0, 0, 0, 0);
-    const endOfDay = new Date(targetDate);
-    endOfDay.setUTCHours(23, 59, 59, 999);
+    const startOfDay = startOfDateCairo(date);
+    const endOfDay = endOfDateCairo(date);
 
     let query = this.applyLocationFilter(
       { startTime: { $gte: startOfDay, $lte: endOfDay } },

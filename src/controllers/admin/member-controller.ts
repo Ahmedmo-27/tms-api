@@ -52,31 +52,36 @@ export const getMember = asyncHandler(async function (
   const { uid, limit = "10", page = "1", name, phone, search, pkgId } = req.query;
 
   const searchTerm = (search || name || phone) ? String(search || name || phone).trim() : "";
-  const userQuery: any = {};
-  if (uid) {
-    userQuery._id = uid;
-  }
-  if (searchTerm) {
-    const escaped = escapeRegex(searchTerm);
-    const cleanPhone = searchTerm.replace(/[\s\-+]/g, "");
-    const orConditions: any[] = [
-      { name: { $regex: escaped, $options: "i" } },
-      { phoneNumber: { $regex: escaped, $options: "i" } },
-      { email: { $regex: escaped, $options: "i" } },
-    ];
-    if (cleanPhone && cleanPhone !== searchTerm) {
-      orConditions.push({ phoneNumber: { $regex: escapeRegex(cleanPhone), $options: "i" } });
+  let uids: Types.ObjectId[] = [];
+
+  if (uid && !searchTerm && Types.ObjectId.isValid(uid as string)) {
+    uids = [new Types.ObjectId(uid as string)];
+  } else {
+    const userQuery: any = {};
+    if (uid && Types.ObjectId.isValid(uid as string)) {
+      userQuery._id = new Types.ObjectId(uid as string);
     }
-    userQuery.$or = orConditions;
-  }
+    if (searchTerm) {
+      const escaped = escapeRegex(searchTerm);
+      const cleanPhone = searchTerm.replace(/[\s\-+]/g, "");
+      const orConditions: any[] = [
+        { name: { $regex: escaped, $options: "i" } },
+        { phoneNumber: { $regex: escaped, $options: "i" } },
+        { email: { $regex: escaped, $options: "i" } },
+      ];
+      if (cleanPhone && cleanPhone !== searchTerm) {
+        orConditions.push({ phoneNumber: { $regex: escapeRegex(cleanPhone), $options: "i" } });
+      }
+      userQuery.$or = orConditions;
+    }
 
-  const users = await User.find(userQuery).select("_id");
-  if (!users || users.length === 0) {
-    new SuccessResponse("No members found", { members: [], total: 0 }).send(res);
-    return;
+    const users = await User.find(userQuery).select("_id").lean();
+    if (!users || users.length === 0) {
+      new SuccessResponse("No members found", { members: [], total: 0 }).send(res);
+      return;
+    }
+    uids = users.map((user) => user._id as Types.ObjectId);
   }
-
-  const uids = users.map((user) => user._id);
 
   const pageNumber = parseInt(page as string, 10);
   const limitNumber = parseInt(limit as string, 10);
@@ -111,12 +116,12 @@ export const getMember = asyncHandler(async function (
   members = await Member.populate(members, {
     path: "bookings.scid",
     model: "ScheduledClass",
+    select: "startTime cid",
     populate: [
-      { path: "coachId", model: "Coach" },
       {
         path: "cid",
         model: "Class",
-        populate: { path: "locations", model: "Location" },
+        select: "title",
       },
     ],
   });
