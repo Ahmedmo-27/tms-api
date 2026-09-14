@@ -383,7 +383,7 @@ export class FreezeService {
 
     // Send push notification to the member
     try {
-      await NotificationsService.sendNotification(
+      await NotificationsService.notifyUsers(
         [request.memberId.toString()],
         "Freeze Request Approved",
         `Your extra freeze request for "${request.pkgName}" has been approved for ${finalDuration} day(s).`,
@@ -429,7 +429,7 @@ export class FreezeService {
       const reasonText = rejectionReason?.trim()
         ? `: ${rejectionReason.trim()}`
         : ".";
-      await NotificationsService.sendNotification(
+      await NotificationsService.notifyUsers(
         [request.memberId.toString()],
         "Freeze Request Declined",
         `Your extra freeze request for "${request.pkgName}" was declined${reasonText}`,

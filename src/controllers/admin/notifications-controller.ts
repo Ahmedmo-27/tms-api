@@ -17,7 +17,7 @@ export const sendCustomNotification = asyncHandler(async function (
     throw new BadRequestError("INVLAID_BODY", "No body provided");
   const user = await User.findById(userId);
   if (!user) throw new NotFoundError("USER_NOT_FOUND", "User was not found");
-  await NotificationsService.sendNotification([userId], title, body);
+  await NotificationsService.notifyUsers([String(user._id)], title, body);
   new SuccessResponse("Notification Sent").send(res);
 });
 

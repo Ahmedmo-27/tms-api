@@ -75,8 +75,11 @@ export const bookClass = asyncHandler(async function (
   const authReq = req as AuthRequest;
   const uid = authReq.user._id as string;
   const scid = req.params.scid;
-  await BookingsService.addBooking(uid, scid, false, "member");
-  new SuccessResponse("Class Booked!").send(res);
+  const result = await BookingsService.addBooking(uid, scid, false, "member");
+  new SuccessResponse("Class Booked!", {
+    usesPackageSession: result.usesPackageSession,
+    cancellationDeadline: result.cancellationDeadline.toISOString(),
+  }).send(res);
 });
 
 export const bookDropIn = asyncHandler(async function (
@@ -186,6 +189,9 @@ export const cancelClass = asyncHandler(async function (
   // get member and class to cancel
   const _id = authReq.user._id as string;
   const scid = req.params.scid;
-  await BookingsService.cancelBooking(_id, scid);
-  new SuccessResponse("Class Canceled!").send(res);
+  const result = await BookingsService.cancelBooking(_id, scid, "member");
+  const message = result.lateCancellation
+    ? "Booking cancelled. Since it was within 3 hours of the class, the session was still deducted from your package."
+    : "Class Canceled!";
+  new SuccessResponse(message, result).send(res);
 });

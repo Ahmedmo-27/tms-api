@@ -103,6 +103,8 @@ export interface IMemberBookings {
   bookingTime: Date;
   isDropIn: boolean;
   paymentId?: Types.ObjectId;
+  /** Set once the "missed session" push notification has been claimed/sent */
+  missedNotifiedAt?: Date;
 }
 
 export interface IMember extends Document {
@@ -382,6 +384,9 @@ const BookingSchema = new Schema({
   paymentId: {
     type: Schema.Types.ObjectId,
     ref: "Payment",
+  },
+  missedNotifiedAt: {
+    type: Date,
   },
 });
 
