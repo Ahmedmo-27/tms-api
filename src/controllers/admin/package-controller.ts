@@ -160,7 +160,7 @@ export const getPackage = asyncHandler(async function (
   res: Response
 ): Promise<void> {
   await cleanUpDeprecatedPackages();
-  const { name, category, coachId } = req.query;
+  const { name, category, coachId, status, isDeprecated, hidden } = req.query;
   const query: any = {};
   if (name) {
     query.name = { $regex: String(name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" };
@@ -170,6 +170,16 @@ export const getPackage = asyncHandler(async function (
   }
   if (coachId) {
     query.coachId = coachId;
+  }
+  if (isDeprecated !== undefined) {
+    query.isDeprecated = isDeprecated === "true";
+  } else if (status === "ARCHIVED" || status === "DEPRECATED") {
+    query.isDeprecated = true;
+  } else if (status === "ACTIVE") {
+    query.isDeprecated = { $ne: true };
+  }
+  if (hidden !== undefined) {
+    query.hidden = hidden === "true";
   }
   const targetLocationId = resolveLocationFilter(req);
   if (targetLocationId) {
@@ -266,13 +276,13 @@ export const deletePackage = asyncHandler(
     if (!pkg)
       throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found", { id });
 
-    if (impact.activeSubscriptions > 0) {
+    if (impact.totalSubscriptions > 0 || impact.paymentCount > 0) {
       pkg.isDeprecated = true;
       pkg.hidden = true;
       await pkg.save();
       new SuccessResponse("Package Deprecated!", {
         deletedPackage: pkg,
-        message: "Package has been deprecated (soft-deleted) because it has active subscribers.",
+        message: "Package has been archived (soft-deleted) because it has subscriber or payment history.",
       }).send(res);
     } else {
       await Package.findByIdAndDelete(id);

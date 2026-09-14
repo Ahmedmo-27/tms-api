@@ -176,22 +176,45 @@ export class SchedulerService {
     date: string,
     locationId?: string,
   ): Promise<IScheduledClass[]> {
-    const scheduledClassesIds = await Schedule.getClasses(date as string);
-    if (!scheduledClassesIds || scheduledClassesIds.length === 0) {
-      return [];
-    }
-    const query = this.applyLocationFilter(
-      { _id: { $in: scheduledClassesIds } },
+    const targetDate = new Date(date);
+    const startOfDay = new Date(targetDate);
+    startOfDay.setUTCHours(0, 0, 0, 0);
+    const endOfDay = new Date(targetDate);
+    endOfDay.setUTCHours(23, 59, 59, 999);
+
+    let query = this.applyLocationFilter(
+      { startTime: { $gte: startOfDay, $lte: endOfDay } },
       locationId,
     );
 
-    const scheduledClasses = await ScheduledClass.find(query)
+    let scheduledClasses = await ScheduledClass.find(query)
       .populate({ path: "scans.uid" })
       .populate({ path: "cid", populate: { path: "locations" } })
       .populate({ path: "locationId", select: "branchName location locationUrl" })
       .populate({ path: "coachId" })
       .populate({ path: "bookedMembers.uid", select: "name phoneNumber" })
-      .sort({ startTime: 1 });
+      .sort({ startTime: 1 })
+      .lean();
+
+    // If direct date range didn't find anything, check legacy Schedule collection as fallback
+    if (scheduledClasses.length === 0) {
+      const scheduledClassesIds = await Schedule.getClasses(date as string);
+      if (scheduledClassesIds && scheduledClassesIds.length > 0) {
+        query = this.applyLocationFilter(
+          { _id: { $in: scheduledClassesIds } },
+          locationId,
+        );
+        scheduledClasses = await ScheduledClass.find(query)
+          .populate({ path: "scans.uid" })
+          .populate({ path: "cid", populate: { path: "locations" } })
+          .populate({ path: "locationId", select: "branchName location locationUrl" })
+          .populate({ path: "coachId" })
+          .populate({ path: "bookedMembers.uid", select: "name phoneNumber" })
+          .sort({ startTime: 1 })
+          .lean();
+      }
+    }
+
     return scheduledClasses.map((cls) =>
       this.shapeSessionForLegacyClients(cls),
     );
@@ -200,19 +223,18 @@ export class SchedulerService {
   static async getNextSchedule(
     locationId?: string | Types.ObjectId | null,
   ) {
-    const scheduledClassesIds = await Schedule.getNextClasses();
-    if (!scheduledClassesIds || scheduledClassesIds.length === 0) {
-      return [];
-    }
-    const objectIds = scheduledClassesIds.map((id) => new Types.ObjectId(id));
-    const query = this.applyLocationFilter({ _id: { $in: objectIds } }, locationId);
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const query = this.applyLocationFilter({ startTime: { $gte: today } }, locationId);
 
     const scheduledClasses = await ScheduledClass.find(query)
       .populate({ path: "cid", populate: { path: "locations" } })
       .populate({ path: "locationId", select: "branchName location locationUrl" })
       .populate({ path: "coachId" })
       .populate({ path: "scans.uid" })
-      .populate({ path: "bookedMembers.uid", select: "name phoneNumber" });
+      .populate({ path: "bookedMembers.uid", select: "name phoneNumber" })
+      .sort({ startTime: 1 })
+      .lean();
 
     return scheduledClasses.map((cls) =>
       this.shapeSessionForLegacyClients(cls),
@@ -222,16 +244,16 @@ export class SchedulerService {
   static async getAllScheduledClasses(
     locationId?: string | Types.ObjectId | null,
   ): Promise<IScheduledClass[]> {
-    const scheduledClassesIds = await Schedule.getAllClasses();
-    const objectIds = scheduledClassesIds.map((id) => new Types.ObjectId(id));
-    const query = this.applyLocationFilter({ _id: { $in: objectIds } }, locationId);
+    const query = this.applyLocationFilter({}, locationId);
 
     const scheduledClasses = await ScheduledClass.find(query)
       .populate({ path: "cid", populate: { path: "locations" } })
       .populate({ path: "locationId", select: "branchName location locationUrl" })
       .populate({ path: "coachId" })
       .populate({ path: "scans.uid" })
-      .populate({ path: "bookedMembers.uid", select: "name phoneNumber" });
+      .populate({ path: "bookedMembers.uid", select: "name phoneNumber" })
+      .sort({ startTime: -1 })
+      .lean();
 
     return scheduledClasses.map((cls) =>
       this.shapeSessionForLegacyClients(cls),

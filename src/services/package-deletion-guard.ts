@@ -143,15 +143,13 @@ export async function cleanUpDeprecatedPackages(): Promise<void> {
 
   const deprecatedPackages = await Package.find({ isDeprecated: true });
   for (const pkg of deprecatedPackages) {
-    const activeSubscribersCount = await Member.countDocuments({
-      packages: {
-        $elemMatch: {
-          pkgId: pkg._id,
-          status: "ACTIVE",
-        },
-      },
+    const totalSubscribersCount = await Member.countDocuments({
+      "packages.pkgId": pkg._id,
     });
-    if (activeSubscribersCount === 0) {
+    const paymentsCount = await Payment.countDocuments({
+      pkgId: pkg._id,
+    });
+    if (totalSubscribersCount === 0 && paymentsCount === 0) {
       await Package.findByIdAndDelete(pkg._id);
     }
   }
