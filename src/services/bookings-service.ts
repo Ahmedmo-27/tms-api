@@ -39,6 +39,7 @@ import {
 import { resolveSessionPaymentLocationId } from "../utils/app-package-location";
 import Payment from "../models/payment";
 import { locationIdScalarQuery, locationIdsArrayQuery } from "../utils/location-scope";
+import { startOfDateCairo, endOfDateCairo } from "../utils/timezone";
 
 /** Records a failed scan; duplicate failed-scan entries are ignored. */
 async function recordFailedClassScan(scid: string, uid: string): Promise<void> {
@@ -1343,10 +1344,8 @@ export class BookingsService {
     if (startTime && endTime) {
       query.startTime = { $gte: startTime, $lte: endTime };
     } else if (startTime) {
-      const start = new Date(startTime);
-      start.setUTCHours(0, 0, 0, 0);
-      const end = new Date(startTime);
-      end.setUTCHours(23, 59, 59, 999);
+      const start = startOfDateCairo(startTime);
+      const end = endOfDateCairo(startTime);
       query.startTime = { $gte: start, $lte: end };
     } else if (endTime) {
       query.startTime = { $lte: endTime };
