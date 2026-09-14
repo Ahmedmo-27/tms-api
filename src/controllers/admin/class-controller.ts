@@ -328,7 +328,7 @@ export const cancelBooking = asyncHandler(async function (
 ): Promise<void> {
   const { uid, scid } = req.body;
   await assertSessionAccess(req, scid);
-  await BookingsService.cancelBooking(uid, scid);
+  await BookingsService.cancelBooking(uid, scid, "staff");
   new SuccessResponse("Class cancelled").send(res);
 });
 
@@ -424,7 +424,7 @@ export const addWalkIn = asyncHandler(async function (
       (booking._id as string),
       session
     );
-    if (paymentMethod) {
+    if (paymentMethod && paymentMethod !== "WILL_PAY") {
       finalBooking = await BookingsService.recordNonUserPayment(
         (booking._id as string),
         paymentMethod,

@@ -20,10 +20,10 @@ export interface INonUserBooking extends Document {
 
 type NonUserBookingModel = Model<INonUserBooking> & {
   addBooking(
+    scid: string,
     name: string,
     phoneNumber: string,
-    scid: string,
-    session: ClientSession
+    session?: ClientSession
   ): Promise<INonUserBooking>;
   recordAttendance(
     bookingId: string,

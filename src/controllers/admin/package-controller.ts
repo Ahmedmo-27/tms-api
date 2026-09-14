@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import Package from "../../models/package";
+import Package, { isUnlimitedSpaceAccess } from "../../models/package";
 import Member from "../../models/member";
 import Class from "../../models/class";
 import Coach from "../../models/coach";
@@ -434,11 +434,14 @@ export const editMemberPackage = asyncHandler(async function (
 
     const isFrozen = pkg.status === "FROZEN" || Boolean(pkg.freezeInfo?.isFrozen);
     if (pkg.status !== "DELETED") {
+      const catalogDoc = await Package.findById(pkg.pkgId);
+      const isSpace = catalogDoc ? isUnlimitedSpaceAccess(catalogDoc.category) : false;
+
       if (isFrozen) {
         pkg.status = "FROZEN";
       } else if (normalizedEnd < startOfTodayCairo()) {
         pkg.status = "EXPIRED";
-      } else if (pkg.remainingClasses <= 0) {
+      } else if (pkg.remainingClasses <= 0 && !isSpace) {
         pkg.status = "COMPLETED";
       } else {
         pkg.status = "ACTIVE";

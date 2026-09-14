@@ -1,6 +1,6 @@
 import { ClientSession, Types } from "mongoose";
 import User from "../models/user";
-import Member from "../models/member";
+import Member, { IMember } from "../models/member";
 import ScheduledClass from "../models/scheduledClass";
 import Class from "../models/class";
 import Package from "../models/package";
@@ -40,6 +40,23 @@ import { resolveSessionPaymentLocationId } from "../utils/app-package-location";
 import Payment from "../models/payment";
 import { locationIdScalarQuery, locationIdsArrayQuery } from "../utils/location-scope";
 import { startOfDateCairo, endOfDateCairo } from "../utils/timezone";
+import {
+  CancelledBy,
+  getCancellationDeadline,
+  resolveCancellation,
+} from "../utils/cancellation-policy";
+
+export interface AddBookingResult {
+  /** true when a session was taken from a package (paid, non-workspace class) */
+  usesPackageSession: boolean;
+  /** last moment the member can cancel and get the session back */
+  cancellationDeadline: Date;
+}
+
+export interface CancelBookingResult {
+  lateCancellation: boolean;
+  sessionReturned: boolean;
+}
 
 /** Records a failed scan; duplicate failed-scan entries are ignored. */
 async function recordFailedClassScan(scid: string, uid: string): Promise<void> {
@@ -83,7 +100,7 @@ export class BookingsService {
     scid: string,
     isAdminOverride: boolean = false,
     audience: "member" | "admin" = "member",
-  ) {
+  ): Promise<AddBookingResult> {
     if (!scid || !Types.ObjectId.isValid(scid))
       throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
 
@@ -292,11 +309,22 @@ export class BookingsService {
         );
       }
     });
+
+    return {
+      usesPackageSession: !isFree && !isWorkSpace,
+      cancellationDeadline: getCancellationDeadline(scheduledClass.startTime),
+    };
   }
 
-  // Refund policy
-  // 3-hours before class
-  static async cancelBooking(uid: string, scid: string): Promise<void> {
+  // Cancellation policy (see utils/cancellation-policy.ts)
+  // - more than 3h before class: session returned to package
+  // - member cancels within 3h: booking removed, session NOT returned
+  // - staff cancellations always return the session
+  static async cancelBooking(
+    uid: string,
+    scid: string,
+    cancelledBy: CancelledBy = "member",
+  ): Promise<CancelBookingResult> {
     if (!scid || !Types.ObjectId.isValid(scid))
       throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
     const member = await Member.findOne({ uid });
@@ -307,21 +335,24 @@ export class BookingsService {
     });
     if (!scheduledClass)
       throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
-    const cancellationDeadline = new Date(
-      scheduledClass.startTime.getTime() - 3 * 60 * 60 * 1000,
-    );
-    if (new Date() > cancellationDeadline)
-      throw new ForbiddenError(
-        "DEADLINE_PASSED",
-        "Must cancel 3 hours before class start time",
-      );
     const booking = member.bookings.find((b) => b.scid.toString() === scid);
     if (!booking)
       throw new NotFoundError("BOOKING_NOT_FOUND", "Booking not found");
-    const isDeducted =
+    const usesPackageSession =
       (scheduledClass.cid as any).category !== "WORKSPACE" &&
       (scheduledClass.cid as any).price != 0 &&
       !booking.isDropIn;
+
+    const decision = resolveCancellation({
+      startTime: scheduledClass.startTime,
+      now: new Date(),
+      cancelledBy,
+      usesPackageSession,
+      isDropIn: !!booking.isDropIn,
+    });
+    if (!decision.allowed)
+      throw new ForbiddenError(decision.code, decision.message);
+
     const pkgs = await Package.find({ opensClasses: scheduledClass.cid });
     const pkgIds = pkgs.map((p) => p._id.toString());
 
@@ -329,28 +360,100 @@ export class BookingsService {
     const month = scheduledClass.startTime.getMonth() + 1;
     const year = scheduledClass.startTime.getFullYear();
     const monthString = month.toString() + year.toString();
+    const className = (scheduledClass.cid as any).title as string | undefined;
+    const source =
+      cancelledBy === "staff" ? "FRONTDESK_CANCELLATION" : "MEMBER_CANCELLATION";
 
     await runInTransaction(async (session: ClientSession) => {
       await Member.removeBooking(
         uid,
         scid,
         pkgIds,
-        isDeducted,
+        decision.returnSession,
         session,
         scheduledClass.cid._id.toString(),
         monthString,
-        "MEMBER_CANCELLATION",
-        (scheduledClass.cid as any).title,
+        source,
+        className,
       );
-      const waitingList = await ScheduledClass.removeBookedMember(
-        scid,
-        uid,
-        session,
-      );
+      if (decision.lateCancellation) {
+        await BookingsService.recordLateCancellation(
+          member,
+          pkgIds,
+          scheduledClass.startTime,
+          className,
+          session,
+        );
+      }
+      await ScheduledClass.removeBookedMember(scid, uid, session);
     });
-    
+
     // Trigger waitlist processing after transaction succeeds
     await WaitlistService.processWaitlist(scid);
+
+    return {
+      lateCancellation: decision.lateCancellation,
+      sessionReturned: decision.returnSession,
+    };
+  }
+
+  /**
+   * Adds a 0-amount history note to the package the booking was charged to,
+   * so staff can see why the session was not returned. The package is found
+   * via the BOOKING deduction record written by Member.saveBooking.
+   */
+  private static async recordLateCancellation(
+    member: IMember,
+    pkgIds: string[],
+    startTime: Date,
+    className: string | undefined,
+    session: ClientSession,
+  ): Promise<void> {
+    // Most recent matching BOOKING deduction wins (handles cancel + rebook)
+    let chargedPkg: IMember["packages"][number] | undefined;
+    let latest = -Infinity;
+    for (const p of member.packages) {
+      if (!pkgIds.includes(p.pkgId.toString())) continue;
+      for (const r of p.adjustmentHistory ?? []) {
+        const matches =
+          r.source === "BOOKING" &&
+          r.type === "DEDUCT" &&
+          r.attendanceDate != null &&
+          new Date(r.attendanceDate).getTime() === startTime.getTime() &&
+          (!className || r.className === className);
+        const recordedAt = new Date(r.date).getTime();
+        if (matches && recordedAt > latest) {
+          latest = recordedAt;
+          chargedPkg = p;
+        }
+      }
+    }
+    if (!chargedPkg) {
+      logger.warn("Late cancellation: charged package not found for history note", {
+        uid: member.uid,
+        startTime,
+        className,
+      });
+      return;
+    }
+    const reason = className
+      ? `Late cancellation (within 3h): ${className} — session not returned`
+      : "Late cancellation (within 3h) — session not returned";
+    await Member.pushAdjustmentRecord(
+      member.uid.toString(),
+      chargedPkg.pkgId.toString(),
+      chargedPkg.pkgStartDate,
+      {
+        date: new Date(),
+        source: "MEMBER_CANCELLATION",
+        type: "DEDUCT",
+        amount: 0,
+        reason,
+        className,
+        attendanceDate: startTime,
+      },
+      session,
+    );
   }
 
   static async cancelDropIn(uid: string, scid: string): Promise<void> {
@@ -1340,30 +1443,40 @@ export class BookingsService {
     scid?: string,
     locationId?: string,
   ): Promise<INonUserBooking[]> {
-    const query: any = {};
-    if (startTime && endTime) {
-      query.startTime = { $gte: startTime, $lte: endTime };
-    } else if (startTime) {
-      const start = startOfDateCairo(startTime);
-      const end = endOfDateCairo(startTime);
-      query.startTime = { $gte: start, $lte: end };
-    } else if (endTime) {
-      query.startTime = { $lte: endTime };
-    }
-    if (scid) query.scid = scid;
-    
-    if (locationId) {
-      const scheduledClasses = await ScheduledClass.find(
-        locationIdScalarQuery(locationId),
-      ).select("_id");
-      const validScids = scheduledClasses.map(sc => (sc as any)._id.toString());
-      if (scid) {
-        if (!validScids.includes(scid)) return [];
-      } else {
-        query.scid = { $in: validScids };
+    const hasDateFilter = !!(startTime || endTime);
+    const hasLocationFilter = !!locationId;
+
+    if (hasDateFilter || hasLocationFilter) {
+      const classQuery: any = {};
+      if (startTime && endTime) {
+        classQuery.startTime = { $gte: startTime, $lte: endTime };
+      } else if (startTime) {
+        const start = startOfDateCairo(startTime);
+        const end = endOfDateCairo(startTime);
+        classQuery.startTime = { $gte: start, $lte: end };
+      } else if (endTime) {
+        classQuery.startTime = { $lte: endTime };
       }
+
+      if (locationId) {
+        Object.assign(classQuery, locationIdScalarQuery(locationId));
+      }
+
+      if (scid && Types.ObjectId.isValid(scid)) {
+        classQuery._id = new Types.ObjectId(scid);
+      }
+
+      const scheduledClasses = await ScheduledClass.find(classQuery).select("_id").lean();
+      const validScidObjectIds = scheduledClasses.map((sc) => sc._id);
+      if (validScidObjectIds.length === 0) return [];
+
+      return NonUserBooking.find({ scid: { $in: validScidObjectIds } }).lean();
     }
-    
+
+    const query: any = {};
+    if (scid) {
+      query.scid = Types.ObjectId.isValid(scid) ? new Types.ObjectId(scid) : scid;
+    }
     return NonUserBooking.find(query).lean();
   }
 
@@ -1379,11 +1492,9 @@ export class BookingsService {
     const scheduledClass = await ScheduledClass.findById(scid).populate<{ cid: { allowDropIn: boolean } }>("cid");
     if (!scheduledClass)
       throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
-    if (scheduledClass.cid.allowDropIn === false)
+    if (scheduledClass.cid?.allowDropIn === false)
       throw new ConflictError("DROP_IN_DISABLED", "Drop-ins are not allowed for this class");
     const run = async (s: ClientSession) => {
-      scheduledClass.availableSlots = scheduledClass.availableSlots + 1;
-      await scheduledClass.save({ session });
       booking = await NonUserBooking.addBooking(scid, name, phoneNumber, s);
       logger.info("Booking saved in booking service function: ", booking);
       await ScheduledClass.bookNonUser(scid, s);
