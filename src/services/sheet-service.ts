@@ -1430,6 +1430,7 @@ export class SheetService {
         row.scid!,
         method,
         locationId,
+        row.amount ?? undefined,
         paymentDate,
         sheetPaymentNote(row),
       );
