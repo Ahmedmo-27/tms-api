@@ -62,16 +62,45 @@ describe("PackageStatusService - resolvePackageStatus", () => {
     expect(status).toBe("EXPIRED");
   });
 
-  it("should return COMPLETED if remainingClasses is 0 and not expired", () => {
+  it("should return COMPLETED if remainingClasses is 0 and not expired for standard class package", () => {
     const status = resolvePackageStatus(
       {
         status: "ACTIVE",
         pkgEndDate: new Date("2026-10-01T00:00:00Z"),
         remainingClasses: 0,
+        category: "STUDIO",
       },
       referenceTime
     );
     expect(status).toBe("COMPLETED");
+  });
+
+  it("should return ACTIVE if remainingClasses is 0 but package is MIXED / Spacer Mix and not expired", () => {
+    const status = resolvePackageStatus(
+      {
+        status: "ACTIVE",
+        name: "Spacer Mix (Functional Training + Space)",
+        pkgEndDate: new Date("2026-10-01T00:00:00Z"),
+        remainingClasses: 0,
+        category: "MIXED",
+      },
+      referenceTime
+    );
+    expect(status).toBe("ACTIVE");
+  });
+
+  it("should return EXPIRED for MIXED / Spacer Mix if pkgEndDate has passed even if classes were 0", () => {
+    const status = resolvePackageStatus(
+      {
+        status: "ACTIVE",
+        name: "Spacer Mix (Functional Training + Space)",
+        pkgEndDate: new Date("2026-06-04T00:00:00Z"),
+        remainingClasses: 0,
+        category: "MIXED",
+      },
+      referenceTime
+    );
+    expect(status).toBe("EXPIRED");
   });
 
   it("should prioritize EXPIRED over COMPLETED if end date is in the past and classes are 0", () => {
@@ -125,7 +154,7 @@ describe("PackageStatusService - syncMemberPackageStatuses", () => {
     expect(member.packages[0].status).toBe("EXPIRED");
   });
 
-  it("should mutate package status to COMPLETED when remaining classes are 0", () => {
+  it("should mutate package status to COMPLETED when remaining classes are 0 for standard class package", () => {
     const member: any = {
       uid: "user-123",
       packages: [
@@ -146,6 +175,29 @@ describe("PackageStatusService - syncMemberPackageStatuses", () => {
     );
     expect(modified).toBe(true);
     expect(member.packages[0].status).toBe("COMPLETED");
+  });
+
+  it("should preserve ACTIVE status for Spacer Mix package when remaining classes are 0 and pkgEndDate is future", () => {
+    const member: any = {
+      uid: "user-123",
+      packages: [
+        {
+          pkgId: "pkg-3",
+          name: "Spacer Mix (Functional Training + Space)",
+          pkgStartDate: new Date("2026-08-01T00:00:00Z"),
+          pkgEndDate: new Date("2026-10-01T00:00:00Z"),
+          remainingClasses: 0,
+          status: "ACTIVE",
+        },
+      ],
+    };
+
+    const modified = PackageStatusService.syncMemberPackageStatuses(
+      member,
+      referenceTime
+    );
+    expect(modified).toBe(false);
+    expect(member.packages[0].status).toBe("ACTIVE");
   });
 
   it("should return false if statuses are already correct", () => {

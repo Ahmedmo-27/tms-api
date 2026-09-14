@@ -424,7 +424,7 @@ export const addWalkIn = asyncHandler(async function (
       (booking._id as string),
       session
     );
-    if (paymentMethod) {
+    if (paymentMethod && paymentMethod !== "WILL_PAY") {
       finalBooking = await BookingsService.recordNonUserPayment(
         (booking._id as string),
         paymentMethod,

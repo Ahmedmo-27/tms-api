@@ -334,6 +334,10 @@ const MemberPackageSchema: Schema = new Schema({
     ref: "Package",
     required: true,
   },
+  name: {
+    type: String,
+    required: false,
+  },
   pkgStartDate: {
     type: Date,
     required: true,
@@ -591,10 +595,19 @@ MemberSchema.static(
       (a, b) => a.pkgStartDate.getTime() - b.pkgStartDate.getTime()
     );
 
+    const catalogDocs = await Package.find({
+      _id: { $in: memberPkgs.map((p) => p.pkgId) },
+    }).session(session);
+    const categoryByPkgId = new Map(
+      catalogDocs.map((p) => [p._id.toString(), p.category])
+    );
+
     logger.info("Sorted Pkgs", { memberPkgs });
     const skipReasons: BookingPackageSkipReason[] = [];
     for (const pkg of memberPkgs) {
       logger.info("Trying pkg", { pkg });
+      const category = categoryByPkgId.get(pkg.pkgId.toString()) ?? "";
+      const isSpace = isUnlimitedSpaceAccess(category);
 
       if (pkg.pkgEndDate < new Date()) {
         skipReasons.push("expired");
@@ -620,23 +633,25 @@ MemberSchema.static(
 
       if (pkg.remainingClasses <= 0) {
         skipReasons.push("remaining");
-        await this.updateOne(
-          {
-            uid,
-            "packages.pkgId": pkg.pkgId,
-            "packages.pkgStartDate": new Date(pkg.pkgStartDate),
-          },
-          { $set: { "packages.$[pkg].status": "COMPLETED" } },
-          {
-            arrayFilters: [
-              {
-                "pkg.pkgId": new Types.ObjectId(pkg.pkgId),
-                "pkg.pkgStartDate": new Date(pkg.pkgStartDate),
-              },
-            ],
-            session, // We need the session to revert changes if booking succeeds
-          }
-        );
+        if (!isSpace) {
+          await this.updateOne(
+            {
+              uid,
+              "packages.pkgId": pkg.pkgId,
+              "packages.pkgStartDate": new Date(pkg.pkgStartDate),
+            },
+            { $set: { "packages.$[pkg].status": "COMPLETED" } },
+            {
+              arrayFilters: [
+                {
+                  "pkg.pkgId": new Types.ObjectId(pkg.pkgId),
+                  "pkg.pkgStartDate": new Date(pkg.pkgStartDate),
+                },
+              ],
+              session, // We need the session to revert changes if booking succeeds
+            }
+          );
+        }
         continue;
       }
 
@@ -783,31 +798,33 @@ MemberSchema.static(
         }
       }
 
-      await this.updateOne(
-        {
-          uid,
-          packages: {
-            $elemMatch: {
-              pkgId: new Types.ObjectId(pkg.pkgId),
-              remainingClasses: 0,
+      if (!isSpace) {
+        await this.updateOne(
+          {
+            uid,
+            packages: {
+              $elemMatch: {
+                pkgId: new Types.ObjectId(pkg.pkgId),
+                remainingClasses: 0,
+              },
             },
           },
-        },
-        {
-          $set: {
-            "packages.$[pkg].status": "COMPLETED",
-          },
-        },
-        {
-          arrayFilters: [
-            {
-              "pkg.pkgId": new Types.ObjectId(pkg.pkgId),
-              "pkg.remainingClasses": 0,
+          {
+            $set: {
+              "packages.$[pkg].status": "COMPLETED",
             },
-          ],
-          session,
-        }
-      );
+          },
+          {
+            arrayFilters: [
+              {
+                "pkg.pkgId": new Types.ObjectId(pkg.pkgId),
+                "pkg.remainingClasses": 0,
+              },
+            ],
+            session,
+          }
+        );
+      }
 
       if (!isFree && !isWorkSpace) {
         const deductReason =
@@ -1867,12 +1884,15 @@ MemberSchema.static(
     const isFrozen = p.status === "FROZEN" || Boolean(p.freezeInfo?.isFrozen);
     let targetStatus: "ACTIVE" | "EXPIRED" | "COMPLETED" | "FROZEN" | "DELETED" = p.status;
 
+    const catalogDoc = await Package.findById(pkgId);
+    const isSpace = catalogDoc ? isUnlimitedSpaceAccess(catalogDoc.category) : false;
+
     if (p.status !== "DELETED") {
       if (isFrozen) {
         targetStatus = "FROZEN";
       } else if (new Date(p.pkgEndDate) < now) {
         targetStatus = "EXPIRED";
-      } else if (newClasses <= 0) {
+      } else if (newClasses <= 0 && !isSpace) {
         targetStatus = "COMPLETED";
       } else {
         targetStatus = "ACTIVE";
@@ -1935,12 +1955,17 @@ MemberSchema.static(
     const isFrozen = p.status === "FROZEN" || Boolean(p.freezeInfo?.isFrozen);
     let targetStatus: "ACTIVE" | "EXPIRED" | "COMPLETED" | "FROZEN" | "DELETED" = p.status;
 
+    const expiryCatalogDoc = await Package.findById(pkgId);
+    const isExpirySpace = expiryCatalogDoc
+      ? isUnlimitedSpaceAccess(expiryCatalogDoc.category)
+      : false;
+
     if (p.status !== "DELETED") {
       if (isFrozen) {
         targetStatus = "FROZEN";
       } else if (normalizedEnd < startOfTodayCairo()) {
         targetStatus = "EXPIRED";
-      } else if (p.remainingClasses <= 0) {
+      } else if (p.remainingClasses <= 0 && !isExpirySpace) {
         targetStatus = "COMPLETED";
       } else {
         targetStatus = "ACTIVE";

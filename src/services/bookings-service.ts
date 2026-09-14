@@ -1340,30 +1340,40 @@ export class BookingsService {
     scid?: string,
     locationId?: string,
   ): Promise<INonUserBooking[]> {
-    const query: any = {};
-    if (startTime && endTime) {
-      query.startTime = { $gte: startTime, $lte: endTime };
-    } else if (startTime) {
-      const start = startOfDateCairo(startTime);
-      const end = endOfDateCairo(startTime);
-      query.startTime = { $gte: start, $lte: end };
-    } else if (endTime) {
-      query.startTime = { $lte: endTime };
-    }
-    if (scid) query.scid = scid;
-    
-    if (locationId) {
-      const scheduledClasses = await ScheduledClass.find(
-        locationIdScalarQuery(locationId),
-      ).select("_id");
-      const validScids = scheduledClasses.map(sc => (sc as any)._id.toString());
-      if (scid) {
-        if (!validScids.includes(scid)) return [];
-      } else {
-        query.scid = { $in: validScids };
+    const hasDateFilter = !!(startTime || endTime);
+    const hasLocationFilter = !!locationId;
+
+    if (hasDateFilter || hasLocationFilter) {
+      const classQuery: any = {};
+      if (startTime && endTime) {
+        classQuery.startTime = { $gte: startTime, $lte: endTime };
+      } else if (startTime) {
+        const start = startOfDateCairo(startTime);
+        const end = endOfDateCairo(startTime);
+        classQuery.startTime = { $gte: start, $lte: end };
+      } else if (endTime) {
+        classQuery.startTime = { $lte: endTime };
       }
+
+      if (locationId) {
+        Object.assign(classQuery, locationIdScalarQuery(locationId));
+      }
+
+      if (scid && Types.ObjectId.isValid(scid)) {
+        classQuery._id = new Types.ObjectId(scid);
+      }
+
+      const scheduledClasses = await ScheduledClass.find(classQuery).select("_id").lean();
+      const validScidObjectIds = scheduledClasses.map((sc) => sc._id);
+      if (validScidObjectIds.length === 0) return [];
+
+      return NonUserBooking.find({ scid: { $in: validScidObjectIds } }).lean();
     }
-    
+
+    const query: any = {};
+    if (scid) {
+      query.scid = Types.ObjectId.isValid(scid) ? new Types.ObjectId(scid) : scid;
+    }
     return NonUserBooking.find(query).lean();
   }
 
@@ -1379,11 +1389,9 @@ export class BookingsService {
     const scheduledClass = await ScheduledClass.findById(scid).populate<{ cid: { allowDropIn: boolean } }>("cid");
     if (!scheduledClass)
       throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
-    if (scheduledClass.cid.allowDropIn === false)
+    if (scheduledClass.cid?.allowDropIn === false)
       throw new ConflictError("DROP_IN_DISABLED", "Drop-ins are not allowed for this class");
     const run = async (s: ClientSession) => {
-      scheduledClass.availableSlots = scheduledClass.availableSlots + 1;
-      await scheduledClass.save({ session });
       booking = await NonUserBooking.addBooking(scid, name, phoneNumber, s);
       logger.info("Booking saved in booking service function: ", booking);
       await ScheduledClass.bookNonUser(scid, s);
