@@ -1,5 +1,7 @@
+import { Types } from "mongoose";
 import admin from "../config/firebase";
 import logger from "../config/logger";
+import User from "../models/user";
 
 /**
  * Firebase constraints
@@ -7,14 +9,46 @@ import logger from "../config/logger";
 const FCM_MAX_TOKENS = 500;
 
 /**
- * Optional: replace this with your actual token repository
+ * Removes an FCM token that Firebase reported as invalid from every user.
  */
 async function removeInvalidToken(token: string) {
-  // Example:
-  // await DeviceTokenModel.deleteOne({ token });
+  await User.updateMany({ fcmTokens: token }, { $pull: { fcmTokens: token } });
 }
 
 export class NotificationsService {
+  /**
+   * Send a push notification to users by id.
+   * Looks up each user's saved FCM tokens; users without tokens are skipped.
+   */
+  static async notifyUsers(
+    userIds: string[],
+    title: string,
+    body: string,
+    data?: Record<string, string>
+  ) {
+    const validIds = (userIds ?? []).filter((id) => Types.ObjectId.isValid(id));
+    if (validIds.length === 0) return;
+
+    const users = await User.find({ _id: { $in: validIds } }).select("fcmTokens");
+    const tokens = [
+      ...new Set(
+        users
+          .flatMap((u) => u.fcmTokens ?? [])
+          .filter((t): t is string => typeof t === "string" && t.trim() !== "")
+      ),
+    ];
+
+    if (tokens.length === 0) {
+      logger.info("No FCM tokens for users; notification skipped", {
+        userIds: validIds,
+        title,
+      });
+      return;
+    }
+
+    return this.sendNotification(tokens, title, body, data);
+  }
+
   /**
    * Notify users on the waiting list about a newly available slot
    */
@@ -88,6 +122,12 @@ export class NotificationsService {
     data?: Record<string, string>
   ) {
     if (!users || users.length === 0) return;
+
+    // config/firebase skips initializeApp when no service account is set
+    if (!admin.apps?.length) {
+      logger.warn("Firebase not configured — push notification skipped", { title });
+      return;
+    }
 
     // Ensure FCM data payload is string-only
     const safeData: Record<string, string> = Object.fromEntries(

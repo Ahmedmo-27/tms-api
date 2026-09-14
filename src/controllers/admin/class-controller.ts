@@ -328,7 +328,7 @@ export const cancelBooking = asyncHandler(async function (
 ): Promise<void> {
   const { uid, scid } = req.body;
   await assertSessionAccess(req, scid);
-  await BookingsService.cancelBooking(uid, scid);
+  await BookingsService.cancelBooking(uid, scid, "staff");
   new SuccessResponse("Class cancelled").send(res);
 });
 

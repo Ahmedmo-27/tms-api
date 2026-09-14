@@ -9,6 +9,7 @@ import connectDB from "./config/db";
 import logger from "./config/logger";
 import { syncEmails } from "./services/imap-service";
 import { PackageStatusService } from "./services/package-status-service";
+import { MissedSessionService } from "./services/missed-session-service";
 import { CORS_ORIGINS } from "./config/corsOrigins";
 import User from "./models/user";
 
@@ -102,6 +103,15 @@ const startServer = async () => {
     setInterval(() => {
       PackageStatusService.syncAllPackageStatuses().catch((err) =>
         logger.error("Periodic package status sync failed", err)
+      );
+    }, 10 * 60 * 1000);
+
+    MissedSessionService.notifyMissedSessions().catch((err) =>
+      logger.error("Initial missed session notification run failed", err)
+    );
+    setInterval(() => {
+      MissedSessionService.notifyMissedSessions().catch((err) =>
+        logger.error("Periodic missed session notification run failed", err)
       );
     }, 10 * 60 * 1000);
   });
