@@ -221,7 +221,7 @@ export const bookClass = asyncHandler(async function (
     throw new BadRequestError("INVALID_REQUEST", "uid and scid are required");
   }
   await assertSessionAccess(req, scid);
-  const isAdminOverride = overrideTimeRestrictions === true;
+  const isAdminOverride = overrideTimeRestrictions !== false;
   await BookingsService.addBooking(uid, scid, isAdminOverride, "admin");
   new SuccessResponse("Class Booked!").send(res);
 });

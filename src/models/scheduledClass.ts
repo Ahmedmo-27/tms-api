@@ -44,8 +44,13 @@ interface IScheduledClassStatics {
     uid: string,
     usedPkg: string,
     session: ClientSession,
+    allowOverbooking?: boolean,
   ): Promise<void>;
-  bookNonUser(scid: string, session: ClientSession): Promise<void>;
+  bookNonUser(
+    scid: string,
+    session: ClientSession,
+    allowOverbooking?: boolean,
+  ): Promise<void>;
   removeBookedNonUser(
     scid: string,
     session: ClientSession,
@@ -176,15 +181,19 @@ ScheduledClassSchema.static(
     uid: string,
     usedPkg: string,
     session: ClientSession,
+    allowOverbooking: boolean = false,
   ): Promise<void> {
-    const result = await this.findOneAndUpdate(
-      {
-        _id: new Types.ObjectId(scid),
-        bookedMembers: {
-          $not: { $elemMatch: { uid: new Types.ObjectId(uid) } },
-        },
-        availableSlots: { $gt: 0 },
+    const filter: any = {
+      _id: new Types.ObjectId(scid),
+      bookedMembers: {
+        $not: { $elemMatch: { uid: new Types.ObjectId(uid) } },
       },
+    };
+    if (!allowOverbooking) {
+      filter.availableSlots = { $gt: 0 };
+    }
+    const result = await this.findOneAndUpdate(
+      filter,
       {
         $push: {
           bookedMembers: { uid: new Types.ObjectId(uid), method: usedPkg },
@@ -196,19 +205,40 @@ ScheduledClassSchema.static(
         session,
       },
     );
-    if (!result)
+    if (!result) {
+      const cls = await this.findById(scid).session(session);
+      if (!cls) {
+        throw new NotFoundError("CLASS_NOT_FOUND", "Scheduled class not found");
+      }
+      const alreadyBooked = cls.bookedMembers?.some(
+        (m: any) => m.uid.toString() === uid,
+      );
+      if (alreadyBooked) {
+        throw new ConflictError(
+          "ALREADY_BOOKED",
+          "Member is already booked for this class",
+        );
+      }
       throw new ConflictError("CLASS_FULLY_BOOKED", "Class is fully booked");
+    }
   },
 );
 
 ScheduledClassSchema.static(
   "bookNonUser",
-  async function (scid: string, session: ClientSession): Promise<void> {
+  async function (
+    scid: string,
+    session: ClientSession,
+    allowOverbooking: boolean = false,
+  ): Promise<void> {
+    const filter: any = {
+      _id: new Types.ObjectId(scid),
+    };
+    if (!allowOverbooking) {
+      filter.availableSlots = { $gt: 0 };
+    }
     const result = await this.findOneAndUpdate(
-      {
-        _id: new Types.ObjectId(scid),
-        availableSlots: { $gt: 0 },
-      },
+      filter,
       {
         $inc: { availableSlots: -1 },
       },

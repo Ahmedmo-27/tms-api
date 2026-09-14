@@ -105,7 +105,7 @@ describe("BookingsService Non-User Walkin and Bookings", () => {
       const result = await BookingsService.addNonUserBooking("WalkIn User", "01000000000", scid);
 
       expect(NonUserBooking.addBooking).toHaveBeenCalledWith(scid, "WalkIn User", "01000000000", expect.anything());
-      expect(ScheduledClass.bookNonUser).toHaveBeenCalledWith(scid, expect.anything());
+      expect(ScheduledClass.bookNonUser).toHaveBeenCalledWith(scid, expect.anything(), true);
       expect(result).toEqual(mockBooking);
     });
   });
