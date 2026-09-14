@@ -225,8 +225,10 @@ export class BookingsService {
       if (!pkg)
         throw new NotFoundError("PACKAGE_NOT_FOUND", "Invalid package used");
 
+      const allowOverbooking = isAdminOverride || audience === "admin";
+
       // add member to scheduled class booked members
-      await ScheduledClass.bookMember(scid, uid, pkg.name, session);
+      await ScheduledClass.bookMember(scid, uid, pkg.name, session, allowOverbooking);
 
       // check if user has challenge record
       const record = await ChallengeRecord.findOne({ uid });
@@ -931,6 +933,7 @@ export class BookingsService {
     scid: string,
     paymentMethod: string,
     locationId?: string,
+    amount?: number,
     paymentDate?: string,
     note?: string,
   ) {
@@ -942,11 +945,9 @@ export class BookingsService {
     });
     if (!scheduledClass)
       throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
-    if ((scheduledClass.cid as any).allowDropIn === false)
-      throw new ConflictError("DROP_IN_DISABLED", "Drop-ins are not allowed for this class");
 
-    // Admins/FD can book drop-ins even after the session has ended
-    let price = scheduledClass.cid.price;
+    // Admins/FD can book drop-ins even after the session has ended and bypass capacity/drop-in restrictions
+    let price = amount !== undefined ? amount : scheduledClass.cid.price;
     const scId = new Types.ObjectId(scid);
     const resolvedLocationId =
       locationId ??
@@ -976,7 +977,7 @@ export class BookingsService {
         paymentIdStr,
         session,
       );
-      await ScheduledClass.bookMember(scid, uid, "Drop In", session);
+      await ScheduledClass.bookMember(scid, uid, "Drop In", session, true);
     });
   }
 
@@ -1485,6 +1486,7 @@ export class BookingsService {
     phoneNumber: string,
     scid: string,
     session?: ClientSession,
+    allowOverbooking: boolean = true,
   ): Promise<INonUserBooking> {
     if (!scid || !Types.ObjectId.isValid(scid))
       throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
@@ -1492,12 +1494,12 @@ export class BookingsService {
     const scheduledClass = await ScheduledClass.findById(scid).populate<{ cid: { allowDropIn: boolean } }>("cid");
     if (!scheduledClass)
       throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
-    if (scheduledClass.cid?.allowDropIn === false)
+    if (!allowOverbooking && scheduledClass.cid?.allowDropIn === false)
       throw new ConflictError("DROP_IN_DISABLED", "Drop-ins are not allowed for this class");
     const run = async (s: ClientSession) => {
       booking = await NonUserBooking.addBooking(scid, name, phoneNumber, s);
       logger.info("Booking saved in booking service function: ", booking);
-      await ScheduledClass.bookNonUser(scid, s);
+      await ScheduledClass.bookNonUser(scid, s, allowOverbooking);
       if (!booking)
         throw new NotFoundError("BOOKING_NOT_FOUND", "Booking not found");
       return booking;
