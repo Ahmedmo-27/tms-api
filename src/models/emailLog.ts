@@ -9,6 +9,8 @@ export interface IEmailLog extends Document {
   status: "sent" | "failed";
   error_msg?: string;
   sent_by?: Types.ObjectId;
+  sender_email?: string;
+  sender_name?: string;
 }
 
 const EmailLogSchema: Schema<IEmailLog> = new Schema({
@@ -47,6 +49,17 @@ const EmailLogSchema: Schema<IEmailLog> = new Schema({
     type: Schema.Types.ObjectId,
     ref: "User",
     required: false,
+  },
+  sender_email: {
+    type: String,
+    required: false,
+    trim: true,
+    lowercase: true,
+  },
+  sender_name: {
+    type: String,
+    required: false,
+    trim: true,
   },
 });
 

@@ -1,7 +1,10 @@
-import mongoose, { Schema, Document } from "mongoose";
+import mongoose, { Schema, Document, Types } from "mongoose";
 
 export interface IReceivedEmail extends Document {
   from: string;
+  to?: string;
+  recipientEmail?: string;
+  recipientUser?: Types.ObjectId;
   subject: string;
   text: string;
   html: string;
@@ -14,6 +17,24 @@ const ReceivedEmailSchema: Schema<IReceivedEmail> = new Schema({
   from: {
     type: String,
     required: true,
+  },
+  to: {
+    type: String,
+    required: false,
+    default: "",
+  },
+  recipientEmail: {
+    type: String,
+    required: false,
+    lowercase: true,
+    trim: true,
+    index: true,
+  },
+  recipientUser: {
+    type: Schema.Types.ObjectId,
+    ref: "User",
+    required: false,
+    index: true,
   },
   subject: {
     type: String,

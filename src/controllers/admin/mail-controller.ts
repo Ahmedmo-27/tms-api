@@ -8,10 +8,13 @@ import { sendTransactionalEmailBatch } from "../../services/brevo-mail-service";
 import asyncHandler from "../../utils/asyncHandler";
 import { SuccessResponse } from "../../core/ApiResponse";
 import { BadRequestError, InternalError } from "../../core/ApiError";
+import { getUserMailConfig } from "../../utils/mail-helper";
 
 export const sendMail = asyncHandler(async (req: Request, res: Response) => {
   const { mode, subject, body, to, attachment } = req.body;
-  const adminId = (req as any).user?._id;
+  const user = (req as any).user;
+  const adminId = user?._id;
+  const { email: senderEmail, name: senderName } = getUserMailConfig(user);
 
   if (!subject || !body) {
     throw new BadRequestError("INVALID_REQUEST", "subject and body are required");
@@ -59,6 +62,8 @@ export const sendMail = asyncHandler(async (req: Request, res: Response) => {
       subject,
       htmlContent: body,
       attachment,
+      sender: { email: senderEmail, name: senderName },
+      replyTo: { email: senderEmail, name: senderName },
     });
   } catch (error: any) {
     logger.error("Error sending mail:", error);
@@ -71,6 +76,8 @@ export const sendMail = asyncHandler(async (req: Request, res: Response) => {
       status: "failed",
       error_msg: error.message || "Unknown error",
       sent_by: adminId,
+      sender_email: senderEmail,
+      sender_name: senderName,
     });
     await emailLog.save();
     throw new InternalError("MAIL_SEND_FAILED", "Failed to send email");
@@ -84,6 +91,8 @@ export const sendMail = asyncHandler(async (req: Request, res: Response) => {
     sent_at: new Date(),
     status: "sent",
     sent_by: adminId,
+    sender_email: senderEmail,
+    sender_name: senderName,
   });
   await emailLog.save();
 
@@ -91,11 +100,38 @@ export const sendMail = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const getLogs = asyncHandler(async (req: Request, res: Response) => {
-  const logs = await EmailLog.find().sort({ sent_at: -1 }).limit(100);
+  const adminId = (req as any).user?._id;
+  const filter = adminId ? { sent_by: adminId } : {};
+  const logs = await EmailLog.find(filter).sort({ sent_at: -1 }).limit(100);
   new SuccessResponse("Mail logs fetched!", logs).send(res);
 });
 
 export const getInbox = asyncHandler(async (req: Request, res: Response) => {
-  const emails = await ReceivedEmail.find().sort({ date: -1 }).limit(100);
+  const user = (req as any).user;
+  const { email: userMail } = getUserMailConfig(user);
+  const escapedMail = userMail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  const filter: any = user
+    ? {
+        $or: [
+          { recipientUser: user._id },
+          { recipientEmail: userMail.toLowerCase() },
+          { to: { $regex: escapedMail, $options: "i" } },
+        ],
+      }
+    : {};
+
+  const emails = await ReceivedEmail.find(filter).sort({ date: -1 }).limit(100);
   new SuccessResponse("Inbox fetched!", emails).send(res);
+});
+
+export const getMailProfile = asyncHandler(async (req: Request, res: Response) => {
+  const user = (req as any).user;
+  const config = getUserMailConfig(user);
+  new SuccessResponse("Mail profile fetched!", {
+    email: config.email,
+    name: config.name,
+    tmsEmail: user?.tmsEmail || null,
+    sendAsName: user?.sendAsName || null,
+  }).send(res);
 });
