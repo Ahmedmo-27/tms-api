@@ -328,9 +328,13 @@ export const deactivateAccount = asyncHandler(
 export const registerCoachUser = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const { name, email, password, phoneNumber, coachId } = req.body;
+    if (!name || !email || !password || !phoneNumber || !coachId) {
+      throw new BadRequestError("MISSING_FIELDS", "Please provide all required fields");
+    }
+
     assertPasswordStrength(password);
 
-    const cleanPhoneNumber = phoneNumber.replace(/\s/g, "");
+    const cleanPhoneNumber = phoneNumber.toString().replace(/\s/g, "");
 
     if (await User.findOne({ phoneNumber: cleanPhoneNumber }))
       throw new ConflictError("PHONE_ALREADY_EXISTS", "Phone number already exists", {
