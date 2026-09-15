@@ -1,26 +1,24 @@
 import express from "express";
 import { getUnlinkedCoaches } from "../controllers/admin/coach-controller";
 import { registerCoachUser } from "../controllers/auth/auth-controller";
-import { defaultLimiter } from "../config/rateLimiter";
+import { defaultLimiter, loginLimiter } from "../config/rateLimiter";
 import {
   submitTicket,
   getActiveTicketCategories,
 } from "../controllers/admin/ticket-controller";
 
-import { authenticateUser, authorizeUser } from "../middlewares/auth.middleware";
+import { authenticateUser } from "../middlewares/auth.middleware";
 
 const exposedRoutes = express.Router();
 
 exposedRoutes.get(
   "/unlinked-coaches",
-  authenticateUser,
-  authorizeUser(["management"]),
+  defaultLimiter,
   getUnlinkedCoaches
 );
 exposedRoutes.post(
   "/register-coach",
-  authenticateUser,
-  authorizeUser(["management"]),
+  loginLimiter,
   registerCoachUser
 );
 

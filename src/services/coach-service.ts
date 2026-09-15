@@ -193,6 +193,10 @@ export class CoachService {
     coachDocId: Types.ObjectId,
     memberId: string,
   ): Promise<MemberPackageResponseDto[]> {
+    if (!memberId || !Types.ObjectId.isValid(memberId)) {
+      throw new BadRequestError("INVALID_ID", "Invalid member ID format");
+    }
+
     // Fetch the member document
     const member = await Member.findOne({ uid: new Types.ObjectId(memberId) });
     if (!member) {
@@ -273,6 +277,10 @@ export class CoachService {
     // --- 1. Validate required fields (Req 7.1) ---
     if (!memberId || !memberPackageStartDate || !reason || !sessionDate) {
       throw new BadRequestError("MISSING_FIELDS", "One or more required fields are missing");
+    }
+
+    if (!Types.ObjectId.isValid(memberId)) {
+      throw new BadRequestError("INVALID_ID", "Invalid member ID format");
     }
 
     // --- 2. Validate date strings are parseable ISO 8601 (Req 7.1) ---
@@ -376,31 +384,45 @@ export class CoachService {
       startTime: { $gte: weekStart, $lt: weekEnd }
     }).populate("locationId").sort({ startTime: 1 });
 
+    // Batch fetch 1: Classes
+    const classIds = Array.from(new Set(scheduledClasses.map(s => s.cid.toString())));
+    const classes = await Class.find({ _id: { $in: classIds } });
+    const classMap = new Map(classes.map(c => [(c._id as Types.ObjectId).toString(), c]));
+
+    // Batch fetch 2: Booked Members
+    const allMemberUids = Array.from(
+      new Set(scheduledClasses.flatMap(s => s.bookedMembers.map(m => m.uid.toString())))
+    );
+    const members = await Member.find({ uid: { $in: allMemberUids } }).populate<{ uid: any }>("uid");
+    const memberMap = new Map(
+      members.filter(m => m && m.uid).map(m => [m.uid._id.toString(), m])
+    );
+
+    // Batch fetch 3: Referenced Packages
+    const allPkgIds = Array.from(
+      new Set(members.flatMap(m => m.packages.map(p => p.pkgId.toString())))
+    );
+    const packagesInfo = await Package.find({ _id: { $in: allPkgIds } });
+    const packageMap = new Map(packagesInfo.map(p => [p._id.toString(), p]));
+
+    const coachIdStr = coachDocId.toString();
     const sessionsMap = new Map<string, any[]>();
 
     for (const scheduledClass of scheduledClasses) {
-      const cls = await Class.findById(scheduledClass.cid);
+      const cls = classMap.get(scheduledClass.cid.toString());
       if (!cls) continue;
 
       const clients = [];
       for (const entry of scheduledClass.bookedMembers) {
-        const member = await Member.findOne({ uid: entry.uid }).populate<{ uid: any }>("uid");
+        const member = memberMap.get(entry.uid.toString());
         if (!member || !member.uid) continue;
 
-        // Fetch the package documents referenced by the member to check if they are allowed
-        const memberPkgIds = member.packages.map(p => p.pkgId);
-        const packagesInfo = await Package.find({ _id: { $in: memberPkgIds } });
-        
-        const allowedPkgIdSet = new Set<string>();
-        for (const pkg of packagesInfo) {
-          if (!pkg.coachId || pkg.coachId.toString() === coachDocId.toString()) {
-            allowedPkgIdSet.add(pkg._id.toString());
-          }
-        }
-
-        const activePackage = member.packages.find(p =>
-          p.pkgId && allowedPkgIdSet.has(p.pkgId.toString()) && p.status === "ACTIVE"
-        );
+        const activePackage = member.packages.find(p => {
+          if (!p.pkgId || p.status !== "ACTIVE") return false;
+          const pkgDoc = packageMap.get(p.pkgId.toString());
+          if (!pkgDoc) return false;
+          return !pkgDoc.coachId || pkgDoc.coachId.toString() === coachIdStr;
+        });
 
         clients.push({
           memberId: entry.uid.toString(),
@@ -409,7 +431,7 @@ export class CoachService {
           bookingMethod: entry.method,
           activePackage: activePackage ? {
             pkgId: activePackage.pkgId.toString(),
-            pkgStartDate: activePackage.pkgStartDate.toISOString(),
+            pkgStartDate: activePackage.pkgStartDate ? (activePackage.pkgStartDate instanceof Date ? activePackage.pkgStartDate.toISOString() : new Date(activePackage.pkgStartDate).toISOString()) : new Date().toISOString(),
             remainingClasses: activePackage.remainingClasses
           } : null
         });
@@ -470,10 +492,14 @@ export class CoachService {
       .populate("locationId")
       .sort({ startTime: 1 });
 
+    const classIds = Array.from(new Set(scheduledClasses.map(sc => sc.cid.toString())));
+    const classes = await Class.find({ _id: { $in: classIds } });
+    const classMap = new Map(classes.map(c => [(c._id as Types.ObjectId).toString(), c]));
+
     const result = [];
 
     for (const sc of scheduledClasses) {
-      const cls = await Class.findById(sc.cid);
+      const cls = classMap.get(sc.cid.toString());
       if (!cls) continue;
 
       // Build scan entries — uid is populated as a User document
@@ -736,6 +762,10 @@ export class CoachService {
     coachDocId: Types.ObjectId,
     memberId: string,
   ): Promise<DeductionHistoryItemDto[]> {
+    if (!memberId || !Types.ObjectId.isValid(memberId)) {
+      throw new BadRequestError("INVALID_ID", "Invalid member ID format");
+    }
+
     await this.getMemberPackages(coachDocId, memberId);
 
     const logs = await DeductionLog.find({

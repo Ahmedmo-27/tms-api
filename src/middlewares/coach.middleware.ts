@@ -78,7 +78,20 @@ export const coachGuard = asyncHandler(
 
     (req as CoachAuthRequest).coachId = new Types.ObjectId(decoded.uid);
 
-    const coachDoc = await Coach.findOne({ userId: (req as CoachAuthRequest).coachId });
+    let coachDoc = await Coach.findOne({ userId: (req as CoachAuthRequest).coachId });
+    if (!coachDoc && user.phoneNumber) {
+      // Fallback: Check for an unlinked Coach document with matching phone number
+      const coachByPhone = await Coach.findOne({
+        phoneNumber: user.phoneNumber,
+        $or: [{ userId: { $exists: false } }, { userId: null }],
+      });
+      if (coachByPhone) {
+        coachByPhone.userId = (req as CoachAuthRequest).coachId;
+        await coachByPhone.save();
+        coachDoc = coachByPhone;
+      }
+    }
+
     if (!coachDoc) {
       throw new ForbiddenError("COACH_PROFILE_NOT_FOUND", "Coach profile not found for this user");
     }
