@@ -130,6 +130,7 @@ export const sendTransactionalEmailBatch = async (params: {
         attachment: attachmentPayload,
         messageVersions: batch.map((email) => ({
           to: [{ email }],
+          replyTo,
         })),
       });
     } catch (error) {

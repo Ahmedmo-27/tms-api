@@ -107,7 +107,7 @@ import {
   searchMembers,
   getMemberRecentPayments,
 } from "../controllers/admin/refunds-controller";
-import { sendMail, getLogs, getInbox, getMailProfile } from "../controllers/admin/mail-controller";
+import { sendMail, getLogs, getInbox, getMailProfile, triggerSync } from "../controllers/admin/mail-controller";
 import {
   getSheetDay,
   getSheetMemberEligibility,
@@ -719,6 +719,13 @@ adminRoutes.get(
   authenticateUser,
   authorizeUser(["management", "managing_coach"]),
   getMailProfile
+);
+
+adminRoutes.post(
+  "/mail/sync",
+  authenticateUser,
+  authorizeUser(["management", "managing_coach"]),
+  triggerSync
 );
 
 // Daily Sheet Routes

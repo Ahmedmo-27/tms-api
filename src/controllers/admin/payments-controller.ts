@@ -7,16 +7,20 @@ import { resolveLocationFilter } from "../../utils/location-scope";
 
 export const getPayments = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
-    const date = req.query.date;
+    const date = req.query.date as string | undefined;
+    const startDate = (req.query.startDate || req.query.from) as string | undefined;
+    const endDate = (req.query.endDate || req.query.to) as string | undefined;
     const month = req.query.month;
     const year = req.query.year;
     const targetLocationId = resolveLocationFilter(req);
 
     const payments = await PaymentsService.getPayments(
-      date as string,
+      date,
       month ? Number(month) : undefined,
       year ? Number(year) : undefined,
-      targetLocationId
+      targetLocationId,
+      startDate,
+      endDate
     );
     new SuccessResponse("Fetched Payments!", payments).send(res);
   }

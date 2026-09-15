@@ -5,6 +5,7 @@ import Member from "../../models/member";
 import User from "../../models/user";
 import logger from "../../config/logger";
 import { sendTransactionalEmailBatch } from "../../services/brevo-mail-service";
+import { syncEmails } from "../../services/imap-service";
 import asyncHandler from "../../utils/asyncHandler";
 import { SuccessResponse } from "../../core/ApiResponse";
 import { BadRequestError, InternalError } from "../../core/ApiError";
@@ -134,4 +135,24 @@ export const getMailProfile = asyncHandler(async (req: Request, res: Response) =
     tmsEmail: user?.tmsEmail || null,
     sendAsName: user?.sendAsName || null,
   }).send(res);
+});
+
+export const triggerSync = asyncHandler(async (req: Request, res: Response) => {
+  await syncEmails();
+  const user = (req as any).user;
+  const { email: userMail } = getUserMailConfig(user);
+  const escapedMail = userMail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  const filter: any = user
+    ? {
+        $or: [
+          { recipientUser: user._id },
+          { recipientEmail: userMail.toLowerCase() },
+          { to: { $regex: escapedMail, $options: "i" } },
+        ],
+      }
+    : {};
+
+  const emails = await ReceivedEmail.find(filter).sort({ date: -1 }).limit(100);
+  new SuccessResponse("Inbox synced successfully!", emails).send(res);
 });

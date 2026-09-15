@@ -206,7 +206,8 @@ export const createCashOut = asyncHandler(
 
 export const listRefunds = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
-    const { date } = req.query;
+    const startDate = (req.query.startDate || req.query.from || req.query.date) as string | undefined;
+    const endDate = (req.query.endDate || req.query.to || startDate) as string | undefined;
 
     const filter: Record<string, unknown> = { type: "REFUND" };
 
@@ -215,12 +216,19 @@ export const listRefunds = asyncHandler(
       Object.assign(filter, locationIdScalarQuery(targetLocationId));
     }
 
-    if (date) {
-      const parsed = new Date(date as string);
-      if (!isNaN(parsed.getTime())) {
+    if (startDate && endDate) {
+      const parsedStart = new Date(startDate);
+      const parsedEnd = new Date(endDate);
+      if (!isNaN(parsedStart.getTime()) && !isNaN(parsedEnd.getTime())) {
+        let start = startOfDateCairo(parsedStart);
+        let end = endOfDateCairo(parsedEnd);
+        if (start > end) {
+          start = startOfDateCairo(parsedEnd);
+          end = endOfDateCairo(parsedStart);
+        }
         filter.createdAt = {
-          $gte: startOfDateCairo(parsed),
-          $lte: endOfDateCairo(parsed),
+          $gte: start,
+          $lte: end,
         };
       }
     }
@@ -255,7 +263,8 @@ export const listRefunds = asyncHandler(
 
 export const listCashOuts = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
-    const { date } = req.query;
+    const startDate = (req.query.startDate || req.query.from || req.query.date) as string | undefined;
+    const endDate = (req.query.endDate || req.query.to || startDate) as string | undefined;
 
     const filter: Record<string, unknown> = { type: "CASHOUT" };
 
@@ -264,12 +273,19 @@ export const listCashOuts = asyncHandler(
       Object.assign(filter, locationIdScalarQuery(targetLocationId));
     }
 
-    if (date) {
-      const parsed = new Date(date as string);
-      if (!isNaN(parsed.getTime())) {
+    if (startDate && endDate) {
+      const parsedStart = new Date(startDate);
+      const parsedEnd = new Date(endDate);
+      if (!isNaN(parsedStart.getTime()) && !isNaN(parsedEnd.getTime())) {
+        let start = startOfDateCairo(parsedStart);
+        let end = endOfDateCairo(parsedEnd);
+        if (start > end) {
+          start = startOfDateCairo(parsedEnd);
+          end = endOfDateCairo(parsedStart);
+        }
         filter.createdAt = {
-          $gte: startOfDateCairo(parsed),
-          $lte: endOfDateCairo(parsed),
+          $gte: start,
+          $lte: end,
         };
       }
     }

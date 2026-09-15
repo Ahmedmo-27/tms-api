@@ -60,16 +60,27 @@ export class PaymentsService {
     dateString?: string,
     month?: number,
     year?: number,
-    locationId?: string | null
+    locationId?: string | null,
+    startDate?: string,
+    endDate?: string,
   ): Promise<PaymentListEntry[]> {
     const paymentQuery = buildCairoDateRangeQuery(
       "paymentTime",
       dateString,
       month,
-      year
+      year,
+      startDate,
+      endDate
     );
     const refundQuery = {
-      ...buildCairoDateRangeQuery("createdAt", dateString, month, year),
+      ...buildCairoDateRangeQuery(
+        "createdAt",
+        dateString,
+        month,
+        year,
+        startDate,
+        endDate
+      ),
       // Include ALL refunds (both standalone and linked to a payment) so each
       // refund appears as its own negative row alongside the original purchase.
     };
