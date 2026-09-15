@@ -10,6 +10,7 @@ import {
   cancelClass,
   editClass,
   getDailyAttendnace,
+  confirmClassAttendance,
 } from "../controllers/admin/scheduler-controller";
 import {
   addClass,
@@ -167,6 +168,12 @@ adminRoutes.patch(
   authenticateUser,
   authorizeUser(["management", "branch_admin"]),
   editClass
+);
+adminRoutes.post(
+  "/schedule/:scid/confirm-attendance",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  confirmClassAttendance
 );
 adminRoutes.get(
   "/daily-attendance",

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { getClients, getMemberPackages, deductSession, getSchedule, getScans, getPtAttendance, getToday, getNotifications, markNotificationsRead, getDeductionHistory } from "../controllers/coach/dashboard-controller";
+import { getClients, getMemberPackages, deductSession, getSchedule, getScans, getPtAttendance, getToday, getNotifications, markNotificationsRead, getDeductionHistory, confirmClassAttendance } from "../controllers/coach/dashboard-controller";
 import { coachLogin, getCoachMe, changeCoachPassword } from "../controllers/coach/auth-controller";
 import { verifyToken } from "../controllers/auth/auth-controller";
 import { authenticateUser, authorizeUser } from "../middlewares/auth.middleware";
@@ -28,6 +28,7 @@ router.get("/clients/:memberId/packages", coachGuard, getMemberPackages);
 router.get("/clients/:memberId/deductions", coachGuard, getDeductionHistory);
 router.get("/schedule", coachGuard, getSchedule);
 router.get("/scans", coachGuard, getScans);
+router.post("/scans/:scid/confirm-attendance", coachGuard, confirmClassAttendance);
 router.get("/pt-attendance", coachGuard, getPtAttendance);
 router.post("/deduct", coachGuard, deductSession);
 

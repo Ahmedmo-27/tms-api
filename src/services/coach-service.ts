@@ -603,14 +603,100 @@ export class CoachService {
         category:    cls.category,
         startTime:   formatInTimeZone(sc.startTime, "Africa/Cairo", "HH:mm"),
         endTime:     formatInTimeZone(sc.endTime,   "Africa/Cairo", "HH:mm"),
+        startTimeIso: sc.startTime.toISOString(),
+        endTimeIso:   sc.endTime.toISOString(),
         capacity:    sc.availableSlots + sc.bookedMembers.length,
         bookedCount: sc.bookedMembers.length,
         location:    this.locationLabel(sc.locationId),
         scans,
+        attendanceConfirmation: sc.attendanceConfirmation?.confirmed
+          ? {
+              confirmed: sc.attendanceConfirmation.confirmed,
+              confirmedCount: sc.attendanceConfirmation.confirmedCount,
+              hasMissingPlace: sc.attendanceConfirmation.hasMissingPlace,
+              confirmedAt: sc.attendanceConfirmation.confirmedAt
+                ? sc.attendanceConfirmation.confirmedAt.toISOString()
+                : undefined,
+              confirmedBy: sc.attendanceConfirmation.confirmedBy
+                ? sc.attendanceConfirmation.confirmedBy.toString()
+                : undefined,
+              notes: sc.attendanceConfirmation.notes ?? "",
+            }
+          : null,
       });
     }
 
     return result;
+  }
+
+  /**
+   * POST /api/coach/scans/:scid/confirm-attendance
+   * Confirms attendance headcount for a scheduled class halfway through the session.
+   */
+  static async confirmAttendance(
+    coachDocId: Types.ObjectId,
+    scid: string,
+    data: { confirmedCount: number; hasMissingPlace?: boolean; notes?: string },
+    io?: any,
+    confirmedByUserId?: Types.ObjectId
+  ): Promise<any> {
+    if (!scid || !Types.ObjectId.isValid(scid)) {
+      throw new NotFoundError("CLASS_NOT_FOUND", "Scheduled class not found", { scid });
+    }
+
+    const scheduledClass = await ScheduledClass.findById(scid);
+    if (!scheduledClass) {
+      throw new NotFoundError("CLASS_NOT_FOUND", "Scheduled class not found", { scid });
+    }
+
+    const isAssigned = (scheduledClass.coachId || []).some(
+      (id) => id.toString() === coachDocId.toString()
+    );
+    if (!isAssigned) {
+      throw new ForbiddenError(
+        "COACH_NOT_ASSIGNED",
+        "You are not assigned to this scheduled class"
+      );
+    }
+
+    // Halfway check
+    const startMs = scheduledClass.startTime.getTime();
+    const endMs = scheduledClass.endTime.getTime();
+    const halfwayMs = startMs + (endMs - startMs) / 2;
+
+    if (Date.now() < halfwayMs) {
+      throw new BadRequestError(
+        "SESSION_NOT_HALFWAY",
+        "Attendance can only be confirmed once the session reaches its halfway point"
+      );
+    }
+
+    const count = Math.max(0, Math.floor(Number(data.confirmedCount) || 0));
+    const hasMissingPlace =
+      typeof data.hasMissingPlace === "boolean"
+        ? data.hasMissingPlace
+        : count < scheduledClass.bookedMembers.length;
+
+    scheduledClass.attendanceConfirmation = {
+      confirmed: true,
+      confirmedCount: count,
+      hasMissingPlace,
+      confirmedAt: new Date(),
+      confirmedBy: confirmedByUserId,
+      notes: data.notes?.trim() ?? "",
+    };
+
+    await scheduledClass.save();
+
+    if (io) {
+      io.emit("ATTENDANCE-CONFIRMED", {
+        scheduledClassId: scid,
+        attendanceConfirmation: scheduledClass.attendanceConfirmation,
+      });
+      io.emit("SUCCESS-SCAN");
+    }
+
+    return scheduledClass;
   }
 
   /**

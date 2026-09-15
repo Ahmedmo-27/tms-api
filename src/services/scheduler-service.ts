@@ -523,4 +523,51 @@ export class SchedulerService {
       .lean();
     return dailyAttendance;
   }
+
+  static async confirmAttendance(
+    scid: string,
+    data: { confirmedCount: number; hasMissingPlace?: boolean; notes?: string },
+    io?: any,
+    targetLocationId?: string | null,
+    confirmedByUserId?: Types.ObjectId
+  ): Promise<any> {
+    if (!scid || !Types.ObjectId.isValid(scid)) {
+      throw new NotFoundError("CLASS_NOT_FOUND", "Scheduled class not found", { scid });
+    }
+
+    await this.assertSessionAtLocation(scid, targetLocationId);
+
+    const scheduledClass = await ScheduledClass.findById(scid);
+    if (!scheduledClass) {
+      throw new NotFoundError("CLASS_NOT_FOUND", "Scheduled class not found", { scid });
+    }
+
+    const count = Math.max(0, Math.floor(Number(data.confirmedCount) || 0));
+    const hasMissingPlace =
+      typeof data.hasMissingPlace === "boolean"
+        ? data.hasMissingPlace
+        : count < scheduledClass.bookedMembers.length;
+
+    scheduledClass.attendanceConfirmation = {
+      confirmed: true,
+      confirmedCount: count,
+      hasMissingPlace,
+      confirmedAt: new Date(),
+      confirmedBy: confirmedByUserId,
+      notes: data.notes?.trim() ?? "",
+    };
+
+    await scheduledClass.save();
+
+    if (io) {
+      io.emit("ATTENDANCE-CONFIRMED", {
+        scheduledClassId: scid,
+        attendanceConfirmation: scheduledClass.attendanceConfirmation,
+      });
+      io.emit("SUCCESS-SCAN");
+    }
+
+    return scheduledClass;
+  }
 }
+

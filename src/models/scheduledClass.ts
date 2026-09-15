@@ -20,6 +20,15 @@ interface IWaitlistedMember {
   addedAt: Date;
 }
 
+export interface IAttendanceConfirmation {
+  confirmed: boolean;
+  confirmedCount: number;
+  hasMissingPlace: boolean;
+  confirmedAt?: Date;
+  confirmedBy?: Types.ObjectId;
+  notes?: string;
+}
+
 export interface IScheduledClass extends Document {
   cid: Types.ObjectId;
   locationId: Types.ObjectId;
@@ -31,6 +40,7 @@ export interface IScheduledClass extends Document {
   scans: IMemberScan[];
   waitlistedMembers: IWaitlistedMember[];
   waitingList: string[];
+  attendanceConfirmation?: IAttendanceConfirmation;
 }
 
 export interface IScheduledClassMethods {
@@ -171,6 +181,14 @@ const ScheduledClassSchema = new Schema<
       },
     ],
     default: [],
+  },
+  attendanceConfirmation: {
+    confirmed: { type: Boolean, default: false },
+    confirmedCount: { type: Number, default: 0 },
+    hasMissingPlace: { type: Boolean, default: false },
+    confirmedAt: { type: Date },
+    confirmedBy: { type: Schema.Types.ObjectId, ref: "User" },
+    notes: { type: String, default: "" },
   },
 });
 

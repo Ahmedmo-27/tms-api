@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import Schedule from "../../models/schedule";
 import { SuccessResponse } from "../../core/ApiResponse";
+import { BadRequestError } from "../../core/ApiError";
 import asyncHandler from "../../utils/asyncHandler";
 import { SchedulerService } from "../../services/scheduler-service";
 import {
@@ -107,3 +108,32 @@ export const getDailyAttendnace = asyncHandler(async function (
 
   new SuccessResponse("Attendnace Fetched!", record).send(res);
 });
+
+export const confirmClassAttendance = asyncHandler(async function (
+  req: Request,
+  res: Response
+): Promise<void> {
+  const scid = req.params.scid;
+  const { confirmedCount, hasMissingPlace, notes } = req.body;
+
+  if (confirmedCount === undefined || confirmedCount === null || isNaN(Number(confirmedCount))) {
+    throw new BadRequestError("INVALID_COUNT", "Valid confirmedCount is required");
+  }
+
+  const io = req.app.get("io");
+  const targetLocationId = resolveLocationFilter(req);
+  const updatedClass = await SchedulerService.confirmAttendance(
+    scid,
+    {
+      confirmedCount: Number(confirmedCount),
+      hasMissingPlace: typeof hasMissingPlace === "boolean" ? hasMissingPlace : undefined,
+      notes: typeof notes === "string" ? notes : undefined,
+    },
+    io,
+    targetLocationId,
+    (req as any).user?._id
+  );
+
+  new SuccessResponse("Attendance Confirmed!", updatedClass).send(res);
+});
+

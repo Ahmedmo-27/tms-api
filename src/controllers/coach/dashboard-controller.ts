@@ -164,3 +164,29 @@ export const getDeductionHistory = asyncHandler(async (req: Request, res: Respon
   );
   return new SuccessResponse("Deductions fetched", { deductions }).send(res);
 });
+
+export const confirmClassAttendance = asyncHandler(async (req: Request, res: Response) => {
+  const coachReq = req as CoachAuthRequest;
+  const { scid } = req.params;
+  const { confirmedCount, hasMissingPlace, notes } = req.body;
+
+  if (confirmedCount === undefined || confirmedCount === null || isNaN(Number(confirmedCount))) {
+    throw new BadRequestError("INVALID_COUNT", "Valid confirmedCount is required");
+  }
+
+  const io = req.app.get("io");
+  const updatedClass = await CoachService.confirmAttendance(
+    coachReq.coachDocId,
+    scid,
+    {
+      confirmedCount: Number(confirmedCount),
+      hasMissingPlace: typeof hasMissingPlace === "boolean" ? hasMissingPlace : undefined,
+      notes: typeof notes === "string" ? notes : undefined,
+    },
+    io,
+    coachReq.coachId
+  );
+
+  return new SuccessResponse("Attendance confirmed", updatedClass).send(res);
+});
+
