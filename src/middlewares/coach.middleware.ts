@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 import { Types } from "mongoose";
 import User from "../models/user";
 import Coach from "../models/coach";
+import { CoachService } from "../services/coach-service";
 import asyncHandler from "../utils/asyncHandler";
 import {
   AuthFailureError,
@@ -78,20 +79,7 @@ export const coachGuard = asyncHandler(
 
     (req as CoachAuthRequest).coachId = new Types.ObjectId(decoded.uid);
 
-    let coachDoc = await Coach.findOne({ userId: (req as CoachAuthRequest).coachId });
-    if (!coachDoc && user.phoneNumber) {
-      // Fallback: Check for an unlinked Coach document with matching phone number
-      const coachByPhone = await Coach.findOne({
-        phoneNumber: user.phoneNumber,
-        $or: [{ userId: { $exists: false } }, { userId: null }],
-      });
-      if (coachByPhone) {
-        coachByPhone.userId = (req as CoachAuthRequest).coachId;
-        await coachByPhone.save();
-        coachDoc = coachByPhone;
-      }
-    }
-
+    const coachDoc = await CoachService.resolveCoachProfileForUser(user);
     if (!coachDoc) {
       throw new ForbiddenError("COACH_PROFILE_NOT_FOUND", "Coach profile not found for this user");
     }

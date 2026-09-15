@@ -31,10 +31,92 @@ import { runInTransaction } from "../utils/transaction";
 import { addDays, format, startOfWeek } from "date-fns";
 import { formatInTimeZone, fromZonedTime, toZonedTime } from "date-fns-tz";
 import { CAIRO_TZ, cairoDateKey, isSameCairoDay } from "../utils/timezone";
+import { escapeRegex } from "../utils/escapeRegex";
 
 export class CoachService {
   static async getCoachDocumentByUserId(userId: Types.ObjectId): Promise<ICoach | null> {
     return Coach.findOne({ userId });
+  }
+
+  /**
+   * Resolves, links, or auto-provisions a Coach profile document for a user with coach role.
+   * Priority:
+   * 1. Direct match by userId
+   * 2. Unlinked Coach match by phoneNumber
+   * 3. Unlinked Coach match by coachName (case-insensitive)
+   * 4. Auto-provision new Coach document
+   */
+  static async resolveCoachProfileForUser(user: {
+    _id: any;
+    name?: string;
+    phoneNumber?: string;
+    role?: string;
+  }): Promise<ICoach> {
+    const userId = new Types.ObjectId(user._id);
+
+    // 1. Direct match by userId
+    let coachDoc = await Coach.findOne({ userId });
+    if (coachDoc) {
+      return coachDoc;
+    }
+
+    // 2. Fallback: match by phoneNumber for unlinked Coach
+    if (user.phoneNumber) {
+      const cleanPhone = user.phoneNumber.replace(/\s/g, "");
+      const coachByPhone = await Coach.findOne({
+        phoneNumber: cleanPhone,
+        $or: [{ userId: { $exists: false } }, { userId: null }],
+      });
+      if (coachByPhone) {
+        coachByPhone.userId = userId;
+        try {
+          await coachByPhone.save();
+          return coachByPhone;
+        } catch {
+          const existing = await Coach.findOne({ userId });
+          if (existing) return existing;
+        }
+      }
+    }
+
+    // 3. Fallback: match by coachName (case-insensitive) for unlinked Coach
+    if (user.name) {
+      const trimmedName = user.name.trim();
+      if (trimmedName) {
+        const coachByName = await Coach.findOne({
+          coachName: { $regex: new RegExp(`^${escapeRegex(trimmedName)}$`, "i") },
+          $or: [{ userId: { $exists: false } }, { userId: null }],
+        });
+        if (coachByName) {
+          coachByName.userId = userId;
+          if (user.phoneNumber && (!coachByName.phoneNumber || coachByName.phoneNumber === "01111111111")) {
+            coachByName.phoneNumber = user.phoneNumber.replace(/\s/g, "");
+          }
+          try {
+            await coachByName.save();
+            return coachByName;
+          } catch {
+            const existing = await Coach.findOne({ userId });
+            if (existing) return existing;
+          }
+        }
+      }
+    }
+
+    // 4. Auto-provision: create new Coach document for authenticated coach user
+    try {
+      const newCoach = new Coach({
+        coachName: user.name || "Coach",
+        phoneNumber: user.phoneNumber ? user.phoneNumber.replace(/\s/g, "") : "01111111111",
+        userId,
+      });
+      await newCoach.save();
+      return newCoach;
+    } catch (err: any) {
+      const existing = await Coach.findOne({ userId });
+      if (existing) return existing;
+      throw err;
+    }
   }
 
   private static summarizeActivePt(

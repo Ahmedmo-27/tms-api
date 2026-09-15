@@ -37,7 +37,7 @@ export const coachLogin = asyncHandler(
 
     let hasPtSessions = false;
     let hasScheduledClasses = false;
-    const coachDoc = await Coach.findOne({ userId: user._id });
+    const coachDoc = await CoachService.resolveCoachProfileForUser(user);
     if (coachDoc) {
       const ptPackagesCount = await Package.countDocuments({ coachId: coachDoc._id as Types.ObjectId });
       hasPtSessions = ptPackagesCount > 0;
