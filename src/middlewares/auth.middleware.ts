@@ -24,7 +24,7 @@ export interface AuthResponse extends Response {
   deviceType: "web" | "mobile";
 }
 
-type UserRole = "member" | "user" | "admin" | "management" | "branch_admin" | "coach";
+type UserRole = "member" | "user" | "admin" | "management" | "branch_admin" | "coach" | "managing_coach";
 
 const ADMIN_ROLE_ALIASES: UserRole[] = ["admin", "management", "branch_admin"];
 

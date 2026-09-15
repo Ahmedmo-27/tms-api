@@ -579,7 +579,7 @@ export class CoachService {
     coachDocId: Types.ObjectId,
   ): Promise<CoachMeDto> {
     const user = await User.findById(coachUserId).select(
-      "name email phoneNumber locationId",
+      "name email phoneNumber locationId role",
     );
     if (!user) {
       throw new NotFoundError("USER_NOT_FOUND", "Coach user not found");
@@ -604,6 +604,7 @@ export class CoachService {
       name: user.name ?? "",
       email: user.email ?? "",
       phoneNumber: user.phoneNumber ?? "",
+      role: user.role,
       branchName,
       branchLocation,
       hasPtSessions: ptCount > 0,

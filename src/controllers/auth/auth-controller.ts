@@ -199,7 +199,7 @@ export const loginUser = asyncHandler(
       }
     }
 
-    if (user.role === "coach") {
+    if (user.role === "coach" || user.role === "managing_coach") {
       let hasPtSessions = false;
       let hasScheduledClasses = false;
       const coachDoc = await Coach.findOne({ userId: user._id });

@@ -115,6 +115,7 @@ export interface CoachMeDto {
   name: string;
   email: string;
   phoneNumber: string;
+  role?: string;
   branchName: string | null;
   branchLocation: string | null;
   hasPtSessions: boolean;
