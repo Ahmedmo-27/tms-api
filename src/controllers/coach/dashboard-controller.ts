@@ -42,13 +42,17 @@ export const getClients = asyncHandler(async (req: Request, res: Response) => {
  */
 export const getMemberPackages = asyncHandler(async (req: Request, res: Response) => {
   const coachReq = req as CoachAuthRequest;
-  const packages = await CoachService.getMemberPackages(coachReq.coachDocId, req.params.memberId);
-  const user = await User.findById(req.params.memberId).select("name phoneNumber");
+  const { memberId } = req.params;
+  if (!memberId || !Types.ObjectId.isValid(memberId)) {
+    throw new BadRequestError("INVALID_ID", "Invalid member ID format");
+  }
+  const packages = await CoachService.getMemberPackages(coachReq.coachDocId, memberId);
+  const user = await User.findById(memberId).select("name phoneNumber");
   const message = packages.length > 0 ? "Packages found" : "No packages found";
   return new SuccessResponse(message, {
     packages,
     member: {
-      memberId: req.params.memberId,
+      memberId,
       name: user?.name ?? "",
       phoneNumber: user?.phoneNumber ?? "",
     },
@@ -149,9 +153,13 @@ export const markNotificationsRead = asyncHandler(async (req: Request, res: Resp
 
 export const getDeductionHistory = asyncHandler(async (req: Request, res: Response) => {
   const coachReq = req as CoachAuthRequest;
+  const { memberId } = req.params;
+  if (!memberId || !Types.ObjectId.isValid(memberId)) {
+    throw new BadRequestError("INVALID_ID", "Invalid member ID format");
+  }
   const deductions = await CoachService.getDeductionHistory(
     coachReq.coachDocId,
-    req.params.memberId,
+    memberId,
   );
   return new SuccessResponse("Deductions fetched", { deductions }).send(res);
 });
