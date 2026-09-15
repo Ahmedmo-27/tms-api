@@ -28,7 +28,7 @@ export const sendMail = asyncHandler(async (req: Request, res: Response) => {
       .map((m: any) => m.uid?.email)
       .filter((email) => email);
 
-    const coaches = await User.find({ role: "coach" }).select("email");
+    const coaches = await User.find({ role: { $in: ["coach", "managing_coach"] } }).select("email");
     const coachEmails = coaches.map((c: any) => c.email).filter((e: string) => e);
 
     recipients = [...new Set([...memberEmails, ...coachEmails])];
@@ -41,7 +41,7 @@ export const sendMail = asyncHandler(async (req: Request, res: Response) => {
       .map((m: any) => m.uid?.email)
       .filter((email) => email);
   } else if (mode === "coaches") {
-    const coaches = await User.find({ role: "coach" }).select("email");
+    const coaches = await User.find({ role: { $in: ["coach", "managing_coach"] } }).select("email");
     recipients = coaches.map((c: any) => c.email).filter((e: string) => e);
   } else if (mode === "manual") {
     recipients = Array.isArray(to) ? to : [];

@@ -14,7 +14,7 @@ import {
 const router = Router();
 
 router.post("/auth/login", loginLimiter, coachLogin);
-router.get("/auth/verifyToken", authenticateUser, authorizeUser(["coach"]), verifyToken);
+router.get("/auth/verifyToken", authenticateUser, authorizeUser(["coach", "managing_coach"]), verifyToken);
 router.post("/auth/change-password", coachGuard, changeCoachPassword);
 
 router.get("/me", coachGuard, getCoachMe);

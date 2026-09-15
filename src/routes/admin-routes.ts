@@ -696,21 +696,21 @@ adminRoutes.delete(
 adminRoutes.post(
   "/mail/send",
   authenticateUser,
-  authorizeUser(["management"]),
+  authorizeUser(["management", "managing_coach"]),
   sendMail
 );
 
 adminRoutes.get(
   "/mail/logs",
   authenticateUser,
-  authorizeUser(["management"]),
+  authorizeUser(["management", "managing_coach"]),
   getLogs
 );
 
 adminRoutes.get(
   "/mail/inbox",
   authenticateUser,
-  authorizeUser(["management"]),
+  authorizeUser(["management", "managing_coach"]),
   getInbox
 );
 

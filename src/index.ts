@@ -67,7 +67,7 @@ const startServer = async () => {
           "tokens.token": token,
         });
 
-        if (!user || user.role !== "coach") {
+        if (!user || (user.role !== "coach" && user.role !== "managing_coach")) {
           socket.emit("error", { message: "Unauthorized" });
           return;
         }

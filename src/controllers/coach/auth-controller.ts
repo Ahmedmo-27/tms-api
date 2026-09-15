@@ -25,7 +25,7 @@ export const coachLogin = asyncHandler(
 
     const user = await User.findByCredentials(cleanPhoneNumber, password);
 
-    if (user.role !== "coach") {
+    if (user.role !== "coach" && user.role !== "managing_coach") {
       throw new ForbiddenError("INSUFFICIENT_PERMISSIONS", "Access restricted to coach accounts");
     }
 
