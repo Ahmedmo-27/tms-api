@@ -257,10 +257,8 @@ export const createUser = asyncHandler(
         userData.locationId = new Types.ObjectId(locationId);
       }
 
-      if (role === "mailer") {
-        if (tmsEmail) userData.tmsEmail = String(tmsEmail).trim().toLowerCase();
-        if (sendAsName) userData.sendAsName = String(sendAsName).trim();
-      }
+      if (tmsEmail) userData.tmsEmail = String(tmsEmail).trim().toLowerCase();
+      if (sendAsName) userData.sendAsName = String(sendAsName).trim();
 
       const user = new User(userData);
       await user.save(session ? { session } : {});
