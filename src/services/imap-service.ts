@@ -3,6 +3,8 @@ import { simpleParser } from "mailparser";
 import ReceivedEmail from "../models/receivedEmail";
 import User from "../models/user";
 import logger from "../config/logger";
+import { getIO } from "../config/socket";
+import { NotificationsService } from "./notifications-service";
 
 const extractRecipientEmails = (parsed: any): string[] => {
   const recipients = new Set<string>();
@@ -32,6 +34,12 @@ const extractRecipientEmails = (parsed: any): string[] => {
       addAddress(parsed.to.text);
     }
   }
+
+  const fwdTo = parsed.headers?.get("x-forwarded-to");
+  if (typeof fwdTo === "string") addAddress(fwdTo);
+
+  const envTo = parsed.headers?.get("x-envelope-to");
+  if (typeof envTo === "string") addAddress(envTo);
 
   const deliveredTo = parsed.headers?.get("delivered-to");
   if (typeof deliveredTo === "string") addAddress(deliveredTo);
@@ -81,6 +89,25 @@ const findRecipientUser = async (emails: string[]) => {
   return user;
 };
 
+const findSpamBoxName = (boxes: any, prefix = ""): string | null => {
+  if (!boxes || typeof boxes !== "object") return null;
+  for (const [name, box] of Object.entries<any>(boxes)) {
+    const fullName = prefix ? `${prefix}${box.delimiter || "/"}${name}` : name;
+    const attribs = (box.attribs || []).map((a: string) => String(a).toLowerCase());
+    if (attribs.includes("\\spam") || attribs.includes("\\junk")) {
+      return fullName;
+    }
+    if (/^(spam|junk)$/i.test(name)) {
+      return fullName;
+    }
+    if (box.children) {
+      const childMatch = findSpamBoxName(box.children, fullName);
+      if (childMatch) return childMatch;
+    }
+  }
+  return null;
+};
+
 export const syncEmails = async () => {
   if (!process.env.MAIL_USER || !process.env.MAIL_APP_PASSWORD) {
     logger.warn("Skipping IMAP sync: MAIL_USER or MAIL_APP_PASSWORD not set");
@@ -101,60 +128,143 @@ export const syncEmails = async () => {
 
   try {
     const connection = await imaps.connect(config);
-    await connection.openBox("INBOX");
 
-    // Fetch emails from the last 30 days
-    const delay = 30 * 24 * 3600 * 1000;
-    const pastDate = new Date();
-    pastDate.setTime(Date.now() - delay);
-    const searchCriteria = [["SINCE", pastDate.toISOString()]];
-    const fetchOptions = {
-      bodies: [""], // Fetch full body
-      struct: true,
-    };
+    // Discover mailboxes (INBOX + Spam/Junk fallback)
+    let spamBoxName: string | null = null;
+    try {
+      const boxes = await connection.getBoxes();
+      spamBoxName = findSpamBoxName(boxes);
+    } catch (boxErr) {
+      logger.debug("Failed to list mailboxes from IMAP, using standard fallback", boxErr);
+    }
 
-    const messages = await connection.search(searchCriteria, fetchOptions);
+    const mailboxesToScan: string[] = ["INBOX"];
+    const fallbackSpam = spamBoxName || "[Gmail]/Spam";
+    if (!mailboxesToScan.includes(fallbackSpam)) {
+      mailboxesToScan.push(fallbackSpam);
+    }
 
-    for (const item of messages) {
-      const all = item.parts.find((part) => part.which === "");
-      if (!all || !all.body) continue;
+    let totalProcessed = 0;
 
-      const parsed = await simpleParser(all.body);
-      const messageId = parsed.messageId || `${item.attributes.uid}`;
+    for (const boxName of mailboxesToScan) {
+      try {
+        await connection.openBox(boxName);
 
-      // Check if email already exists
-      const existing = await ReceivedEmail.findOne({ messageId });
-      if (!existing) {
-        const recipientEmails = extractRecipientEmails(parsed);
-        const recipientUser = await findRecipientUser(recipientEmails);
-        const primaryRecipient = recipientEmails[0] || recipientUser?.tmsEmail || "";
-        let toText = primaryRecipient;
-        if (parsed.to) {
-          if (Array.isArray(parsed.to)) {
-            toText = parsed.to.map((t: any) => t?.text || "").filter(Boolean).join(", ") || primaryRecipient;
-          } else if (typeof (parsed.to as any).text === "string") {
-            toText = (parsed.to as any).text;
+        // Fetch emails from the last 30 days
+        const delay = 30 * 24 * 3600 * 1000;
+        const pastDate = new Date();
+        pastDate.setTime(Date.now() - delay);
+        const searchCriteria = [["SINCE", pastDate.toISOString()]];
+        const fetchOptions = {
+          bodies: [""], // Fetch full body
+          struct: true,
+        };
+
+        const messages = await connection.search(searchCriteria, fetchOptions);
+        totalProcessed += messages.length;
+
+        for (const item of messages) {
+          const all = item.parts.find((part) => part.which === "");
+          if (!all || !all.body) continue;
+
+          const parsed = await simpleParser(all.body);
+          const messageId = parsed.messageId || `${boxName}-${item.attributes.uid}`;
+
+          // Check if email already exists
+          const existing = await ReceivedEmail.findOne({ messageId });
+          if (!existing) {
+            const recipientEmails = extractRecipientEmails(parsed);
+            const recipientUser = await findRecipientUser(recipientEmails);
+            const primaryRecipient = recipientEmails[0] || recipientUser?.tmsEmail || "";
+            let toText = primaryRecipient;
+            if (parsed.to) {
+              if (Array.isArray(parsed.to)) {
+                toText = parsed.to.map((t: any) => t?.text || "").filter(Boolean).join(", ") || primaryRecipient;
+              } else if (typeof (parsed.to as any).text === "string") {
+                toText = (parsed.to as any).text;
+              }
+            }
+
+            const newEmail = new ReceivedEmail({
+              from: parsed.from?.text || "Unknown",
+              to: toText,
+              recipientEmail: primaryRecipient ? primaryRecipient.toLowerCase() : undefined,
+              recipientUser: recipientUser ? recipientUser._id : undefined,
+              subject: parsed.subject || "No Subject",
+              text: parsed.text || "",
+              html: parsed.html || parsed.textAsHtml || "",
+              date: parsed.date || new Date(),
+              messageId,
+              isRead: false,
+            });
+            await newEmail.save();
+
+            // Send notifications for newly received email
+            try {
+              const fromSender = parsed.from?.text || "Unknown Sender";
+              const emailSubject = parsed.subject || "No Subject";
+              const snippet = (parsed.text || "").replace(/\s+/g, " ").trim().slice(0, 150);
+
+              // 1. Determine target users for push notification
+              let targetUserIds: string[] = [];
+              if (recipientUser?._id) {
+                targetUserIds = [String(recipientUser._id)];
+              } else {
+                const staff = await User.find({
+                  role: { $in: ["management", "admin", "mailer"] },
+                }).select("_id");
+                targetUserIds = staff.map((s) => String(s._id));
+              }
+
+              if (targetUserIds.length > 0) {
+                NotificationsService.notifyUsers(
+                  targetUserIds,
+                  `New Email: ${emailSubject}`,
+                  `From: ${fromSender}`,
+                  {
+                    type: "NEW_EMAIL",
+                    emailId: String(newEmail._id),
+                    from: fromSender,
+                    subject: emailSubject,
+                  }
+                ).catch((notifErr) =>
+                  logger.warn("Failed to send push notification for new email", notifErr)
+                );
+              }
+
+              // 2. Real-time Socket.IO notification
+              const io = getIO();
+              if (io) {
+                const socketPayload = {
+                  id: String(newEmail._id),
+                  _id: String(newEmail._id),
+                  from: newEmail.from,
+                  to: newEmail.to,
+                  subject: newEmail.subject,
+                  snippet,
+                  date: newEmail.date.toISOString(),
+                  recipientEmail: newEmail.recipientEmail,
+                  recipientUser: recipientUser ? String(recipientUser._id) : null,
+                };
+
+                if (recipientUser?._id) {
+                  io.to(`user:${String(recipientUser._id)}`).emit("mail:newEmail", socketPayload);
+                } else {
+                  io.to("mail:staff").emit("mail:newEmail", socketPayload);
+                }
+              }
+            } catch (notifyError) {
+              logger.warn("Error notifying users of new email:", notifyError);
+            }
           }
         }
-
-        const newEmail = new ReceivedEmail({
-          from: parsed.from?.text || "Unknown",
-          to: toText,
-          recipientEmail: primaryRecipient ? primaryRecipient.toLowerCase() : undefined,
-          recipientUser: recipientUser ? recipientUser._id : undefined,
-          subject: parsed.subject || "No Subject",
-          text: parsed.text || "",
-          html: parsed.html || parsed.textAsHtml || "",
-          date: parsed.date || new Date(),
-          messageId,
-          isRead: false,
-        });
-        await newEmail.save();
+      } catch (boxError: any) {
+        logger.warn(`Could not sync mailbox "${boxName}": ${boxError?.message || boxError}`);
       }
     }
 
     connection.end();
-    logger.info(`IMAP Email sync completed. Processed ${messages.length} recent messages.`);
+    logger.info(`IMAP Email sync completed. Processed ${totalProcessed} recent messages across scanned mailboxes.`);
   } catch (error) {
     logger.error("Failed to sync IMAP emails:", error);
   }
