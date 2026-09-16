@@ -31,10 +31,92 @@ import { runInTransaction } from "../utils/transaction";
 import { addDays, format, startOfWeek } from "date-fns";
 import { formatInTimeZone, fromZonedTime, toZonedTime } from "date-fns-tz";
 import { CAIRO_TZ, cairoDateKey, isSameCairoDay } from "../utils/timezone";
+import { escapeRegex } from "../utils/escapeRegex";
 
 export class CoachService {
   static async getCoachDocumentByUserId(userId: Types.ObjectId): Promise<ICoach | null> {
     return Coach.findOne({ userId });
+  }
+
+  /**
+   * Resolves, links, or auto-provisions a Coach profile document for a user with coach role.
+   * Priority:
+   * 1. Direct match by userId
+   * 2. Unlinked Coach match by phoneNumber
+   * 3. Unlinked Coach match by coachName (case-insensitive)
+   * 4. Auto-provision new Coach document
+   */
+  static async resolveCoachProfileForUser(user: {
+    _id: any;
+    name?: string;
+    phoneNumber?: string;
+    role?: string;
+  }): Promise<ICoach> {
+    const userId = new Types.ObjectId(user._id);
+
+    // 1. Direct match by userId
+    let coachDoc = await Coach.findOne({ userId });
+    if (coachDoc) {
+      return coachDoc;
+    }
+
+    // 2. Fallback: match by phoneNumber for unlinked Coach
+    if (user.phoneNumber) {
+      const cleanPhone = user.phoneNumber.replace(/\s/g, "");
+      const coachByPhone = await Coach.findOne({
+        phoneNumber: cleanPhone,
+        $or: [{ userId: { $exists: false } }, { userId: null }],
+      });
+      if (coachByPhone) {
+        coachByPhone.userId = userId;
+        try {
+          await coachByPhone.save();
+          return coachByPhone;
+        } catch {
+          const existing = await Coach.findOne({ userId });
+          if (existing) return existing;
+        }
+      }
+    }
+
+    // 3. Fallback: match by coachName (case-insensitive) for unlinked Coach
+    if (user.name) {
+      const trimmedName = user.name.trim();
+      if (trimmedName) {
+        const coachByName = await Coach.findOne({
+          coachName: { $regex: new RegExp(`^${escapeRegex(trimmedName)}$`, "i") },
+          $or: [{ userId: { $exists: false } }, { userId: null }],
+        });
+        if (coachByName) {
+          coachByName.userId = userId;
+          if (user.phoneNumber && (!coachByName.phoneNumber || coachByName.phoneNumber === "01111111111")) {
+            coachByName.phoneNumber = user.phoneNumber.replace(/\s/g, "");
+          }
+          try {
+            await coachByName.save();
+            return coachByName;
+          } catch {
+            const existing = await Coach.findOne({ userId });
+            if (existing) return existing;
+          }
+        }
+      }
+    }
+
+    // 4. Auto-provision: create new Coach document for authenticated coach user
+    try {
+      const newCoach = new Coach({
+        coachName: user.name || "Coach",
+        phoneNumber: user.phoneNumber ? user.phoneNumber.replace(/\s/g, "") : "01111111111",
+        userId,
+      });
+      await newCoach.save();
+      return newCoach;
+    } catch (err: any) {
+      const existing = await Coach.findOne({ userId });
+      if (existing) return existing;
+      throw err;
+    }
   }
 
   private static summarizeActivePt(
@@ -521,14 +603,100 @@ export class CoachService {
         category:    cls.category,
         startTime:   formatInTimeZone(sc.startTime, "Africa/Cairo", "HH:mm"),
         endTime:     formatInTimeZone(sc.endTime,   "Africa/Cairo", "HH:mm"),
+        startTimeIso: sc.startTime.toISOString(),
+        endTimeIso:   sc.endTime.toISOString(),
         capacity:    sc.availableSlots + sc.bookedMembers.length,
         bookedCount: sc.bookedMembers.length,
         location:    this.locationLabel(sc.locationId),
         scans,
+        attendanceConfirmation: sc.attendanceConfirmation?.confirmed
+          ? {
+              confirmed: sc.attendanceConfirmation.confirmed,
+              confirmedCount: sc.attendanceConfirmation.confirmedCount,
+              hasMissingPlace: sc.attendanceConfirmation.hasMissingPlace,
+              confirmedAt: sc.attendanceConfirmation.confirmedAt
+                ? sc.attendanceConfirmation.confirmedAt.toISOString()
+                : undefined,
+              confirmedBy: sc.attendanceConfirmation.confirmedBy
+                ? sc.attendanceConfirmation.confirmedBy.toString()
+                : undefined,
+              notes: sc.attendanceConfirmation.notes ?? "",
+            }
+          : null,
       });
     }
 
     return result;
+  }
+
+  /**
+   * POST /api/coach/scans/:scid/confirm-attendance
+   * Confirms attendance headcount for a scheduled class halfway through the session.
+   */
+  static async confirmAttendance(
+    coachDocId: Types.ObjectId,
+    scid: string,
+    data: { confirmedCount: number; hasMissingPlace?: boolean; notes?: string },
+    io?: any,
+    confirmedByUserId?: Types.ObjectId
+  ): Promise<any> {
+    if (!scid || !Types.ObjectId.isValid(scid)) {
+      throw new NotFoundError("CLASS_NOT_FOUND", "Scheduled class not found", { scid });
+    }
+
+    const scheduledClass = await ScheduledClass.findById(scid);
+    if (!scheduledClass) {
+      throw new NotFoundError("CLASS_NOT_FOUND", "Scheduled class not found", { scid });
+    }
+
+    const isAssigned = (scheduledClass.coachId || []).some(
+      (id) => id.toString() === coachDocId.toString()
+    );
+    if (!isAssigned) {
+      throw new ForbiddenError(
+        "COACH_NOT_ASSIGNED",
+        "You are not assigned to this scheduled class"
+      );
+    }
+
+    // Halfway check
+    const startMs = scheduledClass.startTime.getTime();
+    const endMs = scheduledClass.endTime.getTime();
+    const halfwayMs = startMs + (endMs - startMs) / 2;
+
+    if (Date.now() < halfwayMs) {
+      throw new BadRequestError(
+        "SESSION_NOT_HALFWAY",
+        "Attendance can only be confirmed once the session reaches its halfway point"
+      );
+    }
+
+    const count = Math.max(0, Math.floor(Number(data.confirmedCount) || 0));
+    const hasMissingPlace =
+      typeof data.hasMissingPlace === "boolean"
+        ? data.hasMissingPlace
+        : count < scheduledClass.bookedMembers.length;
+
+    scheduledClass.attendanceConfirmation = {
+      confirmed: true,
+      confirmedCount: count,
+      hasMissingPlace,
+      confirmedAt: new Date(),
+      confirmedBy: confirmedByUserId,
+      notes: data.notes?.trim() ?? "",
+    };
+
+    await scheduledClass.save();
+
+    if (io) {
+      io.emit("ATTENDANCE-CONFIRMED", {
+        scheduledClassId: scid,
+        attendanceConfirmation: scheduledClass.attendanceConfirmation,
+      });
+      io.emit("SUCCESS-SCAN");
+    }
+
+    return scheduledClass;
   }
 
   /**

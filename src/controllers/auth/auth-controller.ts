@@ -22,6 +22,7 @@ import { SubscriptionsService } from "../../services/subscriptions-service";
 import { runInTransaction } from "../../utils/transaction";
 import { normalizePhoneNumber } from "../../utils/phone";
 import { authCookieOptions } from "../../utils/authCookies";
+import { CoachService } from "../../services/coach-service";
 
 export function assertPasswordStrength(password: unknown): string {
   if (typeof password !== "string") {
@@ -202,7 +203,7 @@ export const loginUser = asyncHandler(
     if (user.role === "coach" || user.role === "managing_coach") {
       let hasPtSessions = false;
       let hasScheduledClasses = false;
-      const coachDoc = await Coach.findOne({ userId: user._id });
+      const coachDoc = await CoachService.resolveCoachProfileForUser(user);
       if (coachDoc) {
         const ptPackagesCount = await Package.countDocuments({ coachId: coachDoc._id as Types.ObjectId });
         hasPtSessions = ptPackagesCount > 0;

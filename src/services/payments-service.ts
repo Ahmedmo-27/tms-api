@@ -60,16 +60,27 @@ export class PaymentsService {
     dateString?: string,
     month?: number,
     year?: number,
-    locationId?: string | null
+    locationId?: string | null,
+    startDate?: string,
+    endDate?: string,
   ): Promise<PaymentListEntry[]> {
     const paymentQuery = buildCairoDateRangeQuery(
       "paymentTime",
       dateString,
       month,
-      year
+      year,
+      startDate,
+      endDate
     );
     const refundQuery = {
-      ...buildCairoDateRangeQuery("createdAt", dateString, month, year),
+      ...buildCairoDateRangeQuery(
+        "createdAt",
+        dateString,
+        month,
+        year,
+        startDate,
+        endDate
+      ),
       // Include ALL refunds (both standalone and linked to a payment) so each
       // refund appears as its own negative row alongside the original purchase.
     };
@@ -94,11 +105,13 @@ export class PaymentsService {
           path: "pkgId",
           select: "name category renewalPeriod locationId",
           populate: { path: "locationId" },
-        }),
+        })
+        .lean(),
       Refund.find(refundQuery)
         .populate("memberId", "name phoneNumber email")
         .populate("locationId")
-        .sort({ createdAt: -1 }),
+        .sort({ createdAt: -1 })
+        .lean(),
     ]);
 
     const purposeLabels: Record<string, string> = {
@@ -110,7 +123,7 @@ export class PaymentsService {
       OTHER: "Other",
     };
 
-    function buildPaymentLabel(p: IPayment): string {
+    function buildPaymentLabel(p: IPayment | any): string {
       const openGymPurpose = resolveOpenGymPaymentPurposeLabel(p);
       let itemName: string =
         openGymPurpose ?? purposeLabels[p.purpose] ?? p.purpose;
@@ -121,22 +134,25 @@ export class PaymentsService {
         const sc = p.scid as unknown as { cid?: { title?: string } };
         if (sc.cid?.title) itemName = sc.cid.title;
       }
-      const dateStr = p.paymentTime.toLocaleDateString("en-GB", {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-      });
+      const paymentDate = p.paymentTime instanceof Date ? p.paymentTime : new Date(p.paymentTime);
+      const dateStr = !isNaN(paymentDate.getTime())
+        ? paymentDate.toLocaleDateString("en-GB", {
+            day: "2-digit",
+            month: "short",
+            year: "numeric",
+          })
+        : "";
       return `${purposeLabels[p.purpose] ?? p.purpose}: ${itemName} · EGP ${p.amount} · ${dateStr}`;
     }
 
     // Build a quick lookup map from the already-fetched payments (same date window)
-    const paymentMap = new Map<string, IPayment>(
-      payments.map((p) => [(p._id as Types.ObjectId).toString(), p])
+    const paymentMap = new Map<string, any>(
+      payments.map((p) => [(p._id as Types.ObjectId | string).toString(), p])
     );
 
     // First pass: stamp labels for refunds whose linked payment is in the current window
     const missingPaymentIds: Types.ObjectId[] = [];
-    const refundEntries = refunds.map((refund) => {
+    const refundEntries = refunds.map((refund: any) => {
       const entry = mapRefundToPaymentEntry(refund);
       if (refund.memberId) {
         entry.uid = refund.memberId as Types.ObjectId;
@@ -165,10 +181,11 @@ export class PaymentsService {
             { path: "locationId" },
           ],
         })
-        .populate("pkgId");
+        .populate("pkgId")
+        .lean();
 
-      const extraMap = new Map<string, IPayment>(
-        extraPayments.map((p) => [(p._id as Types.ObjectId).toString(), p])
+      const extraMap = new Map<string, any>(
+        extraPayments.map((p) => [(p._id as Types.ObjectId | string).toString(), p])
       );
 
       for (const entry of refundEntries) {
@@ -181,7 +198,7 @@ export class PaymentsService {
       }
     }
 
-    return [...payments, ...refundEntries].sort(
+    return ([...payments, ...refundEntries] as PaymentListEntry[]).sort(
       (a, b) =>
         new Date(b.paymentTime).getTime() - new Date(a.paymentTime).getTime()
     );

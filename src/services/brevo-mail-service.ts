@@ -53,14 +53,35 @@ const formatBrevoError = (error: unknown): string => {
   return "Failed to send email via Brevo";
 };
 
+const resolveSenderConfig = (
+  customSender?: { email: string; name: string },
+  customReplyTo?: { email: string; name?: string }
+) => {
+  if (customSender && customSender.email) {
+    return {
+      sender: {
+        email: customSender.email,
+        name: (customSender.name || customSender.email).replace(/^"|"$/g, ""),
+      },
+      replyTo: customReplyTo || {
+        email: customSender.email,
+        name: customSender.name,
+      },
+    };
+  }
+  return getSenderConfig();
+};
+
 export const sendTransactionalEmail = async (params: {
   to: string;
   subject: string;
   htmlContent: string;
   attachment?: MailAttachment;
+  sender?: { email: string; name: string };
+  replyTo?: { email: string; name?: string };
 }) => {
   const brevo = getBrevoClient();
-  const { sender, replyTo } = getSenderConfig();
+  const { sender, replyTo } = resolveSenderConfig(params.sender, params.replyTo);
 
   try {
     await brevo.transactionalEmails.sendTransacEmail({
@@ -84,13 +105,15 @@ export const sendTransactionalEmailBatch = async (params: {
   attachment?: MailAttachment;
   batchSize?: number;
   delayMs?: number;
+  sender?: { email: string; name: string };
+  replyTo?: { email: string; name?: string };
 }) => {
   const { recipients, subject, htmlContent, attachment } = params;
   const BATCH_SIZE = params.batchSize ?? 50;
   const DELAY_MS = params.delayMs ?? 1000;
 
   const brevo = getBrevoClient();
-  const { sender, replyTo } = getSenderConfig();
+  const { sender, replyTo } = resolveSenderConfig(params.sender, params.replyTo);
   const attachmentPayload = buildAttachment(attachment);
 
   const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -107,6 +130,7 @@ export const sendTransactionalEmailBatch = async (params: {
         attachment: attachmentPayload,
         messageVersions: batch.map((email) => ({
           to: [{ email }],
+          replyTo,
         })),
       });
     } catch (error) {

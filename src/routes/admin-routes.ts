@@ -10,6 +10,7 @@ import {
   cancelClass,
   editClass,
   getDailyAttendnace,
+  confirmClassAttendance,
 } from "../controllers/admin/scheduler-controller";
 import {
   addClass,
@@ -69,7 +70,13 @@ import {
 } from "../controllers/admin/coach-controller";
 import { addMember, getMember } from "../controllers/admin/member-controller";
 import { getAttendanceHistory } from "../controllers/admin/attendance-controller";
-import { getPendingMembers } from "../controllers/admin/user-contoller";
+import {
+  getPendingMembers,
+  listUsers,
+  createUser,
+  updateUser,
+  deleteUser,
+} from "../controllers/admin/user-contoller";
 import { sendCustomNotification } from "../controllers/admin/notifications-controller";
 import {
   addLocation,
@@ -107,7 +114,7 @@ import {
   searchMembers,
   getMemberRecentPayments,
 } from "../controllers/admin/refunds-controller";
-import { sendMail, getLogs, getInbox } from "../controllers/admin/mail-controller";
+import { sendMail, getLogs, getInbox, getMailProfile, triggerSync } from "../controllers/admin/mail-controller";
 import {
   getSheetDay,
   getSheetMemberEligibility,
@@ -135,6 +142,32 @@ adminRoutes.get(
   authenticateUser,
   authorizeUser(["management", "branch_admin"]),
   getPendingMembers
+);
+
+// User & Account Management Routes (Management Only)
+adminRoutes.get(
+  "/users",
+  authenticateUser,
+  authorizeUser(["management"]),
+  listUsers
+);
+adminRoutes.post(
+  "/users",
+  authenticateUser,
+  authorizeUser(["management"]),
+  createUser
+);
+adminRoutes.patch(
+  "/users/:id",
+  authenticateUser,
+  authorizeUser(["management"]),
+  updateUser
+);
+adminRoutes.delete(
+  "/users/:id",
+  authenticateUser,
+  authorizeUser(["management"]),
+  deleteUser
 );
 
 // Scheduling Routes
@@ -167,6 +200,12 @@ adminRoutes.patch(
   authenticateUser,
   authorizeUser(["management", "branch_admin"]),
   editClass
+);
+adminRoutes.post(
+  "/schedule/:scid/confirm-attendance",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  confirmClassAttendance
 );
 adminRoutes.get(
   "/daily-attendance",
@@ -696,22 +735,36 @@ adminRoutes.delete(
 adminRoutes.post(
   "/mail/send",
   authenticateUser,
-  authorizeUser(["management", "managing_coach"]),
+  authorizeUser(["management", "managing_coach", "mailer"]),
   sendMail
 );
 
 adminRoutes.get(
   "/mail/logs",
   authenticateUser,
-  authorizeUser(["management", "managing_coach"]),
+  authorizeUser(["management", "managing_coach", "mailer"]),
   getLogs
 );
 
 adminRoutes.get(
   "/mail/inbox",
   authenticateUser,
-  authorizeUser(["management", "managing_coach"]),
+  authorizeUser(["management", "managing_coach", "mailer"]),
   getInbox
+);
+
+adminRoutes.get(
+  "/mail/profile",
+  authenticateUser,
+  authorizeUser(["management", "managing_coach", "mailer"]),
+  getMailProfile
+);
+
+adminRoutes.post(
+  "/mail/sync",
+  authenticateUser,
+  authorizeUser(["management", "managing_coach", "mailer"]),
+  triggerSync
 );
 
 // Daily Sheet Routes

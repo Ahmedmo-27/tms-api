@@ -22,7 +22,9 @@ export interface IUser extends Document {
   tokens: Itoken[];
   resetCode: string;
   fcmTokens: string[];
-  hasRamadanPackage?: boolean; // Virtual field to check if user has an active Ramadan package
+  hasRamadanPackage?: boolean;
+  tmsEmail?: string;
+  sendAsName?: string;
   createdAt: Date;
 }
 
@@ -94,7 +96,7 @@ const UserSchema: Schema<IUser, UserModel, IUserMethods> = new Schema({
     type: String,
     required: true,
     enum: {
-      values: ["member", "user", "admin", "management", "branch_admin", "coach", "managing_coach"],
+      values: ["member", "user", "admin", "management", "branch_admin", "coach", "managing_coach", "mailer"],
       message: "{VALUE} is not a valid role",
     },
   },
@@ -116,6 +118,16 @@ const UserSchema: Schema<IUser, UserModel, IUserMethods> = new Schema({
   fcmTokens: {
     type: [String],
     default: [],
+  },
+  tmsEmail: {
+    type: String,
+    trim: true,
+    lowercase: true,
+    sparse: true,
+  },
+  sendAsName: {
+    type: String,
+    trim: true,
   },
   createdAt: {
     type: Date,

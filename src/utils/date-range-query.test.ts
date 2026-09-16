@@ -7,12 +7,16 @@ function range(
   dateString?: string,
   month?: number,
   year?: number,
+  startDate?: string,
+  endDate?: string,
 ): Range | undefined {
   const query = buildCairoDateRangeQuery(
     "paymentTime",
     dateString,
     month,
     year,
+    startDate,
+    endDate,
   );
   return query.paymentTime as Range | undefined;
 }
@@ -110,3 +114,51 @@ describe("buildCairoDateRangeQuery month windows", () => {
     );
   });
 });
+
+describe("buildCairoDateRangeQuery custom range windows", () => {
+  it("spans from start date Cairo midnight to end date Cairo end-of-day", () => {
+    const window = range(undefined, undefined, undefined, "2026-05-07", "2026-09-04");
+    expect(window?.$gte.toISOString()).toBe(
+      startOfDateCairo("2026-05-07").toISOString(),
+    );
+    expect(window?.$lt.toISOString()).toBe(
+      startOfDateCairo("2026-09-05").toISOString(),
+    );
+  });
+
+  it("covers payments across the entire span", () => {
+    const window = range(undefined, undefined, undefined, "2026-05-07", "2026-09-04");
+    const paymentStart = startOfDateCairo("2026-05-07");
+    const paymentMiddle = startOfDateCairo("2026-07-15");
+    const paymentEndDay = new Date("2026-09-04T20:30:00.000Z"); // Late evening Cairo on Sep 4
+    const paymentBefore = new Date(startOfDateCairo("2026-05-06").getTime() + 1000);
+    const paymentAfter = startOfDateCairo("2026-09-05");
+
+    expect(covers(window, paymentStart)).toBe(true);
+    expect(covers(window, paymentMiddle)).toBe(true);
+    expect(covers(window, paymentEndDay)).toBe(true);
+    expect(covers(window, paymentBefore)).toBe(false);
+    expect(covers(window, paymentAfter)).toBe(false);
+  });
+
+  it("handles reversed start and end dates gracefully", () => {
+    const window = range(undefined, undefined, undefined, "2026-09-04", "2026-05-07");
+    expect(window?.$gte.toISOString()).toBe(
+      startOfDateCairo("2026-05-07").toISOString(),
+    );
+    expect(window?.$lt.toISOString()).toBe(
+      startOfDateCairo("2026-09-05").toISOString(),
+    );
+  });
+
+  it("handles single-day range when startDate equals endDate", () => {
+    const window = range(undefined, undefined, undefined, "2026-05-07", "2026-05-07");
+    expect(window?.$gte.toISOString()).toBe(
+      startOfDateCairo("2026-05-07").toISOString(),
+    );
+    expect(window?.$lt.toISOString()).toBe(
+      startOfDateCairo("2026-05-08").toISOString(),
+    );
+  });
+});
+
