@@ -11,5 +11,5 @@ type AsyncFunction = (
 // this function wraps all route handlersm catches errors and passes them to the error handler middleware in app.ts
 export default (execution: AsyncFunction) =>
   (req: Request, res: Response, next: NextFunction) => {
-    execution(req, res, next).catch(next);
+    return execution(req, res, next).catch(next);
   };
