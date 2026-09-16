@@ -50,22 +50,22 @@ const extractRecipientEmails = (parsed: any): string[] => {
   return Array.from(recipients);
 };
 
-const findRecipientUser = async (emails: string[]) => {
-  if (!emails.length) return null;
+const findRecipientUsers = async (emails: string[]) => {
+  if (!emails.length) return [];
 
-  let user = await User.findOne({
-    tmsEmail: { $in: emails },
+  const escapedRegexes = emails.map(
+    (e) => new RegExp(`^${e.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i")
+  );
+
+  const matchedUsers = await User.find({
+    $or: [
+      { tmsEmail: { $in: escapedRegexes } },
+      { email: { $in: escapedRegexes } },
+    ],
     role: { $in: ["management", "managing_coach", "admin", "mailer"] },
   });
 
-  if (!user) {
-    user = await User.findOne({
-      email: { $in: emails },
-      role: { $in: ["management", "managing_coach", "admin", "mailer"] },
-    });
-  }
-
-  if (!user) {
+  if (matchedUsers.length === 0) {
     const staff = await User.find({
       role: { $in: ["management", "managing_coach", "admin", "mailer"] },
     }).select("name email tmsEmail sendAsName");
@@ -80,13 +80,17 @@ const findRecipientUser = async (emails: string[]) => {
         .toLowerCase()
         .replace(/[^a-z0-9]/g, "")}@${mailDomain}`;
       if (emails.includes(derived)) {
-        user = member as any;
-        break;
+        matchedUsers.push(member as any);
       }
     }
   }
 
-  return user;
+  return matchedUsers;
+};
+
+const findRecipientUser = async (emails: string[]) => {
+  const users = await findRecipientUsers(emails);
+  return users[0] || null;
 };
 
 const findSpamBoxName = (boxes: any, prefix = ""): string | null => {
@@ -206,15 +210,8 @@ export const syncEmails = async () => {
               const snippet = (parsed.text || "").replace(/\s+/g, " ").trim().slice(0, 150);
 
               // 1. Determine target users for push notification
-              let targetUserIds: string[] = [];
-              if (recipientUser?._id) {
-                targetUserIds = [String(recipientUser._id)];
-              } else {
-                const staff = await User.find({
-                  role: { $in: ["management", "admin", "mailer"] },
-                }).select("_id");
-                targetUserIds = staff.map((s) => String(s._id));
-              }
+              const targetUsers = await findRecipientUsers(recipientEmails);
+              const targetUserIds = targetUsers.map((u) => String(u._id));
 
               if (targetUserIds.length > 0) {
                 NotificationsService.notifyUsers(
@@ -232,9 +229,9 @@ export const syncEmails = async () => {
                 );
               }
 
-              // 2. Real-time Socket.IO notification
+              // 2. Real-time Socket.IO notification (targeted directly to recipient users)
               const io = getIO();
-              if (io) {
+              if (io && targetUserIds.length > 0) {
                 const socketPayload = {
                   id: String(newEmail._id),
                   _id: String(newEmail._id),
@@ -247,10 +244,8 @@ export const syncEmails = async () => {
                   recipientUser: recipientUser ? String(recipientUser._id) : null,
                 };
 
-                if (recipientUser?._id) {
-                  io.to(`user:${String(recipientUser._id)}`).emit("mail:newEmail", socketPayload);
-                } else {
-                  io.to("mail:staff").emit("mail:newEmail", socketPayload);
+                for (const uid of targetUserIds) {
+                  io.to(`user:${uid}`).emit("mail:newEmail", socketPayload);
                 }
               }
             } catch (notifyError) {

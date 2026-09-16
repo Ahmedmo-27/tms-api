@@ -100,39 +100,138 @@ export const sendMail = asyncHandler(async (req: Request, res: Response) => {
   new SuccessResponse("Mail sent!", { sent: recipients.length }).send(res);
 });
 
-const getInboxFilter = (user: any) => {
-  if (!user) return {};
-  const { email: userMail } = getUserMailConfig(user);
-  const escapedMail = userMail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const userRole = user.role === "admin" ? "management" : user.role;
+export const getUserEmails = (user: any): string[] => {
+  if (!user) return [];
+  const emails: string[] = [];
+  if (user.tmsEmail && typeof user.tmsEmail === "string") {
+    emails.push(user.tmsEmail.trim().toLowerCase());
+  }
+  if (user.email && typeof user.email === "string") {
+    emails.push(user.email.trim().toLowerCase());
+  }
+  const config = getUserMailConfig(user);
+  if (config.email && typeof config.email === "string") {
+    emails.push(config.email.trim().toLowerCase());
+  }
+  return [...new Set(emails.filter(Boolean))];
+};
 
-  const orConditions: any[] = [
-    { recipientUser: user._id },
-    { recipientEmail: userMail.toLowerCase() },
-    { to: { $regex: escapedMail, $options: "i" } },
-  ];
+export const getInboxFilter = (user: any) => {
+  if (!user) return { _id: null };
 
-  if (["management", "mailer", "admin"].includes(userRole)) {
-    orConditions.push({ recipientUser: null }, { recipientUser: { $exists: false } });
+  const userEmails = getUserEmails(user);
+  const orConditions: any[] = [];
+
+  if (user._id) {
+    orConditions.push({ recipientUser: user._id });
   }
 
-  return {
-    $or: orConditions,
-  };
+  if (userEmails.length > 0) {
+    orConditions.push({ recipientEmail: { $in: userEmails } });
+
+    for (const email of userEmails) {
+      const escapedMail = email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      orConditions.push({
+        to: {
+          $regex: `(?:^|[^a-zA-Z0-9._%+-])${escapedMail}(?:$|[^a-zA-Z0-9._%+-])`,
+          $options: "i",
+        },
+      });
+    }
+  }
+
+  return orConditions.length > 0 ? { $or: orConditions } : { _id: null };
 };
 
 export const getLogs = asyncHandler(async (req: Request, res: Response) => {
   const adminId = (req as any).user?._id;
-  const filter = adminId ? { sent_by: adminId } : {};
-  const logs = await EmailLog.find(filter).sort({ sent_at: -1 }).limit(100);
-  new SuccessResponse("Mail logs fetched!", logs).send(res);
+  const filter: any = adminId ? { sent_by: adminId } : {};
+
+  const { page, limit, search, mode, status } = req.query;
+
+  const conditions: any[] = [];
+  if (Object.keys(filter).length > 0) {
+    conditions.push(filter);
+  }
+
+  if (mode && typeof mode === "string" && mode !== "all") {
+    conditions.push({ mode: mode.trim() });
+  }
+
+  if (status && typeof status === "string" && status !== "all") {
+    conditions.push({ status: status.trim() });
+  }
+
+  if (search && typeof search === "string" && search.trim()) {
+    const rx = new RegExp(search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+    conditions.push({
+      $or: [{ subject: rx }, { mode: rx }, { body: rx }],
+    });
+  }
+
+  const query = conditions.length > 0 ? (conditions.length === 1 ? conditions[0] : { $and: conditions }) : {};
+
+  const pageNum = Math.max(1, parseInt(page as string, 10) || 1);
+  const limitNum = Math.max(1, Math.min(100, parseInt(limit as string, 10) || 20));
+  const skip = (pageNum - 1) * limitNum;
+
+  const total = await EmailLog.countDocuments(query);
+  const logs = await EmailLog.find(query)
+    .sort({ sent_at: -1 })
+    .skip(skip)
+    .limit(limitNum);
+
+  const totalPages = Math.ceil(total / limitNum) || 1;
+
+  new SuccessResponse("Mail logs fetched!", {
+    logs,
+    total,
+    page: pageNum,
+    limit: limitNum,
+    totalPages,
+  }).send(res);
 });
 
 export const getInbox = asyncHandler(async (req: Request, res: Response) => {
   const user = (req as any).user;
   const filter = getInboxFilter(user);
-  const emails = await ReceivedEmail.find(filter).sort({ date: -1 }).limit(100);
-  new SuccessResponse("Inbox fetched!", emails).send(res);
+
+  const { page, limit, search, status } = req.query;
+
+  const conditions: any[] = [filter];
+
+  if (status === "unread") {
+    conditions.push({ isRead: false });
+  }
+
+  if (search && typeof search === "string" && search.trim()) {
+    const rx = new RegExp(search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+    conditions.push({
+      $or: [{ subject: rx }, { from: rx }, { text: rx }, { to: rx }],
+    });
+  }
+
+  const query = conditions.length > 1 ? { $and: conditions } : filter;
+
+  const pageNum = Math.max(1, parseInt(page as string, 10) || 1);
+  const limitNum = Math.max(1, Math.min(100, parseInt(limit as string, 10) || 20));
+  const skip = (pageNum - 1) * limitNum;
+
+  const total = await ReceivedEmail.countDocuments(query);
+  const emails = await ReceivedEmail.find(query)
+    .sort({ date: -1 })
+    .skip(skip)
+    .limit(limitNum);
+
+  const totalPages = Math.ceil(total / limitNum) || 1;
+
+  new SuccessResponse("Inbox fetched!", {
+    emails,
+    total,
+    page: pageNum,
+    limit: limitNum,
+    totalPages,
+  }).send(res);
 });
 
 export const getUnreadCount = asyncHandler(async (req: Request, res: Response) => {
@@ -195,6 +294,24 @@ export const triggerSync = asyncHandler(async (req: Request, res: Response) => {
   await syncEmails();
   const user = (req as any).user;
   const filter = getInboxFilter(user);
-  const emails = await ReceivedEmail.find(filter).sort({ date: -1 }).limit(100);
-  new SuccessResponse("Inbox synced successfully!", emails).send(res);
+
+  const pageNum = Math.max(1, parseInt(req.query.page as string, 10) || 1);
+  const limitNum = Math.max(1, Math.min(100, parseInt(req.query.limit as string, 10) || 20));
+  const skip = (pageNum - 1) * limitNum;
+
+  const total = await ReceivedEmail.countDocuments(filter);
+  const emails = await ReceivedEmail.find(filter)
+    .sort({ date: -1 })
+    .skip(skip)
+    .limit(limitNum);
+
+  const totalPages = Math.ceil(total / limitNum) || 1;
+
+  new SuccessResponse("Inbox synced successfully!", {
+    emails,
+    total,
+    page: pageNum,
+    limit: limitNum,
+    totalPages,
+  }).send(res);
 });
