@@ -8,7 +8,7 @@ import { sendTransactionalEmailBatch } from "../../services/brevo-mail-service";
 import { syncEmails } from "../../services/imap-service";
 import asyncHandler from "../../utils/asyncHandler";
 import { SuccessResponse } from "../../core/ApiResponse";
-import { BadRequestError, InternalError } from "../../core/ApiError";
+import { BadRequestError, InternalError, NotFoundError } from "../../core/ApiError";
 import { getUserMailConfig } from "../../utils/mail-helper";
 
 export const sendMail = asyncHandler(async (req: Request, res: Response) => {
@@ -100,6 +100,27 @@ export const sendMail = asyncHandler(async (req: Request, res: Response) => {
   new SuccessResponse("Mail sent!", { sent: recipients.length }).send(res);
 });
 
+const getInboxFilter = (user: any) => {
+  if (!user) return {};
+  const { email: userMail } = getUserMailConfig(user);
+  const escapedMail = userMail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const userRole = user.role === "admin" ? "management" : user.role;
+
+  const orConditions: any[] = [
+    { recipientUser: user._id },
+    { recipientEmail: userMail.toLowerCase() },
+    { to: { $regex: escapedMail, $options: "i" } },
+  ];
+
+  if (["management", "mailer", "admin"].includes(userRole)) {
+    orConditions.push({ recipientUser: null }, { recipientUser: { $exists: false } });
+  }
+
+  return {
+    $or: orConditions,
+  };
+};
+
 export const getLogs = asyncHandler(async (req: Request, res: Response) => {
   const adminId = (req as any).user?._id;
   const filter = adminId ? { sent_by: adminId } : {};
@@ -109,21 +130,54 @@ export const getLogs = asyncHandler(async (req: Request, res: Response) => {
 
 export const getInbox = asyncHandler(async (req: Request, res: Response) => {
   const user = (req as any).user;
-  const { email: userMail } = getUserMailConfig(user);
-  const escapedMail = userMail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-  const filter: any = user
-    ? {
-        $or: [
-          { recipientUser: user._id },
-          { recipientEmail: userMail.toLowerCase() },
-          { to: { $regex: escapedMail, $options: "i" } },
-        ],
-      }
-    : {};
-
+  const filter = getInboxFilter(user);
   const emails = await ReceivedEmail.find(filter).sort({ date: -1 }).limit(100);
   new SuccessResponse("Inbox fetched!", emails).send(res);
+});
+
+export const getUnreadCount = asyncHandler(async (req: Request, res: Response) => {
+  const user = (req as any).user;
+  const filter = getInboxFilter(user);
+  const unreadCount = await ReceivedEmail.countDocuments({
+    ...filter,
+    isRead: false,
+  });
+  new SuccessResponse("Unread count fetched!", { unreadCount }).send(res);
+});
+
+export const markEmailAsRead = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  if (!id) {
+    throw new BadRequestError("EMAIL_ID_REQUIRED", "Email ID is required");
+  }
+
+  const isRead = typeof req.body?.isRead === "boolean" ? req.body.isRead : true;
+
+  const email = await ReceivedEmail.findByIdAndUpdate(
+    id,
+    { isRead },
+    { new: true }
+  );
+
+  if (!email) {
+    throw new NotFoundError("EMAIL_NOT_FOUND", "Email not found");
+  }
+
+  new SuccessResponse("Email marked as read!", email).send(res);
+});
+
+export const markAllEmailsRead = asyncHandler(async (req: Request, res: Response) => {
+  const user = (req as any).user;
+  const filter = getInboxFilter(user);
+
+  const result = await ReceivedEmail.updateMany(
+    { ...filter, isRead: false },
+    { $set: { isRead: true } }
+  );
+
+  new SuccessResponse("All emails marked as read!", {
+    modifiedCount: result.modifiedCount,
+  }).send(res);
 });
 
 export const getMailProfile = asyncHandler(async (req: Request, res: Response) => {
@@ -140,19 +194,7 @@ export const getMailProfile = asyncHandler(async (req: Request, res: Response) =
 export const triggerSync = asyncHandler(async (req: Request, res: Response) => {
   await syncEmails();
   const user = (req as any).user;
-  const { email: userMail } = getUserMailConfig(user);
-  const escapedMail = userMail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-  const filter: any = user
-    ? {
-        $or: [
-          { recipientUser: user._id },
-          { recipientEmail: userMail.toLowerCase() },
-          { to: { $regex: escapedMail, $options: "i" } },
-        ],
-      }
-    : {};
-
+  const filter = getInboxFilter(user);
   const emails = await ReceivedEmail.find(filter).sort({ date: -1 }).limit(100);
   new SuccessResponse("Inbox synced successfully!", emails).send(res);
 });
