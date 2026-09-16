@@ -47,19 +47,19 @@ const findRecipientUser = async (emails: string[]) => {
 
   let user = await User.findOne({
     tmsEmail: { $in: emails },
-    role: { $in: ["management", "managing_coach", "admin"] },
+    role: { $in: ["management", "managing_coach", "admin", "mailer"] },
   });
 
   if (!user) {
     user = await User.findOne({
       email: { $in: emails },
-      role: { $in: ["management", "managing_coach", "admin"] },
+      role: { $in: ["management", "managing_coach", "admin", "mailer"] },
     });
   }
 
   if (!user) {
     const staff = await User.find({
-      role: { $in: ["management", "managing_coach", "admin"] },
+      role: { $in: ["management", "managing_coach", "admin", "mailer"] },
     }).select("name email tmsEmail sendAsName");
 
     const mailDomain = (process.env.MAIL_DOMAIN || "the-mind-space.com")
