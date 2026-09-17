@@ -26,6 +26,8 @@ export const getMemberProfile: RequestHandler = asyncHandler(async function (
       attendance: [],
       isActive: true,
       pendingApproval: true,
+      isMember: false,
+      role: "user",
     }).send(res);
     return;
   }
@@ -62,5 +64,8 @@ export const getMemberProfile: RequestHandler = asyncHandler(async function (
       typeof p.pkgId === "object" &&
       p.pkgId._id
   );
-  new SuccessResponse("Member Found!", member).send(res);
+  const memberObj: any = member.toObject ? member.toObject() : { ...member };
+  memberObj.isMember = authReq.user.role === "member";
+  memberObj.role = authReq.user.role;
+  new SuccessResponse("Member Found!", memberObj).send(res);
 });
