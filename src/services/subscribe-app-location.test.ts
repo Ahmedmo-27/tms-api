@@ -263,32 +263,23 @@ describe("APP subscribeToPackage locationId fix", () => {
     );
   });
 
-  it("pending members always get Matcha locationId on payment", async () => {
+  it("rejects pending members with MEMBERSHIP_REQUIRED on package subscribe", async () => {
     (matchaBranch.isPendingMember as jest.Mock).mockResolvedValue(true);
     mockPkg({
       _id: matchaOpenGymId,
       name: "Open Gym Matcha",
       locationId: new Types.ObjectId(matchaId),
     });
-    (appPackageLocation.resolveAppPackageLocationId as jest.Mock).mockResolvedValue(
-      matchaId,
-    );
 
-    await SubscriptionsService.subscribeToPackage(
-      uid,
-      matchaOpenGymId.toString(),
-      new Date().toISOString(),
-      "APP",
-      "ref-pending",
-    );
-
-    expect(appPackageLocation.resolveAppPackageLocationId).toHaveBeenCalledWith(
-      expect.anything(),
-      true,
-    );
-    expect(
-      (PaymentsService.savePayment as jest.Mock).mock.calls[0].at(-1),
-    ).toBe(matchaId);
+    await expect(
+      SubscriptionsService.subscribeToPackage(
+        uid,
+        matchaOpenGymId.toString(),
+        new Date().toISOString(),
+        "APP",
+        "ref-pending",
+      ),
+    ).rejects.toThrow("Packages require membership");
   });
 
   it("never calls savePayment without a locationId (regression for Geidea confirm 400)", async () => {

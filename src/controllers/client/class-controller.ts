@@ -10,27 +10,12 @@ import { SchedulerService } from "../../services/scheduler-service";
 import ScheduledClass from "../../models/scheduledClass";
 import { parseScanPayload } from "../../utils/scan-payload";
 import { getInvalidQrCodeMessage } from "../../utils/error-messages";
-import { getMatchaBranchName, isPendingMember } from "../../utils/matcha-branch";
-
 export const getSchedule = asyncHandler(async function (
   req: Request,
   res: Response
 ): Promise<void> {
-  const authReq = req as AuthRequest;
   const date = req.query.date;
-  let scheduleData = await SchedulerService.getSchedule(date as string);
-
-  if (await isPendingMember(authReq.user._id as string)) {
-    const matchaBranchName = getMatchaBranchName().toLowerCase();
-    scheduleData = scheduleData.filter((session: any) => {
-      const branchName = (
-        session.sessionBranchName ??
-        session.locationId?.branchName ??
-        ""
-      ).toLowerCase();
-      return branchName === matchaBranchName;
-    });
-  }
+  const scheduleData = await SchedulerService.getSchedule(date as string);
 
   new SuccessResponse("Scheduled Classes Found!", scheduleData).send(res);
 });

@@ -3,7 +3,12 @@ import Package, { getPackageEndDate } from "../models/package";
 import PromoCode from "../models/promoCode";
 import { Types } from "mongoose";
 import { PaymentsService } from "./payments-service";
-import { NotFoundError, BadRequestError, ConflictError } from "../core/ApiError";
+import {
+  NotFoundError,
+  BadRequestError,
+  ConflictError,
+  ForbiddenError,
+} from "../core/ApiError";
 import { runInTransaction } from "../utils/transaction";
 import { ClientSession } from "mongoose";
 import logger from "../config/logger";
@@ -19,7 +24,6 @@ import { normalizePhoneNumber } from "../utils/phone";
 import { cairoDayRange, toStoredPackageDate } from "../utils/timezone";
 import CoachNotification from "../models/coachNotification";
 import {
-  assertMatchaPackageForPendingUser,
   ensureMemberForPendingPurchase,
   isPendingMember,
 } from "../utils/matcha-branch";
@@ -303,9 +307,11 @@ export class SubscriptionsService {
       );
     }
 
-    const pendingMember = await isPendingMember(uid);
-    if (pendingMember) {
-      await assertMatchaPackageForPendingUser(pkg);
+    if (await isPendingMember(uid)) {
+      throw new ForbiddenError(
+        "MEMBERSHIP_REQUIRED",
+        "Packages require membership",
+      );
     }
 
     let member = await Member.findOne({ uid });
@@ -345,7 +351,7 @@ export class SubscriptionsService {
 
     const packageLocationId = await resolveAppPackageLocationId(
       pkg,
-      pendingMember,
+      false,
     );
 
     // Idempotent APP confirm: payment already saved for this merchant ref
