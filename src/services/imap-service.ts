@@ -62,12 +62,12 @@ const findRecipientUsers = async (emails: string[]) => {
       { tmsEmail: { $in: escapedRegexes } },
       { email: { $in: escapedRegexes } },
     ],
-    role: { $in: ["management", "managing_coach", "admin", "mailer"] },
+    role: { $in: ["management", "managing_coach", "admin", "mailer", "accountant"] },
   });
 
   if (matchedUsers.length === 0) {
     const staff = await User.find({
-      role: { $in: ["management", "managing_coach", "admin", "mailer"] },
+      role: { $in: ["management", "managing_coach", "admin", "mailer", "accountant"] },
     }).select("name email tmsEmail sendAsName");
 
     const mailDomain = (process.env.MAIL_DOMAIN || "the-mind-space.com")

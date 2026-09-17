@@ -554,7 +554,7 @@ adminRoutes.delete(
 adminRoutes.get(
   "/locations",
   authenticateUser,
-  authorizeUser(["management", "branch_admin"]),
+  authorizeUser(["management", "branch_admin", "accountant"]),
   getLocation
 );
 adminRoutes.post(
@@ -579,7 +579,7 @@ adminRoutes.delete(
 adminRoutes.get(
   "/payments",
   authenticateUser,
-  authorizeUser(["management", "branch_admin"]),
+  authorizeUser(["management", "branch_admin", "accountant"]),
   getPayments
 );
 
@@ -742,21 +742,21 @@ adminRoutes.post(
 adminRoutes.get(
   "/mail/logs",
   authenticateUser,
-  authorizeUser(["management", "managing_coach", "mailer"]),
+  authorizeUser(["management", "managing_coach", "mailer", "accountant"]),
   getLogs
 );
 
 adminRoutes.get(
   "/mail/inbox",
   authenticateUser,
-  authorizeUser(["management", "managing_coach", "mailer"]),
+  authorizeUser(["management", "managing_coach", "mailer", "accountant"]),
   getInbox
 );
 
 adminRoutes.get(
   "/mail/profile",
   authenticateUser,
-  authorizeUser(["management", "managing_coach", "mailer"]),
+  authorizeUser(["management", "managing_coach", "mailer", "accountant"]),
   getMailProfile
 );
 
