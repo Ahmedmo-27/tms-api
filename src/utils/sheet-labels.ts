@@ -132,7 +132,18 @@ export function mapClassMethodToSheetLabel(method: string): SheetLabelMapping {
 export function mapPtMethodToSheetLabel(method: string): SheetLabelMapping {
   const normalized = normalizeSheetText(method);
 
-  if (normalized === "drop in" || normalized === "drop-in") {
+  if (
+    normalized === "drop in" ||
+    normalized === "drop-in" ||
+    normalized === "dropin" ||
+    normalized.startsWith("drop in") ||
+    normalized.startsWith("drop-in") ||
+    normalized.startsWith("dropin") ||
+    normalized.includes("pt drop in") ||
+    normalized.includes("pt drop-in") ||
+    normalized.includes("pt dropin") ||
+    normalized.includes("dropin")
+  ) {
     return { kind: "dropin" };
   }
 
