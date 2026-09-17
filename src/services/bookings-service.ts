@@ -4,6 +4,7 @@ import Member, { IMember } from "../models/member";
 import ScheduledClass from "../models/scheduledClass";
 import Class from "../models/class";
 import Package from "../models/package";
+import Coach from "../models/coach";
 import PromoCode from "../models/promoCode";
 import { PaymentsService } from "./payments-service";
 import {
@@ -32,7 +33,6 @@ import Reservation from "../models/reservation";
 import WaitlistEntry from "../models/waitlistEntry";
 import ChallengeRecord from "../models/challengeRecord";
 import {
-  assertMatchaSessionForPendingUser,
   ensureMemberForPendingPurchase,
   isPendingMember,
 } from "../utils/matcha-branch";
@@ -57,6 +57,8 @@ export interface CancelBookingResult {
   lateCancellation: boolean;
   sessionReturned: boolean;
 }
+
+export const DEFAULT_PT_DROP_IN_PRICE = 750;
 
 /** Records a failed scan; duplicate failed-scan entries are ignored. */
 async function recordFailedClassScan(scid: string, uid: string): Promise<void> {
@@ -111,9 +113,11 @@ export class BookingsService {
     if (!scheduledClass)
       throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
 
-    const pendingMember = await isPendingMember(uid);
-    if (pendingMember) {
-      await assertMatchaSessionForPendingUser(scheduledClass);
+    if (await isPendingMember(uid)) {
+      throw new ForbiddenError(
+        "MEMBERSHIP_REQUIRED",
+        "Booking classes with packages requires membership",
+      );
     }
 
     let member = await Member.findOne({ uid });
@@ -1185,6 +1189,297 @@ export class BookingsService {
     });
   }
 
+  static async resolvePtDropInPrice(
+    locationId?: string,
+    coachId?: string,
+  ): Promise<number> {
+    if (coachId) {
+      const coach = await Coach.findById(coachId);
+      if (
+        coach &&
+        coach.ptDropInPrice !== undefined &&
+        coach.ptDropInPrice !== null &&
+        !Number.isNaN(Number(coach.ptDropInPrice)) &&
+        Number(coach.ptDropInPrice) >= 0
+      ) {
+        return Number(coach.ptDropInPrice);
+      }
+    }
+    if (!locationId) return DEFAULT_PT_DROP_IN_PRICE;
+    const ptClass = await Class.findOne({
+      category: "PERSONAL_TRAINING",
+      ...locationIdsArrayQuery(locationId),
+    });
+    if (!ptClass || typeof ptClass.price !== "number") {
+      return DEFAULT_PT_DROP_IN_PRICE;
+    }
+    return ptClass.price;
+  }
+
+  static async setPtDropInPrice(
+    locationId: string,
+    price: number,
+  ): Promise<{ locationId: string; branchName: string; price: number }> {
+    if (price < 0) {
+      throw new BadRequestError("INVALID_PRICE", "Price must be zero or greater");
+    }
+    const location = await Location.findById(locationId);
+    if (!location) {
+      throw new NotFoundError("LOCATION_NOT_FOUND", "Location not found", {
+        locationId,
+      });
+    }
+
+    let ptClass = await Class.findOne({
+      category: "PERSONAL_TRAINING",
+      ...locationIdsArrayQuery(locationId),
+    });
+
+    if (ptClass) {
+      ptClass.price = price;
+      await ptClass.save();
+    } else {
+      ptClass = await Class.create({
+        title: `Personal Training Drop-In — ${location.branchName}`,
+        category: "PERSONAL_TRAINING",
+        price,
+        locations: [new Types.ObjectId(locationId)],
+        allowDropIn: true,
+      });
+    }
+
+    return {
+      locationId,
+      branchName: location.branchName,
+      price: ptClass.price,
+    };
+  }
+
+  static async listPtDropInPrices(): Promise<
+    Array<{
+      locationId: string;
+      branchName: string;
+      location: string;
+      price: number | null;
+    }>
+  > {
+    const [locations, ptClasses] = await Promise.all([
+      Location.find({}),
+      Class.find({ category: "PERSONAL_TRAINING" }),
+    ]);
+
+    return locations.map((loc) => {
+      const locId = (loc._id as Types.ObjectId).toString();
+      const ptClass = ptClasses.find((cls) =>
+        cls.locations.some((branchId) => branchId.toString() === locId),
+      );
+      return {
+        locationId: locId,
+        branchName: loc.branchName,
+        location: loc.location,
+        price: ptClass?.price ?? DEFAULT_PT_DROP_IN_PRICE,
+      };
+    });
+  }
+
+  static async listPtCoachDropInPrices(): Promise<
+    Array<{
+      coachId: string;
+      coachName: string;
+      price: number | null;
+    }>
+  > {
+    const coaches = await Coach.find({}).sort({ coachName: 1 });
+    return coaches.map((c) => ({
+      coachId: (c._id as Types.ObjectId).toString(),
+      coachName: c.coachName,
+      price: c.ptDropInPrice ?? null,
+    }));
+  }
+
+  static async setPtCoachDropInPrice(
+    coachId: string,
+    price: number | null,
+  ): Promise<{ coachId: string; coachName: string; price: number | null }> {
+    if (
+      price !== null &&
+      (typeof price !== "number" || price < 0 || Number.isNaN(price))
+    ) {
+      throw new BadRequestError(
+        "INVALID_PRICE",
+        "Price must be zero or greater, or null to clear",
+      );
+    }
+    const coach = await Coach.findById(coachId);
+    if (!coach) {
+      throw new NotFoundError("COACH_NOT_FOUND", "Coach not found", { coachId });
+    }
+    coach.ptDropInPrice = price;
+    await coach.save();
+
+    return {
+      coachId: (coach._id as Types.ObjectId).toString(),
+      coachName: coach.coachName,
+      price: coach.ptDropInPrice ?? null,
+    };
+  }
+
+  static async recordAdminPtMemberDropIn(
+    uid: string,
+    paymentMethod: string,
+    io: Server,
+    locationId: string,
+    coachId?: string,
+    amount?: number,
+    paymentDate?: string,
+    note?: string,
+  ) {
+    const member = await Member.findOne({ uid }).populate({ path: "uid" });
+    if (!member)
+      throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
+
+    if (!coachId) {
+      throw new BadRequestError(
+        "COACH_REQUIRED",
+        "Trainer is required for Personal Training drop-in",
+      );
+    }
+    const coachDoc = await Coach.findById(coachId);
+    if (!coachDoc) {
+      throw new NotFoundError("COACH_NOT_FOUND", "Selected coach not found");
+    }
+
+    const price = amount !== undefined ? amount : (await this.resolvePtDropInPrice(locationId, coachId));
+    const parsedPaymentDate = paymentDate
+      ? new Date(paymentDate).toISOString()
+      : undefined;
+
+    const coachName = coachDoc ? coachDoc.coachName : undefined;
+    const defaultNote = coachName
+      ? `PT dropin with ${coachName}`
+      : "PT dropin";
+    const paymentNote = note ? `${defaultNote}; ${note}` : defaultNote;
+    const method = coachName ? `PT dropin with ${coachName}` : "PT dropin";
+
+    await runInTransaction(async (session: ClientSession) => {
+      await PaymentsService.savePayment(
+        uid,
+        price,
+        paymentMethod,
+        "DROPIN",
+        session,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        parsedPaymentDate,
+        paymentNote,
+        undefined,
+        undefined,
+        locationId,
+      );
+      await DailyAttendance.recordPtAttendance(
+        uid,
+        method,
+        session,
+        "SUCCESS",
+        io,
+        locationId,
+        coachId,
+        parsedPaymentDate ? new Date(parsedPaymentDate) : undefined,
+      );
+      io.emit("SUCCESS-SCAN", {
+        code: "PT_DROP_IN",
+        message: "Success",
+        member: (member.uid as any).name,
+        method,
+        ...(coachName ? { coach: coachName } : {}),
+        ...(locationId ? { locationId } : {}),
+      });
+    });
+  }
+
+  static async recordAdminPtGuestDropIn(
+    name: string,
+    phoneNumber: string,
+    paymentMethod: string,
+    io: Server,
+    locationId: string,
+    coachId?: string,
+    amount?: number,
+    paymentDate?: string,
+    note?: string,
+  ) {
+    const existingUser = await User.findOne({ phoneNumber });
+    if (existingUser) {
+      throw new ConflictError(
+        "MEMBER_ALREADY_EXISTS",
+        (existingUser._id as Types.ObjectId).toString(),
+      );
+    }
+
+    if (!coachId) {
+      throw new BadRequestError(
+        "COACH_REQUIRED",
+        "Trainer is required for Personal Training drop-in",
+      );
+    }
+    const coachDoc = await Coach.findById(coachId);
+    if (!coachDoc) {
+      throw new NotFoundError("COACH_NOT_FOUND", "Selected coach not found");
+    }
+
+    const price = amount !== undefined ? amount : (await this.resolvePtDropInPrice(locationId, coachId));
+    const parsedPaymentDate = paymentDate
+      ? new Date(paymentDate).toISOString()
+      : undefined;
+
+    const coachName = coachDoc ? coachDoc.coachName : undefined;
+    const defaultNote = coachName
+      ? `PT dropin with ${coachName}`
+      : "PT dropin";
+    const paymentNote = note ? `${defaultNote}; ${note}` : defaultNote;
+    const method = coachName ? `PT dropin with ${coachName}` : "PT dropin";
+
+    await runInTransaction(async (session: ClientSession) => {
+      await PaymentsService.savePayment(
+        undefined,
+        price,
+        paymentMethod,
+        "DROPIN",
+        session,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        parsedPaymentDate,
+        paymentNote,
+        name,
+        phoneNumber,
+        locationId,
+      );
+      await DailyAttendance.recordPtGuestAttendance(
+        name,
+        phoneNumber,
+        method,
+        session,
+        "SUCCESS",
+        io,
+        locationId,
+        coachId,
+        parsedPaymentDate ? new Date(parsedPaymentDate) : undefined,
+      );
+      io.emit("SUCCESS-SCAN", {
+        code: "PT_DROP_IN",
+        message: "Success",
+        member: name,
+        method,
+        ...(coachName ? { coach: coachName } : {}),
+        ...(locationId ? { locationId } : {}),
+      });
+    });
+  }
+
   /**
    * Finish drop-in booking when payment is already saved (idempotent retry).
    * Does not create a new Payment or call Geidea.
@@ -1249,11 +1544,6 @@ export class BookingsService {
     });
     if (!scheduledClass)
       throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
-
-    const pendingMember = await isPendingMember(uid);
-    if (pendingMember) {
-      await assertMatchaSessionForPendingUser(scheduledClass);
-    }
 
     let member = await Member.findOne({ uid });
     if (!member) {

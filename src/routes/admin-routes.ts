@@ -26,6 +26,13 @@ import {
   setOpenGymDropInPrice,
   recordOpenGymMemberDropIn,
   recordOpenGymGuestDropIn,
+  getPtDropInPrice,
+  listPtDropInPrices,
+  setPtDropInPrice,
+  listPtCoachDropInPrices,
+  setPtCoachDropInPrice,
+  recordPtMemberDropIn,
+  recordPtGuestDropIn,
   bookNonUser,
   getNonUserBookings,
   recordNonUserAttendance,
@@ -84,7 +91,11 @@ import {
   updateLocation,
   deleteLocation,
 } from "../controllers/admin/location-controller";
-import { getPayments } from "../controllers/admin/payments-controller";
+import {
+  getPayments,
+  updatePayment,
+  deletePayment,
+} from "../controllers/admin/payments-controller";
 import {
   getProducts,
   editProduct,
@@ -114,7 +125,16 @@ import {
   searchMembers,
   getMemberRecentPayments,
 } from "../controllers/admin/refunds-controller";
-import { sendMail, getLogs, getInbox, getMailProfile, triggerSync } from "../controllers/admin/mail-controller";
+import {
+  sendMail,
+  getLogs,
+  getInbox,
+  getMailProfile,
+  triggerSync,
+  getUnreadCount,
+  markEmailAsRead,
+  markAllEmailsRead,
+} from "../controllers/admin/mail-controller";
 import {
   getSheetDay,
   getSheetMemberEligibility,
@@ -358,6 +378,55 @@ adminRoutes.post(
 );
 
 adminRoutes.get(
+  "/pt/dropInPrice",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  getPtDropInPrice
+);
+
+adminRoutes.get(
+  "/pt/dropInPrices",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  listPtDropInPrices
+);
+
+adminRoutes.patch(
+  "/pt/dropInPrice",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  setPtDropInPrice
+);
+
+adminRoutes.get(
+  "/pt/coachDropInPrices",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  listPtCoachDropInPrices
+);
+
+adminRoutes.patch(
+  "/pt/coachDropInPrice",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  setPtCoachDropInPrice
+);
+
+adminRoutes.post(
+  "/pt/memberDropIn",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  recordPtMemberDropIn
+);
+
+adminRoutes.post(
+  "/pt/guestDropIn",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  recordPtGuestDropIn
+);
+
+adminRoutes.get(
   "/nonUserBooking",
   authenticateUser,
   authorizeUser(["management", "branch_admin"]),
@@ -582,6 +651,18 @@ adminRoutes.get(
   authorizeUser(["management", "branch_admin"]),
   getPayments
 );
+adminRoutes.patch(
+  "/payments/:id",
+  authenticateUser,
+  authorizeUser(["management"]),
+  updatePayment
+);
+adminRoutes.delete(
+  "/payments/:id",
+  authenticateUser,
+  authorizeUser(["management"]),
+  deletePayment
+);
 
 // Refund Routes
 adminRoutes.post(
@@ -765,6 +846,27 @@ adminRoutes.post(
   authenticateUser,
   authorizeUser(["management", "managing_coach", "mailer"]),
   triggerSync
+);
+
+adminRoutes.get(
+  "/mail/unread-count",
+  authenticateUser,
+  authorizeUser(["management", "managing_coach", "mailer"]),
+  getUnreadCount
+);
+
+adminRoutes.patch(
+  "/mail/read-all",
+  authenticateUser,
+  authorizeUser(["management", "managing_coach", "mailer"]),
+  markAllEmailsRead
+);
+
+adminRoutes.patch(
+  "/mail/:id/read",
+  authenticateUser,
+  authorizeUser(["management", "managing_coach", "mailer"]),
+  markEmailAsRead
 );
 
 // Daily Sheet Routes
