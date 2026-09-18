@@ -62,12 +62,12 @@ const findRecipientUsers = async (emails: string[]) => {
       { tmsEmail: { $in: escapedRegexes } },
       { email: { $in: escapedRegexes } },
     ],
-    role: { $in: ["management", "managing_coach", "admin", "mailer"] },
+    role: { $in: ["management", "managing_coach", "coach", "admin", "mailer"] },
   });
 
   if (matchedUsers.length === 0) {
     const staff = await User.find({
-      role: { $in: ["management", "managing_coach", "admin", "mailer"] },
+      role: { $in: ["management", "managing_coach", "coach", "admin", "mailer"] },
     }).select("name email tmsEmail sendAsName");
 
     const mailDomain = (process.env.MAIL_DOMAIN || "the-mind-space.com")
@@ -210,8 +210,17 @@ export const syncEmails = async () => {
               const snippet = (parsed.text || "").replace(/\s+/g, " ").trim().slice(0, 150);
 
               // 1. Determine target users for push notification
-              const targetUsers = await findRecipientUsers(recipientEmails);
-              const targetUserIds = targetUsers.map((u) => String(u._id));
+              let targetUsers = await findRecipientUsers(recipientEmails);
+              let targetUserIds = targetUsers.map((u) => String(u._id));
+
+              // If no specific individual mailbox was matched (e.g. main gym address or general inbox),
+              // fall back to notifying all management/mailer staff so the alert is delivered
+              if (targetUserIds.length === 0) {
+                const staff = await User.find({
+                  role: { $in: ["management", "managing_coach", "admin", "mailer"] },
+                }).select("_id");
+                targetUserIds = staff.map((s) => String(s._id));
+              }
 
               if (targetUserIds.length > 0) {
                 NotificationsService.notifyUsers(
@@ -229,9 +238,9 @@ export const syncEmails = async () => {
                 );
               }
 
-              // 2. Real-time Socket.IO notification (targeted directly to recipient users)
+              // 2. Real-time Socket.IO notification
               const io = getIO();
-              if (io && targetUserIds.length > 0) {
+              if (io) {
                 const socketPayload = {
                   id: String(newEmail._id),
                   _id: String(newEmail._id),
@@ -244,6 +253,10 @@ export const syncEmails = async () => {
                   recipientUser: recipientUser ? String(recipientUser._id) : null,
                 };
 
+                // Always emit to general staff room
+                io.to("mail:staff").emit("mail:newEmail", socketPayload);
+
+                // Also emit directly to specific user rooms
                 for (const uid of targetUserIds) {
                   io.to(`user:${uid}`).emit("mail:newEmail", socketPayload);
                 }
