@@ -223,6 +223,7 @@ export const syncEmails = async () => {
                     emailId: String(newEmail._id),
                     from: fromSender,
                     subject: emailSubject,
+                    targetUserIds: targetUserIds.join(","),
                   }
                 ).catch((notifErr) =>
                   logger.warn("Failed to send push notification for new email", notifErr)

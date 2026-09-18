@@ -152,13 +152,11 @@ memberRoutes.get(
 memberRoutes.post(
   "/fcm/update-token/:fcmToken",
   authenticateUser,
-  authorizeUser(["user", "member"]),
   updateFcmToken
 );
 memberRoutes.delete(
   "/fcm/update-token/:fcmToken",
   authenticateUser,
-  authorizeUser(["user", "member"]),
   removeFcmToken
 );
 
