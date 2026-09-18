@@ -146,10 +146,14 @@ export class NotificationsService {
         data: safeData,
         android: {
           priority: "high" as const,
+          notification: {
+            sound: "default",
+          },
         },
         apns: {
           payload: {
             aps: {
+              sound: "default",
               contentAvailable: true,
             },
           },

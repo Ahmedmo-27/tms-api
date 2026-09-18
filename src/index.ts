@@ -82,9 +82,6 @@ const startServer = async () => {
 
         socket.join(`coach:${coachId}`);
         socket.join(`user:${coachId}`);
-        if (user.role === "managing_coach") {
-          socket.join("mail:staff");
-        }
         logger.info("Coach joined room", { socketId: socket.id, coachId });
       } catch (err) {
         logger.warn("coach:joinRoom rejected", {
@@ -133,7 +130,6 @@ const startServer = async () => {
         }
 
         socket.join(`user:${user._id}`);
-        socket.join("mail:staff");
         logger.info("User joined mail room", { socketId: socket.id, userId: user._id, role });
       } catch (err) {
         logger.warn("mail:joinRoom rejected", {
