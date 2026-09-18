@@ -161,14 +161,20 @@ const startServer = async () => {
       );
     }, 10 * 60 * 1000);
 
-    MissedSessionService.notifyMissedSessions().catch((err) =>
-      logger.error("Initial missed session notification run failed", err)
-    );
-    setInterval(() => {
+    if (MissedSessionService.isNotificationEnabled()) {
       MissedSessionService.notifyMissedSessions().catch((err) =>
-        logger.error("Periodic missed session notification run failed", err)
+        logger.error("Initial missed session notification run failed", err)
       );
-    }, 10 * 60 * 1000);
+      setInterval(() => {
+        MissedSessionService.notifyMissedSessions().catch((err) =>
+          logger.error("Periodic missed session notification run failed", err)
+        );
+      }, 10 * 60 * 1000);
+    } else {
+      logger.info(
+        "Missed session notifications disabled (running in development/testing environment)"
+      );
+    }
   });
 
   process.on("uncaughtException", (err) => {

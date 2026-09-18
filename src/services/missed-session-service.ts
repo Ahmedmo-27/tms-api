@@ -14,6 +14,10 @@ export interface MissedSessionSummary {
   failed: number;
 }
 
+export interface MissedSessionOptions {
+  force?: boolean;
+}
+
 function formatCairoTime(date: Date): string {
   return date.toLocaleTimeString("en-US", {
     timeZone: CAIRO_TZ,
@@ -27,13 +31,63 @@ function formatCairoTime(date: Date): string {
  * Sessions are already deducted at booking, so this only sends a push notification.
  */
 export class MissedSessionService {
-  static async notifyMissedSessions(now: Date = new Date()): Promise<MissedSessionSummary> {
+  /**
+   * Missed session notifications are only enabled in production environments.
+   * Disabled in local development, test, and testing environments by default
+   * to avoid accidentally sending push notifications to members from dev/test databases.
+   */
+  static isNotificationEnabled(): boolean {
+    if (process.env.ENABLE_MISSED_SESSION_NOTIFICATIONS === "true") return true;
+    if (process.env.ENABLE_MISSED_SESSION_NOTIFICATIONS === "false") return false;
+    if (process.env.DISABLE_MISSED_SESSION_NOTIFICATIONS === "true") return false;
+
+    const nodeEnv = (process.env.NODE_ENV || "").toLowerCase().trim();
+    const appEnv = (process.env.ENVIRONMENT || "").toLowerCase().trim();
+
+    // Check for explicit dev/test environments or absence of NODE_ENV
+    const isDevOrTestEnv =
+      !nodeEnv ||
+      nodeEnv === "development" ||
+      nodeEnv === "dev" ||
+      nodeEnv === "test" ||
+      nodeEnv === "testing" ||
+      nodeEnv === "local" ||
+      appEnv === "testing" ||
+      appEnv === "test" ||
+      appEnv === "development" ||
+      appEnv === "dev" ||
+      appEnv === "local";
+
+    if (isDevOrTestEnv) {
+      return false;
+    }
+
+    // Safeguard: Check if database URI points to a test database
+    const mongoUri = (process.env.MONGO_URI || "").toLowerCase();
+    if (mongoUri.includes("tms_test") || mongoUri.includes("/test")) {
+      return false;
+    }
+
+    return nodeEnv === "production" || nodeEnv === "prod";
+  }
+
+  static async notifyMissedSessions(
+    now: Date = new Date(),
+    options?: MissedSessionOptions
+  ): Promise<MissedSessionSummary> {
     const summary: MissedSessionSummary = {
       classesChecked: 0,
       notified: 0,
       skipped: 0,
       failed: 0,
     };
+
+    if (!options?.force && !this.isNotificationEnabled()) {
+      logger.info(
+        "Missed session notifications are disabled in development/testing environments"
+      );
+      return summary;
+    }
 
     let classes;
     try {
