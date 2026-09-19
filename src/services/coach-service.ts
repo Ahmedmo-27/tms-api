@@ -713,8 +713,6 @@ export class CoachService {
     });
     const coachPkgNames = new Set(ptPackages.map((p) => p.name));
 
-    if (coachPkgNames.size === 0) return [];
-
     // 2. Find the DailyAttendance document for the requested date
     const dayStart = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
 
@@ -724,15 +722,18 @@ export class CoachService {
 
     if (!attendance) return [];
 
-    // 3. Filter ptAttendance entries by coach package names and map to response
+    // 3. Filter ptAttendance entries by coach package names or direct coachId assignment
     const result: any[] = [];
     for (const entry of attendance.ptAttendance) {
-      if (!coachPkgNames.has(entry.method)) continue;
+      const isAssignedToCoach =
+        (entry as any).coachId?.toString() === coachDocId.toString() ||
+        coachPkgNames.has(entry.method);
+      if (!isAssignedToCoach) continue;
       const user = entry.uid as any; // populated User
       result.push({
         memberId: user?._id?.toString() ?? "",
-        member: user?.name ?? "Unknown",
-        phone:  user?.phoneNumber ?? "",
+        member: user?.name ?? (entry as any).guestName ?? "Unknown",
+        phone:  user?.phoneNumber ?? (entry as any).guestPhone ?? "",
         time:   entry.time.toISOString(),
         method: entry.method,
         status: entry.status, // "SUCCESS" | "FAILED"

@@ -543,16 +543,16 @@ export class SheetService {
       const memberId = asId(scan.uid);
       const mapped = mapPtMethodToSheetLabel(scan.method || "");
       spacePt.push({
-        id: `pt:${memberId || asName(scan.uid)}:${scan.time || i}:${asId(scan._id) || i}`,
+        id: `pt:${memberId || scan.guestName || asName(scan.uid)}:${scan.time || i}:${asId(scan._id) || i}`,
         source: "pt",
         memberId,
-        name: asName(scan.uid, "Unknown Member"),
+        name: memberId ? asName(scan.uid, "Unknown Member") : scan.guestName || "Walk-in Guest",
         memberLabel: mapped.kind === "dropin" ? "" : mapped.label,
         amount: null,
         paymentMethod: "",
         purpose:
-          mapped.kind === "dropin" ? "Drop in" : (scan.method || "").trim(),
-        phone: asPhone(scan.uid),
+          mapped.kind === "dropin" ? "Drop in PT" : (scan.method || "").trim(),
+        phone: asPhone(scan.uid) || scan.guestPhone || "",
       });
     }
 
