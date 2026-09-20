@@ -176,7 +176,22 @@ export class CoachService {
   ): Promise<PaginatedClientsResponseDto> {
     const clientsMap = new Map<string, ClientResponseDto>();
 
-    const ptPackages = await Package.find({ coachId: coachDocId });
+    const coachDoc = await Coach.findById(coachDocId);
+    const coachName = coachDoc?.coachName?.trim();
+
+    const ptPkgQuery: any = {
+      $or: [
+        { coachId: coachDocId },
+      ],
+    };
+    if (coachName && coachName.length >= 3) {
+      ptPkgQuery.$or.push({
+        category: "PERSONAL_TRAINING",
+        name: { $regex: new RegExp(`(^|[^a-z0-9])${escapeRegex(coachName)}([^a-z0-9]|$)`, "i") },
+      });
+    }
+
+    const ptPackages = await Package.find(ptPkgQuery);
     const ptPkgIds = ptPackages.map(p => p._id);
     const ptMembers = await Member.find({ "packages.pkgId": { $in: ptPkgIds } }).populate<{ uid: any }>({
       path: "uid",
@@ -706,15 +721,26 @@ export class CoachService {
    */
   static async getPtAttendance(coachDocId: Types.ObjectId, date: Date): Promise<any[]> {
     // 1. Collect all PT package names assigned to this coach
-    const ptPackages = await Package.find({
-      coachId: coachDocId,
-      category: "PERSONAL_TRAINING",
-    });
+    const coachDoc = await Coach.findById(coachDocId);
+    const coachName = coachDoc?.coachName?.trim();
+
+    const ptPkgQuery: any = {
+      $or: [
+        { coachId: coachDocId },
+      ],
+    };
+    if (coachName && coachName.length >= 3) {
+      ptPkgQuery.$or.push({
+        category: "PERSONAL_TRAINING",
+        name: { $regex: new RegExp(`(^|[^a-z0-9])${escapeRegex(coachName)}([^a-z0-9]|$)`, "i") },
+      });
+    }
+
+    const ptPackages = await Package.find(ptPkgQuery);
     const coachPkgNames = new Set(ptPackages.map((p) => p.name));
 
     // Also get coach name to match any PT drop-in method like "PT dropin with CoachName"
-    const coachDoc = await Coach.findById(coachDocId);
-    const coachName = coachDoc?.coachName?.toLowerCase();
+    const coachNameLower = coachName?.toLowerCase();
 
     // 2. Find the DailyAttendance document for the requested date
     const dayStart = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 0, 0, 0));
@@ -738,7 +764,7 @@ export class CoachService {
       const isAssignedToCoach =
         (entry as any).coachId?.toString() === coachDocId.toString() ||
         coachPkgNames.has(entry.method) ||
-        (coachName && (entryMethodLower.includes(`with ${coachName}`) || entryMethodLower.includes(coachName)));
+        (coachNameLower && (entryMethodLower.includes(`with ${coachNameLower}`) || entryMethodLower.includes(coachNameLower)));
       if (!isAssignedToCoach) continue;
       const user = entry.uid as any; // populated User
       result.push({
@@ -779,8 +805,23 @@ export class CoachService {
       }
     }
 
+    const coachDoc = await Coach.findById(coachDocId);
+    const coachName = coachDoc?.coachName?.trim();
+
+    const ptPkgQuery: any = {
+      $or: [
+        { coachId: coachDocId },
+      ],
+    };
+    if (coachName && coachName.length >= 3) {
+      ptPkgQuery.$or.push({
+        category: "PERSONAL_TRAINING",
+        name: { $regex: new RegExp(`(^|[^a-z0-9])${escapeRegex(coachName)}([^a-z0-9]|$)`, "i") },
+      });
+    }
+
     const [ptCount, classCount] = await Promise.all([
-      Package.countDocuments({ coachId: coachDocId }),
+      Package.countDocuments(ptPkgQuery),
       ScheduledClass.countDocuments({ coachId: coachDocId }),
     ]);
 
