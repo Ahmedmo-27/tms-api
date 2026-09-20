@@ -702,8 +702,7 @@ export class CoachService {
   /**
    * GET /api/coach/pt-attendance?date=YYYY-MM-DD
    * Returns the PT check-in entries for the given date that belong to the
-   * authenticated coach (identified by their PT package names).
-   * Does NOT return the coach/package name — only member identity and status.
+   * authenticated coach (identified by their PT package names, coachId, or drop-in assignment).
    */
   static async getPtAttendance(coachDocId: Types.ObjectId, date: Date): Promise<any[]> {
     // 1. Collect all PT package names assigned to this coach
@@ -713,30 +712,46 @@ export class CoachService {
     });
     const coachPkgNames = new Set(ptPackages.map((p) => p.name));
 
-    // 2. Find the DailyAttendance document for the requested date
-    const dayStart = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+    // Also get coach name to match any PT drop-in method like "PT dropin with CoachName"
+    const coachDoc = await Coach.findById(coachDocId);
+    const coachName = coachDoc?.coachName?.toLowerCase();
 
-    const attendance = await DailyAttendance.findOne({ date: dayStart }).populate<{
+    // 2. Find the DailyAttendance document for the requested date
+    const dayStart = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 0, 0, 0));
+    const dayEnd = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 23, 59, 59, 999));
+
+    const attendance = await DailyAttendance.findOne({
+      $or: [
+        { date: dayStart },
+        { date: { $gte: dayStart, $lte: dayEnd } },
+      ],
+    }).populate<{
       "ptAttendance.uid": any;
     }>("ptAttendance.uid");
 
     if (!attendance) return [];
 
-    // 3. Filter ptAttendance entries by coach package names or direct coachId assignment
+    // 3. Filter ptAttendance entries by coach package names, direct coachId assignment, or drop-in
     const result: any[] = [];
     for (const entry of attendance.ptAttendance) {
+      const entryMethodLower = (entry.method || "").toLowerCase();
       const isAssignedToCoach =
         (entry as any).coachId?.toString() === coachDocId.toString() ||
-        coachPkgNames.has(entry.method);
+        coachPkgNames.has(entry.method) ||
+        (coachName && (entryMethodLower.includes(`with ${coachName}`) || entryMethodLower.includes(coachName)));
       if (!isAssignedToCoach) continue;
       const user = entry.uid as any; // populated User
       result.push({
         memberId: user?._id?.toString() ?? "",
-        member: user?.name ?? (entry as any).guestName ?? "Unknown",
-        phone:  user?.phoneNumber ?? (entry as any).guestPhone ?? "",
-        time:   entry.time.toISOString(),
+        member: user?.name ?? (entry as any).guestName ?? "Unknown Member",
+        phone:  user?.phoneNumber ?? (entry as any).guestPhone ?? "No Phone",
+        time:   entry.time instanceof Date ? entry.time.toISOString() : new Date(entry.time).toISOString(),
         method: entry.method,
         status: entry.status, // "SUCCESS" | "FAILED"
+        statusDetail:
+          entry.status === "FAILED" && entry.method === "No Active Package"
+            ? "No active package found"
+            : undefined,
       });
     }
 
