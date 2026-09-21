@@ -19,6 +19,22 @@ const app = require("./app"); // your Express app
 const startServer = async () => {
   await connectDB();
 
+  try {
+    // Migration: ensure all existing member and mobile tokens never expire by removing expiresIn
+    await User.updateMany(
+      { role: { $in: ["member", "user"] } },
+      { $unset: { "tokens.$[].expiresIn": 1 }, $set: { "tokens.$[].device": "mobile" } }
+    );
+    await User.updateMany(
+      { "tokens.device": "mobile" },
+      { $unset: { "tokens.$[elem].expiresIn": 1 } },
+      { arrayFilters: [{ "elem.device": "mobile" }] }
+    );
+    logger.info("Migrated member and mobile tokens to non-expiring");
+  } catch (migErr) {
+    logger.warn("Token migration warning:", migErr);
+  }
+
   const port = Number(process.env.PORT) || 5000;
 
   const server = createServer(app);

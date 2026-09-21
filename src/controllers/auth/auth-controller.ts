@@ -129,12 +129,8 @@ export const registerUser = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const { name, email, password, phoneNumber, fcmToken } = req.body;
     assertPasswordStrength(password);
-    const deviceType = (
-      req.headers["x-device-type"] ||
-      req.headers["xdevice-type"] ||
-      req.body.deviceType === "mobile" ||
-      fcmToken
-    ) ? "mobile" : "web";
+    // Public registration creates pending "user" who will become a member on the mobile app
+    const deviceType = "mobile";
     logger.info("Started user registeration", {
       data: { name, email, phoneNumber },
     });
@@ -159,20 +155,19 @@ export const registerUser = asyncHandler(
       role: "user",
     });
     await user.save();
-    const token = await user.generateAuthToken(deviceType, fcmToken);
-    if (deviceType == "web") {
-      res.cookie("token", token, authCookieOptions());
-      new SuccessResponse("Web User Registered!", { user, token }).send(res);
-    } else {
-      new SuccessResponse("Mobile User Registered!", { user, token }).send(res);
-    }
+    const token = await user.generateAuthToken("mobile", fcmToken);
+    new SuccessResponse("Mobile User Registered!", { user, token }).send(res);
   }
 );
 
 export const loginUser = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const { phoneNumber, password, fcmToken } = req.body;
+    const cleanPhoneNumber = phoneNumber.replace(/\s/g, "");
+    const user = await User.findByCredentials(cleanPhoneNumber, password);
+    const isMemberRole = user.role === "member" || user.role === "user";
     const deviceType = (
+      isMemberRole ||
       req.headers["x-device-type"] ||
       req.headers["xdevice-type"] ||
       req.body.deviceType === "mobile" ||
@@ -181,8 +176,6 @@ export const loginUser = asyncHandler(
     logger.info("Started user login", {
       data: { phoneNumber, deviceType },
     });
-    const cleanPhoneNumber = phoneNumber.replace(/\s/g, "");
-    const user = await User.findByCredentials(cleanPhoneNumber, password);
     const token = await user.generateAuthToken(deviceType, fcmToken);
     let responseData: any = {
       token,
