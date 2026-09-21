@@ -211,16 +211,21 @@ UserSchema.method(
         "JWT_ERROR",
         "JWT_SECRET is not defined in environment variables",
       );
+    const isMobile =
+      deviceType === "mobile" ||
+      user.role === "member" ||
+      user.role === "user";
+    const effectiveDevice = isMobile ? "mobile" : deviceType;
+
     const tokenData = {
       uid: user._id,
       role: user.role,
-      deviceType,
+      deviceType: effectiveDevice,
       jti: crypto.randomUUID(),
       iat: Math.floor(Date.now() / 1000),
     };
 
-    const isMobile = deviceType === "mobile";
-    // Mobile app tokens do not expire so members only log in once.
+    // Mobile app and member tokens do not expire so members only log in once.
     // Web / dashboard tokens expire in 30 days.
     const token = isMobile
       ? jwt.sign(tokenData, secret)
@@ -229,8 +234,13 @@ UserSchema.method(
       ? undefined
       : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
-    // Clean up expired tokens to prevent array growth
-    user.tokens = user.tokens.filter((t) => !t.expiresIn || new Date(t.expiresIn) > new Date());
+    // Clean up expired tokens to prevent array growth, but NEVER expire mobile or member tokens
+    user.tokens = user.tokens.filter((t) => {
+      if (t.device === "mobile" || user.role === "member" || user.role === "user") {
+        return true;
+      }
+      return !t.expiresIn || new Date(t.expiresIn) > new Date();
+    });
 
     // Limit active mobile tokens per user to prevent unbounded growth from re-installations
     const MAX_MOBILE_TOKENS = 10;
@@ -248,11 +258,11 @@ UserSchema.method(
 
     user.tokens.push({
       token,
-      device: deviceType,
+      device: effectiveDevice,
       ...(expiresAt ? { expiresIn: expiresAt } : {}),
     });
     logger.info("Generated auth token for user", {
-      data: { userId: user._id, deviceType, fcmToken },
+      data: { userId: user._id, deviceType: effectiveDevice, fcmToken },
     });
     if (fcmToken) user.fcmTokens.push(fcmToken);
 
@@ -278,7 +288,12 @@ UserSchema.method("removeAllTokens", async function () {
 
 UserSchema.method("removeExpiredTokens", async function () {
   const user = this;
-  user.tokens = user.tokens.filter((t) => !t.expiresIn || new Date(t.expiresIn) > new Date());
+  user.tokens = user.tokens.filter((t) => {
+    if (t.device === "mobile" || user.role === "member" || user.role === "user") {
+      return true;
+    }
+    return !t.expiresIn || new Date(t.expiresIn) > new Date();
+  });
   await user.save();
 });
 
