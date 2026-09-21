@@ -60,7 +60,7 @@ memberRoutes.post(
 memberRoutes.post(
   "/dropIn",
   authenticateUser,
-  authorizeUser([...memberOrPending]),
+  authorizeUser(["member"]),
   bookDropIn
 );
 memberRoutes.post(

@@ -79,7 +79,7 @@ describe("Non-Member Access: View Classes, Drop-ins Only, Packages Blocked", () 
   });
 
   describe("BookingsService.bookDropIn", () => {
-    it("allows non-member to book drop-in for a class at any branch without Matcha restriction", async () => {
+    it("blocks non-members from booking drop-ins while paused", async () => {
       const scheduledClass = {
         _id: new Types.ObjectId(scid),
         availableSlots: 10,
@@ -97,28 +97,10 @@ describe("Non-Member Access: View Classes, Drop-ins Only, Packages Blocked", () 
       (ScheduledClass.findById as jest.Mock).mockReturnValue({
         populate: jest.fn().mockResolvedValue(scheduledClass),
       });
-      (Member.findOne as jest.Mock).mockResolvedValue({
-        _id: new Types.ObjectId(),
-        uid,
-        bookings: [],
-      });
-      (Reservation.countDocuments as jest.Mock).mockResolvedValue(0);
-      (Reservation.findOne as jest.Mock).mockResolvedValue(null);
-      (WaitlistEntry.findOne as jest.Mock).mockResolvedValue(null);
-      (appPackageLocation.resolveSessionPaymentLocationId as jest.Mock).mockResolvedValue("loc-cairo");
-      (PaymentsService.findPaymentByMerchantReference as jest.Mock).mockResolvedValue(null);
-      (PaymentsService.savePayment as jest.Mock).mockResolvedValue({ _id: new Types.ObjectId() });
-      (Member.saveDropIn as jest.Mock).mockResolvedValue(undefined);
-      (ScheduledClass.bookMember as jest.Mock).mockResolvedValue(undefined);
-      (Payment.findOne as jest.Mock).mockReturnValue({
-        session: jest.fn().mockResolvedValue(null),
-      });
 
       await expect(
         BookingsService.bookDropIn(uid, scid, "ref-test-123"),
-      ).resolves.not.toThrow();
-
-      expect(Member.saveDropIn).toHaveBeenCalled();
+      ).rejects.toThrow("Drop-in bookings require membership");
     });
   });
 
