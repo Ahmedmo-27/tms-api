@@ -39,10 +39,18 @@ export const coachLogin = asyncHandler(
     let hasScheduledClasses = false;
     const coachDoc = await CoachService.resolveCoachProfileForUser(user);
     if (coachDoc) {
-      const ptPackagesCount = await Package.countDocuments({ coachId: coachDoc._id as Types.ObjectId });
+      const coachDocId = coachDoc._id as Types.ObjectId;
+      const coachUserId = user._id as Types.ObjectId;
+      const ptPackagesCount = await Package.countDocuments({ coachId: coachDocId });
       hasPtSessions = ptPackagesCount > 0;
 
-      const scheduledClassesCount = await ScheduledClass.countDocuments({ coachId: coachDoc._id as Types.ObjectId });
+      const { objectIds, stringIds } = await CoachService.getCoachLookupIds(coachDocId, coachUserId);
+      const scheduledClassesCount = await ScheduledClass.countDocuments({
+        $or: [
+          { coachId: { $in: objectIds } },
+          { coachId: { $in: stringIds } },
+        ],
+      });
       hasScheduledClasses = scheduledClassesCount > 0;
     }
 

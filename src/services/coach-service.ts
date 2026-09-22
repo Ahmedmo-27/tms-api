@@ -30,12 +30,83 @@ import {
 import { runInTransaction } from "../utils/transaction";
 import { addDays, format, startOfWeek } from "date-fns";
 import { formatInTimeZone, fromZonedTime, toZonedTime } from "date-fns-tz";
-import { CAIRO_TZ, cairoDateKey, isSameCairoDay } from "../utils/timezone";
+import {
+  CAIRO_TZ,
+  cairoDateKey,
+  isSameCairoDay,
+  startOfDateCairo,
+  endOfDateCairo,
+} from "../utils/timezone";
 import { escapeRegex } from "../utils/escapeRegex";
 
 export class CoachService {
   static async getCoachDocumentByUserId(userId: Types.ObjectId): Promise<ICoach | null> {
     return Coach.findOne({ userId });
+  }
+
+  /**
+   * Resolves all possible identifier matches for a coach across Coach documents and User records.
+   * This handles:
+   * - Primary Coach document ID
+   * - User ID (coachUserId or coachDoc.userId)
+   * - Any other Coach document sharing the same userId or phoneNumber
+   * - Any Coach document with matching coachName (exact or case-insensitive)
+   * - Any Coach document with composite multi-coach name including this coach (e.g. "Coach1, Coach2", "Coach1 & Coach2")
+   */
+  static async getCoachLookupIds(
+    coachDocId: Types.ObjectId,
+    coachUserId?: Types.ObjectId
+  ): Promise<{ objectIds: Types.ObjectId[]; stringIds: string[] }> {
+    const objectIdsSet = new Set<string>();
+    const stringIdsSet = new Set<string>();
+
+    const addId = (id: Types.ObjectId | string | undefined | null) => {
+      if (!id) return;
+      const str = id.toString().trim();
+      if (!str) return;
+      stringIdsSet.add(str);
+      if (Types.ObjectId.isValid(str)) {
+        objectIdsSet.add(new Types.ObjectId(str).toString());
+      }
+    };
+
+    addId(coachDocId);
+    if (coachUserId) addId(coachUserId);
+
+    const coachDoc = await Coach.findById(coachDocId);
+    if (coachDoc?.userId) addId(coachDoc.userId);
+
+    const resolvedUserId = coachUserId || coachDoc?.userId;
+    const coachName = coachDoc?.coachName?.trim();
+    const cleanPhone = coachDoc?.phoneNumber?.replace(/\s/g, "");
+
+    const orClauses: any[] = [];
+    if (resolvedUserId) {
+      orClauses.push({ userId: resolvedUserId });
+    }
+    if (cleanPhone && cleanPhone.length >= 8 && cleanPhone !== "01111111111" && cleanPhone !== "00000000000") {
+      orClauses.push({ phoneNumber: cleanPhone });
+    }
+    if (coachName && coachName.length >= 2) {
+      orClauses.push({
+        coachName: {
+          $regex: new RegExp(`(^|[^a-z0-9])${escapeRegex(coachName)}([^a-z0-9]|$)`, "i"),
+        },
+      });
+    }
+
+    if (orClauses.length > 0) {
+      const relatedCoaches = await Coach.find({ $or: orClauses }).select("_id userId");
+      for (const c of relatedCoaches) {
+        addId(c._id as Types.ObjectId);
+        if (c.userId) addId(c.userId);
+      }
+    }
+
+    const objectIds = Array.from(objectIdsSet).map((id) => new Types.ObjectId(id));
+    const stringIds = Array.from(stringIdsSet);
+
+    return { objectIds, stringIds };
   }
 
   /**
@@ -302,8 +373,12 @@ export class CoachService {
 
     // Verify Authorization_Link — a ScheduledClass must link this coach to the requested member
     // OR the member must have a PT package assigned to this coach.
+    const { objectIds, stringIds } = await this.getCoachLookupIds(coachDocId);
     const link = await ScheduledClass.findOne({
-      coachId: coachDocId,
+      $or: [
+        { coachId: { $in: objectIds } },
+        { coachId: { $in: stringIds } },
+      ],
       "bookedMembers.uid": new Types.ObjectId(memberId),
     });
 
@@ -397,8 +472,12 @@ export class CoachService {
       throw new NotFoundError("PACKAGE_NOT_FOUND", "Member not found");
     }
 
+    const { objectIds, stringIds } = await this.getCoachLookupIds(coachDocId);
     const link = await ScheduledClass.findOne({
-      coachId: coachDocId,
+      $or: [
+        { coachId: { $in: objectIds } },
+        { coachId: { $in: stringIds } },
+      ],
       "bookedMembers.uid": new Types.ObjectId(memberId),
     });
 
@@ -475,11 +554,23 @@ export class CoachService {
   }
 
   static async getSchedule(coachDocId: Types.ObjectId, weekStart: Date): Promise<ScheduleResponseDto> {
+    const { objectIds, stringIds } = await this.getCoachLookupIds(coachDocId);
+    const assignedIds = new Set([
+      ...objectIds.map((id) => id.toString()),
+      ...stringIds,
+    ]);
+
     const weekEnd = addDays(weekStart, 7);
     const scheduledClasses = await ScheduledClass.find({
-      coachId: coachDocId,
+      $or: [
+        { coachId: { $in: objectIds } },
+        { coachId: { $in: stringIds } },
+      ],
       startTime: { $gte: weekStart, $lt: weekEnd }
-    }).populate("locationId").sort({ startTime: 1 });
+    })
+      .populate("locationId")
+      .populate("coachId", "coachName")
+      .sort({ startTime: 1 });
 
     // Batch fetch 1: Classes
     const classIds = Array.from(new Set(scheduledClasses.map(s => s.cid.toString())));
@@ -502,7 +593,6 @@ export class CoachService {
     const packagesInfo = await Package.find({ _id: { $in: allPkgIds } });
     const packageMap = new Map(packagesInfo.map(p => [p._id.toString(), p]));
 
-    const coachIdStr = coachDocId.toString();
     const sessionsMap = new Map<string, any[]>();
 
     for (const scheduledClass of scheduledClasses) {
@@ -518,7 +608,7 @@ export class CoachService {
           if (!p.pkgId || p.status !== "ACTIVE") return false;
           const pkgDoc = packageMap.get(p.pkgId.toString());
           if (!pkgDoc) return false;
-          return !pkgDoc.coachId || pkgDoc.coachId.toString() === coachIdStr;
+          return !pkgDoc.coachId || assignedIds.has(pkgDoc.coachId.toString());
         });
 
         clients.push({
@@ -534,6 +624,21 @@ export class CoachService {
         });
       }
 
+      const coachesList = Array.isArray(scheduledClass.coachId)
+        ? scheduledClass.coachId
+        : scheduledClass.coachId
+        ? [scheduledClass.coachId]
+        : [];
+      const coaches = coachesList
+        .map((c: any) => {
+          if (!c) return null;
+          const id = (c._id || c).toString();
+          const name = c.coachName || c.name || "Coach";
+          return { id, name };
+        })
+        .filter(Boolean);
+      const coachNames = coaches.map((c: any) => c.name).join(", ");
+
       const dateStr = formatInTimeZone(scheduledClass.startTime, "Africa/Cairo", "yyyy-MM-dd");
       const sessionDto = {
         scheduledClassId: (scheduledClass._id as Types.ObjectId).toString(),
@@ -544,6 +649,8 @@ export class CoachService {
         capacity: scheduledClass.availableSlots + scheduledClass.bookedMembers.length,
         bookedCount: scheduledClass.bookedMembers.length,
         location: this.locationLabel(scheduledClass.locationId),
+        coaches,
+        coachNames,
         clients
       };
 
@@ -575,18 +682,26 @@ export class CoachService {
    * GET /api/coach/scans?date=YYYY-MM-DD
    * Returns all of the coach's scheduled classes for the given calendar day,
    * each with its full scan list (member name, phone, time, method, status).
+   * Supports multi-coach sessions: all assigned coaches see the same session.
    */
   static async getScans(coachDocId: Types.ObjectId, date: Date): Promise<any[]> {
-    // Build a [start-of-day, start-of-next-day) window in UTC
-    const dayStart = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-    const dayEnd   = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + 1));
+    // Resolve all coach lookup IDs (handles multi-coach and composite coach docs)
+    const { objectIds, stringIds } = await this.getCoachLookupIds(coachDocId);
+
+    // Use Cairo calendar-day boundaries to avoid UTC midnight misalignment
+    const dayStart = startOfDateCairo(date);
+    const dayEnd   = endOfDateCairo(date);
 
     const scheduledClasses = await ScheduledClass.find({
-      coachId: coachDocId,
+      $or: [
+        { coachId: { $in: objectIds } },
+        { coachId: { $in: stringIds } },
+      ],
       startTime: { $gte: dayStart, $lt: dayEnd },
     })
       .populate<{ "scans.uid": any }>("scans.uid")
       .populate("locationId")
+      .populate("coachId", "coachName")
       .sort({ startTime: 1 });
 
     const classIds = Array.from(new Set(scheduledClasses.map(sc => sc.cid.toString())));
@@ -612,6 +727,22 @@ export class CoachService {
         };
       });
 
+      // Derive coaches list from populated coachId
+      const coachesList = Array.isArray(sc.coachId)
+        ? sc.coachId
+        : sc.coachId
+        ? [sc.coachId]
+        : [];
+      const coaches = coachesList
+        .map((c: any) => {
+          if (!c) return null;
+          const id = (c._id || c).toString();
+          const name = c.coachName || c.name || "Coach";
+          return { id, name };
+        })
+        .filter(Boolean) as { id: string; name: string }[];
+      const coachNames = coaches.map((c) => c.name).join(", ");
+
       result.push({
         scheduledClassId: (sc._id as Types.ObjectId).toString(),
         classTitle:  cls.title,
@@ -623,6 +754,8 @@ export class CoachService {
         capacity:    sc.availableSlots + sc.bookedMembers.length,
         bookedCount: sc.bookedMembers.length,
         location:    this.locationLabel(sc.locationId),
+        coaches,
+        coachNames,
         scans,
         attendanceConfirmation: sc.attendanceConfirmation?.confirmed
           ? {
@@ -664,8 +797,13 @@ export class CoachService {
       throw new NotFoundError("CLASS_NOT_FOUND", "Scheduled class not found", { scid });
     }
 
+    const { objectIds, stringIds } = await this.getCoachLookupIds(coachDocId);
+    const assignedIds = new Set([
+      ...objectIds.map((id) => id.toString()),
+      ...stringIds,
+    ]);
     const isAssigned = (scheduledClass.coachId || []).some(
-      (id) => id.toString() === coachDocId.toString()
+      (id) => assignedIds.has(id.toString())
     );
     if (!isAssigned) {
       throw new ForbiddenError(
@@ -820,9 +958,16 @@ export class CoachService {
       });
     }
 
+    const { objectIds, stringIds } = await this.getCoachLookupIds(coachDocId, coachUserId);
+
     const [ptCount, classCount] = await Promise.all([
       Package.countDocuments(ptPkgQuery),
-      ScheduledClass.countDocuments({ coachId: coachDocId }),
+      ScheduledClass.countDocuments({
+        $or: [
+          { coachId: { $in: objectIds } },
+          { coachId: { $in: stringIds } },
+        ],
+      }),
     ]);
 
     return {
