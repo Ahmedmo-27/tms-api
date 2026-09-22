@@ -444,7 +444,7 @@ export class CoachService {
     coachDocId: Types.ObjectId,
     dto: DeductSessionRequestDto,
   ): Promise<DeductSessionResponseDto> {
-    const { memberId, memberPackageStartDate, reason, sessionDate } = dto;
+    const { memberId, pkgId, memberPackageStartDate, reason, sessionDate } = dto;
 
     // --- 1. Validate required fields (Req 7.1) ---
     if (!memberId || !memberPackageStartDate || !reason || !sessionDate) {
@@ -453,6 +453,10 @@ export class CoachService {
 
     if (!Types.ObjectId.isValid(memberId)) {
       throw new BadRequestError("INVALID_ID", "Invalid member ID format");
+    }
+
+    if (pkgId && !Types.ObjectId.isValid(pkgId)) {
+      throw new BadRequestError("INVALID_ID", "Invalid package ID format");
     }
 
     // --- 2. Validate date strings are parseable ISO 8601 (Req 7.1) ---
@@ -490,9 +494,42 @@ export class CoachService {
     }
 
     // Match by Africa/Cairo calendar day (avoids UTC toDateString off-by-one).
-    const pkg = member.packages.find((p) =>
+    const candidatePackages = member.packages.filter((p) =>
       isSameCairoDay(p.pkgStartDate, parsedPackageStartDate),
     );
+
+    let pkg: (typeof member.packages)[0] | undefined;
+
+    if (pkgId) {
+      // If pkgId is explicitly passed, match by pkgId and start date
+      pkg = candidatePackages.find((p) => p.pkgId.toString() === pkgId);
+      // Fallback: match by pkgId directly in case of slight timezone difference
+      if (!pkg) {
+        pkg = member.packages.find((p) => p.pkgId.toString() === pkgId);
+      }
+    } else {
+      // Disambiguate when multiple packages match the start date:
+      // 1. Prefer packages assigned to this coach
+      const coachPkgIdSet = new Set(
+        packagesInfo
+          .filter((info) => {
+            if (!info.coachId) return false;
+            const cid = info.coachId.toString();
+            return (
+              cid === coachDocId.toString() ||
+              objectIds.some((id) => id.toString() === cid) ||
+              stringIds.includes(cid)
+            );
+          })
+          .map((info) => info._id.toString()),
+      );
+
+      const coachMatches = candidatePackages.filter((p) => coachPkgIdSet.has(p.pkgId.toString()));
+      const pool = coachMatches.length > 0 ? coachMatches : candidatePackages;
+
+      // 2. Prefer ACTIVE package over DELETED/EXPIRED/COMPLETED
+      pkg = pool.find((p) => p.status === "ACTIVE") || pool[0];
+    }
 
     if (!pkg) {
       throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found for the given start date");
@@ -501,6 +538,16 @@ export class CoachService {
     const packageDoc = packagesInfo.find(p => p._id.toString() === pkg.pkgId.toString());
     if (!packageDoc || packageDoc.category !== "PERSONAL_TRAINING") {
       throw new BadRequestError("INVALID_PACKAGE", "Deduction is only allowed for Personal Training packages");
+    }
+
+    // Ensure this coach is authorized for this particular PT package (if package has coachId)
+    const isCoachForThisPkg = !packageDoc.coachId ||
+      packageDoc.coachId.toString() === coachDocId.toString() ||
+      objectIds.some((id) => id.toString() === packageDoc.coachId?.toString()) ||
+      stringIds.includes(packageDoc.coachId?.toString());
+
+    if (!isCoachForThisPkg && !link) {
+      throw new ForbiddenError("ACCESS_DENIED", "You are not authorized to deduct sessions for this package");
     }
 
     // --- 5. Check remainingClasses > 0 (Req 7.4) ---
@@ -524,7 +571,8 @@ export class CoachService {
         {
           arrayFilters: [
             {
-              "pkg.pkgStartDate": parsedPackageStartDate,
+              "pkg.pkgId": pkg.pkgId,
+              "pkg.pkgStartDate": pkg.pkgStartDate,
             },
           ],
           session,
@@ -536,7 +584,7 @@ export class CoachService {
         coachId: coachDocId,
         memberId: new Types.ObjectId(memberId),
         pkgId: pkg.pkgId,
-        memberPackageStartDate: parsedPackageStartDate,
+        memberPackageStartDate: pkg.pkgStartDate,
         reason,
         sessionDate: parsedSessionDate,
         classesRemainingAfter,
