@@ -7,6 +7,7 @@ import { IMemberPackageData } from "../models/member";
 
 export interface DeductSessionRequestDto {
   memberId: string;
+  pkgId?: string;
   memberPackageStartDate: string;
   reason: string;
   sessionDate: string;
