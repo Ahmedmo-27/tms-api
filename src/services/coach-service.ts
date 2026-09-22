@@ -607,6 +607,8 @@ export class CoachService {
       ...objectIds.map((id) => id.toString()),
       ...stringIds,
     ]);
+    const viewerCoachDoc = await Coach.findById(coachDocId);
+    const viewerCoachName = viewerCoachDoc?.coachName?.trim();
 
     const weekEnd = addDays(weekStart, 7);
     const scheduledClasses = await ScheduledClass.find({
@@ -685,7 +687,9 @@ export class CoachService {
           return { id, name };
         })
         .filter(Boolean);
-      const coachNames = coaches.map((c: any) => c.name).join(", ");
+      const allCoachNames = coaches.map((c: any) => c.name).join(", ");
+      const matchingCoach = coaches.find((c: any) => assignedIds.has(c.id));
+      const sessionCoachName = matchingCoach ? matchingCoach.name : (viewerCoachName || (coaches[0]?.name ?? "Coach"));
 
       const dateStr = formatInTimeZone(scheduledClass.startTime, "Africa/Cairo", "yyyy-MM-dd");
       const sessionDto = {
@@ -698,7 +702,9 @@ export class CoachService {
         bookedCount: scheduledClass.bookedMembers.length,
         location: this.locationLabel(scheduledClass.locationId),
         coaches,
-        coachNames,
+        coachName: sessionCoachName,
+        coachNames: sessionCoachName,
+        allCoachNames,
         clients
       };
 
@@ -735,6 +741,12 @@ export class CoachService {
   static async getScans(coachDocId: Types.ObjectId, date: Date): Promise<any[]> {
     // Resolve all coach lookup IDs (handles multi-coach and composite coach docs)
     const { objectIds, stringIds } = await this.getCoachLookupIds(coachDocId);
+    const assignedIds = new Set([
+      ...objectIds.map((id) => id.toString()),
+      ...stringIds,
+    ]);
+    const viewerCoachDoc = await Coach.findById(coachDocId);
+    const viewerCoachName = viewerCoachDoc?.coachName?.trim();
 
     // Use Cairo calendar-day boundaries to avoid UTC midnight misalignment
     const dayStart = startOfDateCairo(date);
@@ -789,7 +801,9 @@ export class CoachService {
           return { id, name };
         })
         .filter(Boolean) as { id: string; name: string }[];
-      const coachNames = coaches.map((c) => c.name).join(", ");
+      const allCoachNames = coaches.map((c) => c.name).join(", ");
+      const matchingCoach = coaches.find((c) => assignedIds.has(c.id));
+      const sessionCoachName = matchingCoach ? matchingCoach.name : (viewerCoachName || (coaches[0]?.name ?? "Coach"));
 
       result.push({
         scheduledClassId: (sc._id as Types.ObjectId).toString(),
@@ -803,7 +817,9 @@ export class CoachService {
         bookedCount: sc.bookedMembers.length,
         location:    this.locationLabel(sc.locationId),
         coaches,
-        coachNames,
+        coachName:   sessionCoachName,
+        coachNames:  sessionCoachName,
+        allCoachNames,
         scans,
         attendanceConfirmation: sc.attendanceConfirmation?.confirmed
           ? {
@@ -1064,6 +1080,10 @@ export class CoachService {
         endTime: string;
         capacity: number;
         bookedCount: number;
+        coachName?: string;
+        coachNames?: string;
+        allCoachNames?: string;
+        coaches?: { id: string; name: string }[];
       },
       date: string,
     ): TodaySessionSummaryDto => ({
@@ -1075,6 +1095,10 @@ export class CoachService {
       endTime: session.endTime,
       capacity: session.capacity,
       bookedCount: session.bookedCount,
+      coachName: session.coachName,
+      coachNames: session.coachNames,
+      allCoachNames: session.allCoachNames,
+      coaches: session.coaches,
     });
 
     const todaySessions = (schedule.days.find((d) => d.date === todayKey)?.sessions ?? []).map(
