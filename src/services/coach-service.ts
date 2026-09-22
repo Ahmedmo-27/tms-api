@@ -825,10 +825,12 @@ export class CoachService {
     }
 
     const count = Math.max(0, Math.floor(Number(data.confirmedCount) || 0));
+    // Compare against actual scanned-in members (SUCCESS scans), not bookings
+    const successScanCount = scheduledClass.scans.filter((s: any) => s.status === true).length;
     const hasMissingPlace =
       typeof data.hasMissingPlace === "boolean"
         ? data.hasMissingPlace
-        : count < scheduledClass.bookedMembers.length;
+        : count < successScanCount;
 
     scheduledClass.attendanceConfirmation = {
       confirmed: true,

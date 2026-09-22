@@ -11,10 +11,16 @@ describe("Attendance Confirmation & Missing Place", () => {
   const mockOtherCoachDocId = new Types.ObjectId();
   const mockScid = new Types.ObjectId().toString();
 
+  /**
+   * Create a mock ScheduledClass with a given number of booked members and
+   * scans. The `scansSuccessCount` controls how many scans have status=true
+   * (SUCCESS), which is what hasMissingPlace now compares against.
+   */
   const createMockSession = (opts: {
     startTime: Date;
     endTime: Date;
     bookedCount: number;
+    scansSuccessCount?: number;
     coachIds?: Types.ObjectId[];
   }) => {
     const bookedMembers = Array.from({ length: opts.bookedCount }, () => ({
@@ -22,11 +28,20 @@ describe("Attendance Confirmation & Missing Place", () => {
       method: "Test Package",
     }));
 
+    const successCount = opts.scansSuccessCount ?? opts.bookedCount;
+    const scans = Array.from({ length: successCount }, () => ({
+      uid: new Types.ObjectId(),
+      scanTime: new Date(),
+      method: "QR",
+      status: true, // SUCCESS
+    }));
+
     return {
       _id: new Types.ObjectId(mockScid),
       startTime: opts.startTime,
       endTime: opts.endTime,
       bookedMembers,
+      scans,
       coachId: opts.coachIds ?? [mockCoachDocId],
       attendanceConfirmation: undefined as any,
       save: jest.fn().mockResolvedValue(true),
@@ -71,13 +86,14 @@ describe("Attendance Confirmation & Missing Place", () => {
       ).rejects.toThrow(ForbiddenError);
     });
 
-    it("successfully confirms attendance when at or past halfway point and detects missing place", async () => {
+    it("detects missing place when confirmed count is less than scanned-in count", async () => {
       const now = Date.now();
       // Class started 40 mins ago, ends in 20 mins -> halfway was 10 mins ago
       const startTime = new Date(now - 40 * 60 * 1000);
       const endTime = new Date(now + 20 * 60 * 1000);
 
-      const mockSession = createMockSession({ startTime, endTime, bookedCount: 5 });
+      // 5 booked, 5 scanned in, but coach counts only 4 physically present
+      const mockSession = createMockSession({ startTime, endTime, bookedCount: 5, scansSuccessCount: 5 });
       (ScheduledClass.findById as jest.Mock).mockResolvedValue(mockSession);
 
       const mockIo = { emit: jest.fn() };
@@ -91,7 +107,7 @@ describe("Attendance Confirmation & Missing Place", () => {
       expect(mockSession.save).toHaveBeenCalled();
       expect(mockSession.attendanceConfirmation.confirmed).toBe(true);
       expect(mockSession.attendanceConfirmation.confirmedCount).toBe(4);
-      expect(mockSession.attendanceConfirmation.hasMissingPlace).toBe(true); // 4 < 5
+      expect(mockSession.attendanceConfirmation.hasMissingPlace).toBe(true); // 4 < 5 (scans)
       expect(mockSession.attendanceConfirmation.notes).toBe("One member absent");
 
       expect(mockIo.emit).toHaveBeenCalledWith(
@@ -101,12 +117,13 @@ describe("Attendance Confirmation & Missing Place", () => {
       expect(mockIo.emit).toHaveBeenCalledWith("SUCCESS-SCAN");
     });
 
-    it("marks hasMissingPlace false when confirmed count matches booked count", async () => {
+    it("marks hasMissingPlace false when confirmed count matches scanned-in count", async () => {
       const now = Date.now();
       const startTime = new Date(now - 40 * 60 * 1000);
       const endTime = new Date(now + 20 * 60 * 1000);
 
-      const mockSession = createMockSession({ startTime, endTime, bookedCount: 5 });
+      // 5 booked, 5 scanned in, 5 confirmed physically
+      const mockSession = createMockSession({ startTime, endTime, bookedCount: 5, scansSuccessCount: 5 });
       (ScheduledClass.findById as jest.Mock).mockResolvedValue(mockSession);
 
       await CoachService.confirmAttendance(
@@ -118,12 +135,30 @@ describe("Attendance Confirmation & Missing Place", () => {
       expect(mockSession.attendanceConfirmation.hasMissingPlace).toBe(false);
     });
 
+    it("does NOT flag missing place when headcount matches scans even if fewer than bookings", async () => {
+      const now = Date.now();
+      const startTime = new Date(now - 40 * 60 * 1000);
+      const endTime = new Date(now + 20 * 60 * 1000);
+
+      // 5 booked, only 3 actually scanned in, coach counts 3 physically -> no discrepancy
+      const mockSession = createMockSession({ startTime, endTime, bookedCount: 5, scansSuccessCount: 3 });
+      (ScheduledClass.findById as jest.Mock).mockResolvedValue(mockSession);
+
+      await CoachService.confirmAttendance(
+        mockCoachDocId,
+        mockScid,
+        { confirmedCount: 3 }
+      );
+
+      expect(mockSession.attendanceConfirmation.hasMissingPlace).toBe(false);
+    });
+
     it("allows explicit override of hasMissingPlace", async () => {
       const now = Date.now();
       const startTime = new Date(now - 40 * 60 * 1000);
       const endTime = new Date(now + 20 * 60 * 1000);
 
-      const mockSession = createMockSession({ startTime, endTime, bookedCount: 5 });
+      const mockSession = createMockSession({ startTime, endTime, bookedCount: 5, scansSuccessCount: 5 });
       (ScheduledClass.findById as jest.Mock).mockResolvedValue(mockSession);
 
       await CoachService.confirmAttendance(
@@ -137,11 +172,13 @@ describe("Attendance Confirmation & Missing Place", () => {
   });
 
   describe("SchedulerService.confirmAttendance", () => {
-    it("allows admin/management to confirm attendance with location assert", async () => {
+    it("detects missing place when confirmed count is less than scanned-in count", async () => {
+      // 3 scanned in, admin confirms only 2 physically present -> missing place
       const mockSession = createMockSession({
         startTime: new Date(),
         endTime: new Date(),
         bookedCount: 3,
+        scansSuccessCount: 3,
       });
       (ScheduledClass.findById as jest.Mock).mockResolvedValue(mockSession);
       jest.spyOn(SchedulerService, "assertSessionAtLocation").mockResolvedValue(undefined as any);
@@ -156,7 +193,7 @@ describe("Attendance Confirmation & Missing Place", () => {
       expect(mockSession.save).toHaveBeenCalled();
       expect(mockSession.attendanceConfirmation.confirmed).toBe(true);
       expect(mockSession.attendanceConfirmation.confirmedCount).toBe(2);
-      expect(mockSession.attendanceConfirmation.hasMissingPlace).toBe(true);
+      expect(mockSession.attendanceConfirmation.hasMissingPlace).toBe(true); // 2 < 3 (scans)
     });
   });
 });
