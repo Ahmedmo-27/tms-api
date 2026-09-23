@@ -10,6 +10,7 @@ import logger from "./config/logger";
 import { syncEmails } from "./services/imap-service";
 import { PackageStatusService } from "./services/package-status-service";
 import { MissedSessionService } from "./services/missed-session-service";
+import { WaitlistService } from "./services/waitlist-service";
 import { CORS_ORIGINS } from "./config/corsOrigins";
 import User from "./models/user";
 import { setIO } from "./config/socket";
@@ -187,6 +188,15 @@ const startServer = async () => {
         "Missed session notifications disabled (running in development/testing environment)"
       );
     }
+
+    WaitlistService.expireReservations().catch((err) =>
+      logger.error("Initial waitlist reservation expiration failed", err)
+    );
+    setInterval(() => {
+      WaitlistService.expireReservations().catch((err) =>
+        logger.error("Waitlist reservation expiration failed", err)
+      );
+    }, 60 * 1000);
   });
 
   process.on("uncaughtException", (err) => {
