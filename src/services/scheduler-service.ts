@@ -251,6 +251,7 @@ export class SchedulerService {
       .populate({ path: "scans.uid" })
       .populate({ path: "bookedMembers.uid", select: "name phoneNumber" })
       .sort({ startTime: -1 })
+      .limit(200)
       .lean();
 
     return scheduledClasses.map((cls) =>
