@@ -8,14 +8,12 @@ import asyncHandler from "../../utils/asyncHandler";
 import logger from "../../config/logger";
 import { SubscriptionsService } from "../../services/subscriptions-service";
 import { PackageStatusService } from "../../services/package-status-service";
-import { cleanUpDeprecatedPackages } from "../../services/package-deletion-guard";
 
 // GET all packages to subscribe
 export const getPackage = asyncHandler(async function (
   req: Request,
   res: Response
 ): Promise<void> {
-  await cleanUpDeprecatedPackages();
   const { name, category, coachId } = req.query;
   const query: any = { isDeprecated: { $ne: true } };
   if (name) {

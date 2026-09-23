@@ -161,7 +161,6 @@ export const getPackage = asyncHandler(async function (
   req: Request,
   res: Response
 ): Promise<void> {
-  await cleanUpDeprecatedPackages();
   const { name, category, coachId, status, isDeprecated, hidden } = req.query;
   const query: any = {};
   if (name) {
@@ -282,12 +281,14 @@ export const deletePackage = asyncHandler(
       pkg.isDeprecated = true;
       pkg.hidden = true;
       await pkg.save();
+      await cleanUpDeprecatedPackages();
       new SuccessResponse("Package Deprecated!", {
         deletedPackage: pkg,
         message: "Package has been archived (soft-deleted) because it has subscriber or payment history.",
       }).send(res);
     } else {
       await Package.findByIdAndDelete(id);
+      await cleanUpDeprecatedPackages();
       new SuccessResponse("Package Deleted!", {
         deletedPackage: pkg,
         message: "Package has been completely deleted.",

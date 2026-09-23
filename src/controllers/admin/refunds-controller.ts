@@ -233,7 +233,7 @@ export const listRefunds = asyncHandler(
       }
     }
 
-    const refunds = await Refund.find(filter)
+    let refundsQuery = Refund.find(filter)
       .sort({ createdAt: -1 })
       .populate("recordedBy", "name")
       .populate("locationId")
@@ -245,6 +245,12 @@ export const listRefunds = asyncHandler(
           { path: "scid", populate: { path: "cid", select: "title" } },
         ],
       });
+
+    if (!filter.createdAt) {
+      refundsQuery = refundsQuery.limit(200);
+    }
+
+    const refunds = await refundsQuery;
 
     res.status(200).json({
       statusCode: 200,
@@ -290,7 +296,7 @@ export const listCashOuts = asyncHandler(
       }
     }
 
-    const cashouts = await Refund.find(filter)
+    let cashoutsQuery = Refund.find(filter)
       .sort({ createdAt: -1 })
       .populate("recordedBy", "name")
       .populate("locationId")
@@ -302,6 +308,12 @@ export const listCashOuts = asyncHandler(
           { path: "scid", populate: { path: "cid", select: "title" } },
         ],
       });
+
+    if (!filter.createdAt) {
+      cashoutsQuery = cashoutsQuery.limit(200);
+    }
+
+    const cashouts = await cashoutsQuery;
 
     res.status(200).json({
       statusCode: 200,
