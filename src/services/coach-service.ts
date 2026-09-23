@@ -443,6 +443,7 @@ export class CoachService {
   static async deductSession(
     coachDocId: Types.ObjectId,
     dto: DeductSessionRequestDto,
+    io?: any,
   ): Promise<DeductSessionResponseDto> {
     const { memberId, pkgId, memberPackageStartDate, reason, sessionDate } = dto;
 
@@ -562,12 +563,29 @@ export class CoachService {
 
     // --- 7. Execute atomic transaction (Req 7.5) ---
     const classesRemainingAfter = pkg.remainingClasses - 1;
+    const isCompletedSession = reason.trim().toLowerCase().startsWith("completed session");
 
     await runInTransaction(async (session) => {
       // (a) Decrement remainingClasses on the matched package subdocument
+      const updateOp: any = {
+        $inc: { "packages.$[pkg].remainingClasses": -1 },
+      };
+      if (classesRemainingAfter === 0) {
+        updateOp.$set = { "packages.$[pkg].status": "COMPLETED" };
+      }
+      if (isCompletedSession) {
+        updateOp.$addToSet = {
+          ptAttendance: {
+            pkgId: pkg.pkgId,
+            date: format(parsedSessionDate, "yyyy-MM-dd"),
+            attendanceTime: parsedSessionDate,
+          },
+        };
+      }
+
       await Member.updateOne(
         { uid: new Types.ObjectId(memberId) },
-        { $inc: { "packages.$[pkg].remainingClasses": -1 } },
+        updateOp,
         {
           arrayFilters: [
             {
@@ -589,13 +607,37 @@ export class CoachService {
         sessionDate: parsedSessionDate,
         classesRemainingAfter,
       }).save({ session });
+
+      // (c) Record PT attendance only when reason is Completed session
+      if (isCompletedSession) {
+        await DailyAttendance.recordPtAttendance(
+          memberId,
+          packageDoc.name,
+          session,
+          "SUCCESS",
+          io,
+          (pkg as any).locationId?.toString() || packageDoc.locationId?.toString(),
+          coachDocId.toString(),
+          parsedSessionDate,
+        );
+      }
     });
+
+    if (isCompletedSession && io) {
+      io.emit("SUCCESS-SCAN", {
+        code: "PT_CLASS_ATTENDED",
+        message: "Success",
+        memberId,
+        coach: packageDoc.name,
+      });
+    }
 
     // --- 8. Return the updated Member_Package subdocument (Req 7.6) ---
     // Construct the updated state from known values (avoids a second DB round-trip)
     const updatedPkg = {
       ...pkg.toObject(),
       remainingClasses: classesRemainingAfter,
+      ...(classesRemainingAfter === 0 ? { status: "COMPLETED" } : {}),
     };
 
     return mapDeductSessionResponseDto(updatedPkg);
@@ -607,6 +649,8 @@ export class CoachService {
       ...objectIds.map((id) => id.toString()),
       ...stringIds,
     ]);
+    const viewerCoachDoc = await Coach.findById(coachDocId);
+    const viewerCoachName = viewerCoachDoc?.coachName?.trim();
 
     const weekEnd = addDays(weekStart, 7);
     const scheduledClasses = await ScheduledClass.find({
@@ -685,7 +729,9 @@ export class CoachService {
           return { id, name };
         })
         .filter(Boolean);
-      const coachNames = coaches.map((c: any) => c.name).join(", ");
+      const allCoachNames = coaches.map((c: any) => c.name).join(", ");
+      const matchingCoach = coaches.find((c: any) => assignedIds.has(c.id));
+      const sessionCoachName = matchingCoach ? matchingCoach.name : (viewerCoachName || (coaches[0]?.name ?? "Coach"));
 
       const dateStr = formatInTimeZone(scheduledClass.startTime, "Africa/Cairo", "yyyy-MM-dd");
       const sessionDto = {
@@ -698,7 +744,9 @@ export class CoachService {
         bookedCount: scheduledClass.bookedMembers.length,
         location: this.locationLabel(scheduledClass.locationId),
         coaches,
-        coachNames,
+        coachName: sessionCoachName,
+        coachNames: sessionCoachName,
+        allCoachNames,
         clients
       };
 
@@ -735,6 +783,12 @@ export class CoachService {
   static async getScans(coachDocId: Types.ObjectId, date: Date): Promise<any[]> {
     // Resolve all coach lookup IDs (handles multi-coach and composite coach docs)
     const { objectIds, stringIds } = await this.getCoachLookupIds(coachDocId);
+    const assignedIds = new Set([
+      ...objectIds.map((id) => id.toString()),
+      ...stringIds,
+    ]);
+    const viewerCoachDoc = await Coach.findById(coachDocId);
+    const viewerCoachName = viewerCoachDoc?.coachName?.trim();
 
     // Use Cairo calendar-day boundaries to avoid UTC midnight misalignment
     const dayStart = startOfDateCairo(date);
@@ -789,7 +843,9 @@ export class CoachService {
           return { id, name };
         })
         .filter(Boolean) as { id: string; name: string }[];
-      const coachNames = coaches.map((c) => c.name).join(", ");
+      const allCoachNames = coaches.map((c) => c.name).join(", ");
+      const matchingCoach = coaches.find((c) => assignedIds.has(c.id));
+      const sessionCoachName = matchingCoach ? matchingCoach.name : (viewerCoachName || (coaches[0]?.name ?? "Coach"));
 
       result.push({
         scheduledClassId: (sc._id as Types.ObjectId).toString(),
@@ -803,7 +859,9 @@ export class CoachService {
         bookedCount: sc.bookedMembers.length,
         location:    this.locationLabel(sc.locationId),
         coaches,
-        coachNames,
+        coachName:   sessionCoachName,
+        coachNames:  sessionCoachName,
+        allCoachNames,
         scans,
         attendanceConfirmation: sc.attendanceConfirmation?.confirmed
           ? {
@@ -1064,6 +1122,10 @@ export class CoachService {
         endTime: string;
         capacity: number;
         bookedCount: number;
+        coachName?: string;
+        coachNames?: string;
+        allCoachNames?: string;
+        coaches?: { id: string; name: string }[];
       },
       date: string,
     ): TodaySessionSummaryDto => ({
@@ -1075,6 +1137,10 @@ export class CoachService {
       endTime: session.endTime,
       capacity: session.capacity,
       bookedCount: session.bookedCount,
+      coachName: session.coachName,
+      coachNames: session.coachNames,
+      allCoachNames: session.allCoachNames,
+      coaches: session.coaches,
     });
 
     const todaySessions = (schedule.days.find((d) => d.date === todayKey)?.sessions ?? []).map(

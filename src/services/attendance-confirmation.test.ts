@@ -48,6 +48,13 @@ describe("Attendance Confirmation & Missing Place", () => {
     };
   };
 
+  beforeEach(() => {
+    jest.spyOn(CoachService, "getCoachLookupIds").mockImplementation(async (coachDocId) => ({
+      objectIds: [coachDocId],
+      stringIds: [coachDocId.toString()],
+    }));
+  });
+
   afterEach(() => {
     jest.clearAllMocks();
   });

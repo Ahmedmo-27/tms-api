@@ -69,7 +69,8 @@ export const getMemberPackages = asyncHandler(async (req: Request, res: Response
  */
 export const deductSession = asyncHandler(async (req: Request, res: Response) => {
   const coachReq = req as CoachAuthRequest;
-  const result = await CoachService.deductSession(coachReq.coachDocId, req.body as DeductSessionRequestDto);
+  const io = req.app.get("io");
+  const result = await CoachService.deductSession(coachReq.coachDocId, req.body as DeductSessionRequestDto, io);
   return new SuccessResponse("Session deducted", { package: result }).send(res);
 });
 

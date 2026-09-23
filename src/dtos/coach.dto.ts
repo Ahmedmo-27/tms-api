@@ -73,7 +73,9 @@ export interface ScheduleSessionDto {
   bookedCount: number;
   location: string | null;
   coaches?: { id: string; name: string }[];
+  coachName?: string;
   coachNames?: string;
+  allCoachNames?: string;
   clients: CalendarClientDto[];
 }
 
@@ -135,7 +137,9 @@ export interface TodaySessionSummaryDto {
   capacity: number;
   bookedCount: number;
   coaches?: { id: string; name: string }[];
+  coachName?: string;
   coachNames?: string;
+  allCoachNames?: string;
 }
 
 export interface TodayPtAlertDto {
