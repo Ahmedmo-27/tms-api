@@ -443,6 +443,7 @@ export class CoachService {
   static async deductSession(
     coachDocId: Types.ObjectId,
     dto: DeductSessionRequestDto,
+    io?: any,
   ): Promise<DeductSessionResponseDto> {
     const { memberId, pkgId, memberPackageStartDate, reason, sessionDate } = dto;
 
@@ -562,12 +563,29 @@ export class CoachService {
 
     // --- 7. Execute atomic transaction (Req 7.5) ---
     const classesRemainingAfter = pkg.remainingClasses - 1;
+    const isCompletedSession = reason.trim().toLowerCase().startsWith("completed session");
 
     await runInTransaction(async (session) => {
       // (a) Decrement remainingClasses on the matched package subdocument
+      const updateOp: any = {
+        $inc: { "packages.$[pkg].remainingClasses": -1 },
+      };
+      if (classesRemainingAfter === 0) {
+        updateOp.$set = { "packages.$[pkg].status": "COMPLETED" };
+      }
+      if (isCompletedSession) {
+        updateOp.$addToSet = {
+          ptAttendance: {
+            pkgId: pkg.pkgId,
+            date: format(parsedSessionDate, "yyyy-MM-dd"),
+            attendanceTime: parsedSessionDate,
+          },
+        };
+      }
+
       await Member.updateOne(
         { uid: new Types.ObjectId(memberId) },
-        { $inc: { "packages.$[pkg].remainingClasses": -1 } },
+        updateOp,
         {
           arrayFilters: [
             {
@@ -589,13 +607,37 @@ export class CoachService {
         sessionDate: parsedSessionDate,
         classesRemainingAfter,
       }).save({ session });
+
+      // (c) Record PT attendance only when reason is Completed session
+      if (isCompletedSession) {
+        await DailyAttendance.recordPtAttendance(
+          memberId,
+          packageDoc.name,
+          session,
+          "SUCCESS",
+          io,
+          (pkg as any).locationId?.toString() || packageDoc.locationId?.toString(),
+          coachDocId.toString(),
+          parsedSessionDate,
+        );
+      }
     });
+
+    if (isCompletedSession && io) {
+      io.emit("SUCCESS-SCAN", {
+        code: "PT_CLASS_ATTENDED",
+        message: "Success",
+        memberId,
+        coach: packageDoc.name,
+      });
+    }
 
     // --- 8. Return the updated Member_Package subdocument (Req 7.6) ---
     // Construct the updated state from known values (avoids a second DB round-trip)
     const updatedPkg = {
       ...pkg.toObject(),
       remainingClasses: classesRemainingAfter,
+      ...(classesRemainingAfter === 0 ? { status: "COMPLETED" } : {}),
     };
 
     return mapDeductSessionResponseDto(updatedPkg);
