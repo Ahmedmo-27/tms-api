@@ -13,6 +13,7 @@ import { MissedSessionService } from "./services/missed-session-service";
 import { WaitlistService } from "./services/waitlist-service";
 import { CORS_ORIGINS } from "./config/corsOrigins";
 import User from "./models/user";
+import Member from "./models/member";
 import { setIO } from "./config/socket";
 
 const app = require("./app"); // your Express app
@@ -32,6 +33,43 @@ const startServer = async () => {
       { arrayFilters: [{ "elem.device": "mobile" }] }
     );
     logger.info("Migrated member and mobile tokens to non-expiring");
+
+    // Ensure all users with active member packages have role: "member"
+    const membersWithActivePkgs = await Member.find({
+      "packages.status": { $in: ["ACTIVE", "FROZEN"] },
+    }).select("uid");
+    const activeUids = membersWithActivePkgs.map((m) => m.uid).filter(Boolean);
+    if (activeUids.length > 0) {
+      await User.updateMany(
+        { _id: { $in: activeUids }, role: "user" },
+        { $set: { role: "member" } }
+      );
+    }
+
+    // Ensure all users with role: "member" have a Member document
+    const memberUsers = await User.find({ role: "member" }).select("_id");
+    if (memberUsers.length > 0) {
+      const memberUserIds = memberUsers.map((u) => u._id);
+      const existingMemberDocs = await Member.find({
+        uid: { $in: memberUserIds },
+      }).select("uid");
+      const existingUidsSet = new Set(existingMemberDocs.map((m) => m.uid?.toString()));
+      const missingUsers = memberUsers.filter(
+        (u: any) => !existingUidsSet.has(u._id?.toString())
+      );
+      if (missingUsers.length > 0) {
+        await Member.insertMany(
+          missingUsers.map((u: any) => ({
+            uid: u._id,
+            packages: [],
+            bookings: [],
+            attendance: [],
+            isActive: true,
+          }))
+        );
+        logger.info(`Self-healed ${missingUsers.length} missing Member documents`);
+      }
+    }
   } catch (migErr) {
     logger.warn("Token migration warning:", migErr);
   }

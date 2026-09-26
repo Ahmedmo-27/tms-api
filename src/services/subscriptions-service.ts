@@ -199,6 +199,10 @@ export class SubscriptionsService {
       const user = await User.findOne({ _id: new Types.ObjectId(uid) }).session(
         session,
       );
+      if (user && user.role === "user") {
+        user.role = "member";
+        await user.save(session ? { session } : {});
+      }
       if (user?.phoneNumber) {
         await SubscriptionsService.assertNoDuplicateNonUserPackage(
           user.phoneNumber,
@@ -632,6 +636,14 @@ export class SubscriptionsService {
       await NonUserPackage.findByIdAndUpdate(
         savedPkg._id as Types.ObjectId,
         { added: true },
+        session ? { session } : {}
+      );
+    }
+
+    if (savedPkgs.length > 0) {
+      await User.findByIdAndUpdate(
+        uid,
+        { role: "member" },
         session ? { session } : {}
       );
     }

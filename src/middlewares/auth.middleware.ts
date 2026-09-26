@@ -83,6 +83,7 @@ export const authenticateUser = asyncHandler(
       iat?: number;
       exp?: number;
     };
+    let jwtExpired = false;
     try {
       const secret = process.env.JWT_SECRET;
       if (!secret)
@@ -100,6 +101,7 @@ export const authenticateUser = asyncHandler(
         try {
           const secret = process.env.JWT_SECRET!;
           decoded = jwt.verify(token, secret, { ignoreExpiration: true }) as any;
+          jwtExpired = true;
         } catch {
           throw new TokenExpiredError("TOKEN_EXPIRED", "Token expired");
         }
@@ -122,7 +124,7 @@ export const authenticateUser = asyncHandler(
     // For web staff users, enforce token expiration
     if (!isMemberOrMobile && deviceType === "web") {
       const matchedToken = user.tokens.find((t) => t.token === token);
-      if (matchedToken?.expiresIn && new Date(matchedToken.expiresIn) <= new Date()) {
+      if (jwtExpired || (matchedToken?.expiresIn && new Date(matchedToken.expiresIn) <= new Date())) {
         throw new TokenExpiredError("TOKEN_EXPIRED", "Token expired");
       }
     }

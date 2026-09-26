@@ -13,6 +13,7 @@ import { PaymentsService } from "./payments-service";
 import { runInTransaction } from "../utils/transaction";
 import Reservation from "../models/reservation";
 import WaitlistEntry from "../models/waitlistEntry";
+import User from "../models/user";
 
 jest.mock("../models/member");
 jest.mock("../models/scheduledClass");
@@ -21,6 +22,7 @@ jest.mock("../models/promoCode");
 jest.mock("../models/payment");
 jest.mock("../models/reservation");
 jest.mock("../models/waitlistEntry");
+jest.mock("../models/user");
 jest.mock("./payments-service");
 jest.mock("./scheduler-service");
 jest.mock("./egygap-erp-service", () => ({
@@ -79,7 +81,7 @@ describe("Non-Member Access: View Classes, Drop-ins Only, Packages Blocked", () 
   });
 
   describe("BookingsService.bookDropIn", () => {
-    it("blocks non-members from booking drop-ins while paused", async () => {
+    it("allows non-member to book drop-in for a class at any branch without Matcha restriction", async () => {
       const scheduledClass = {
         _id: new Types.ObjectId(scid),
         availableSlots: 10,
@@ -97,10 +99,28 @@ describe("Non-Member Access: View Classes, Drop-ins Only, Packages Blocked", () 
       (ScheduledClass.findById as jest.Mock).mockReturnValue({
         populate: jest.fn().mockResolvedValue(scheduledClass),
       });
+      (Member.findOne as jest.Mock).mockResolvedValue({
+        _id: new Types.ObjectId(),
+        uid,
+        bookings: [],
+      });
+      (Reservation.countDocuments as jest.Mock).mockResolvedValue(0);
+      (Reservation.findOne as jest.Mock).mockResolvedValue(null);
+      (WaitlistEntry.findOne as jest.Mock).mockResolvedValue(null);
+      (appPackageLocation.resolveSessionPaymentLocationId as jest.Mock).mockResolvedValue("loc-cairo");
+      (PaymentsService.findPaymentByMerchantReference as jest.Mock).mockResolvedValue(null);
+      (PaymentsService.savePayment as jest.Mock).mockResolvedValue({ _id: new Types.ObjectId() });
+      (Member.saveDropIn as jest.Mock).mockResolvedValue(undefined);
+      (ScheduledClass.bookMember as jest.Mock).mockResolvedValue(undefined);
+      (Payment.findOne as jest.Mock).mockReturnValue({
+        session: jest.fn().mockResolvedValue(null),
+      });
 
       await expect(
         BookingsService.bookDropIn(uid, scid, "ref-test-123"),
-      ).rejects.toThrow("Drop-in bookings require membership");
+      ).resolves.not.toThrow();
+
+      expect(Member.saveDropIn).toHaveBeenCalled();
     });
   });
 
@@ -225,6 +245,97 @@ describe("Non-Member Access: View Classes, Drop-ins Only, Packages Blocked", () 
         }),
       });
       (Member.populate as jest.Mock).mockResolvedValue(mockMemberDoc);
+
+      const req: any = {
+        user: { _id: new Types.ObjectId(uid), role: "member" },
+      };
+      let result: any = null;
+      const res: any = {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn((data) => {
+          result = data;
+        }),
+      };
+
+      const { getMemberProfile } = await import("../controllers/client/member-controller");
+      await getMemberProfile(req, res, () => {});
+
+      expect(result).toBeDefined();
+      expect(result.data.isMember).toBe(true);
+      expect(result.data.role).toBe("member");
+    });
+
+    it("returns isMember: true and promotes role: 'member' when user with role 'user' has active packages", async () => {
+      const mockMemberDoc = {
+        uid: new Types.ObjectId(uid),
+        bookings: [],
+        packages: [
+          {
+            pkgId: new Types.ObjectId(),
+            status: "ACTIVE",
+            remainingClasses: 5,
+          },
+        ],
+        toObject: () => ({
+          uid,
+          bookings: [],
+          packages: [
+            {
+              pkgId: new Types.ObjectId(),
+              status: "ACTIVE",
+              remainingClasses: 5,
+            },
+          ],
+        }),
+      };
+
+      (Member.findOne as jest.Mock).mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          populate: jest.fn().mockResolvedValue(mockMemberDoc),
+        }),
+      });
+      (Member.populate as jest.Mock).mockResolvedValue(mockMemberDoc);
+      (User.findByIdAndUpdate as jest.Mock).mockResolvedValue({});
+
+      const req: any = {
+        user: { _id: new Types.ObjectId(uid), role: "user" },
+      };
+      let result: any = null;
+      const res: any = {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn((data) => {
+          result = data;
+        }),
+      };
+
+      const { getMemberProfile } = await import("../controllers/client/member-controller");
+      await getMemberProfile(req, res, () => {});
+
+      expect(result).toBeDefined();
+      expect(result.data.isMember).toBe(true);
+      expect(result.data.role).toBe("member");
+      expect(User.findByIdAndUpdate).toHaveBeenCalledWith(
+        expect.anything(),
+        { role: "member" },
+      );
+    });
+
+    it("lazily creates Member doc and returns isMember: true when member has no doc", async () => {
+      (Member.findOne as jest.Mock).mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          populate: jest.fn().mockResolvedValue(null),
+        }),
+      });
+
+      const mockSavedDoc = {
+        uid: new Types.ObjectId(uid),
+        bookings: [],
+        packages: [],
+        save: jest.fn().mockResolvedValue(undefined),
+        populate: jest.fn().mockResolvedValue(undefined),
+        toObject: () => ({ uid, bookings: [], packages: [] }),
+      };
+      (Member as any).mockImplementation?.(() => mockSavedDoc);
 
       const req: any = {
         user: { _id: new Types.ObjectId(uid), role: "member" },
