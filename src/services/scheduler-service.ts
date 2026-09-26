@@ -145,10 +145,15 @@ export class SchedulerService {
     const doc = typeof cls.toObject === "function" ? cls.toObject() : { ...cls };
     const sessionLocation = this.resolveSessionLocation(cls);
     const locationId = this.shapeLocationId(sessionLocation);
+    const availableSlots =
+      typeof doc.availableSlots === "number"
+        ? Math.max(0, doc.availableSlots)
+        : doc.availableSlots;
 
     if (!sessionLocation) {
       return {
         ...doc,
+        availableSlots,
         locationId,
         locations: doc.cid?.locations ?? [],
       };
@@ -165,6 +170,7 @@ export class SchedulerService {
 
     return {
       ...doc,
+      availableSlots,
       cid,
       locationId,
       locations: sessionLocations,

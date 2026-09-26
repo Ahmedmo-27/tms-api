@@ -13,7 +13,10 @@ export function mapScheduledClassDTO(
       category: classInfo?.category ?? "",
       startTime: sc.startTime,
       endTime: sc.endTime,
-      availableSlots: sc.availableSlots,
+      availableSlots:
+        typeof sc.availableSlots === "number"
+          ? Math.max(0, sc.availableSlots)
+          : sc.availableSlots,
       locations: classInfo?.locations ?? [],
       locationId: sc.locationId,
       price: classInfo?.price ?? 0,
