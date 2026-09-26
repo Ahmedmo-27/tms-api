@@ -1545,13 +1545,6 @@ export class BookingsService {
     if (!scheduledClass)
       throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
 
-    if (await isPendingMember(uid)) {
-      throw new ForbiddenError(
-        "MEMBERSHIP_REQUIRED",
-        "Drop-in bookings require membership",
-      );
-    }
-
     let member = await Member.findOne({ uid });
     if (!member) {
       await ensureMemberForPendingPurchase(uid);
