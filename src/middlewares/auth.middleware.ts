@@ -112,7 +112,6 @@ export const authenticateUser = asyncHandler(
 
     const user = await User.findOne({
       _id: new Types.ObjectId(decoded.uid),
-      "tokens.token": token,
     });
     if (!user) throw new BadTokenError("INVALID_TOKEN", "Invalid token - user not found or token revoked");
 
@@ -121,24 +120,46 @@ export const authenticateUser = asyncHandler(
       user.role === "member" ||
       user.role === "user";
 
-    // For web staff users, enforce token expiration
-    if (!isMemberOrMobile && deviceType === "web") {
-      const matchedToken = user.tokens.find((t) => t.token === token);
-      if (jwtExpired || (matchedToken?.expiresIn && new Date(matchedToken.expiresIn) <= new Date())) {
-        throw new TokenExpiredError("TOKEN_EXPIRED", "Token expired");
+    const matchedToken = Array.isArray(user.tokens)
+      ? user.tokens.find((t) => t.token === token)
+      : undefined;
+
+    // For web staff users, strictly require token in DB and enforce token expiration
+    if (!isMemberOrMobile) {
+      if (!matchedToken) {
+        throw new BadTokenError("INVALID_TOKEN", "Invalid token - user not found or token revoked");
+      }
+      if (deviceType === "web") {
+        if (jwtExpired || (matchedToken.expiresIn && new Date(matchedToken.expiresIn) <= new Date())) {
+          throw new TokenExpiredError("TOKEN_EXPIRED", "Token expired");
+        }
       }
     }
 
-    // Self-healing: if an active member token has an old expiresIn or web device label in DB,
-    // convert it to a non-expiring mobile token so it is permanently protected.
-    if (isMemberOrMobile) {
-      const matchedToken = user.tokens.find((t) => t.token === token);
-      if (matchedToken && (matchedToken.expiresIn || matchedToken.device !== "mobile")) {
+    // Self-healing for mobile/member users:
+    // 1. If a cryptographically valid token is missing from user.tokens in DB (e.g. wiped by legacy cleanup),
+    //    restore it automatically so the member is never forced to re-login.
+    // 2. If an active member token has an old expiresIn or web device label in DB,
+    //    convert it to a non-expiring mobile token so it is permanently protected.
+    if (isMemberOrMobile && Array.isArray(user.tokens)) {
+      if (!matchedToken) {
+        user.tokens.push({
+          token,
+          device: "mobile",
+        });
+        if (typeof user.save === "function") {
+          user.save().catch((err) =>
+            logger.warn("Failed to persist restored member token", { error: (err as Error).message })
+          );
+        }
+      } else if (matchedToken.expiresIn || matchedToken.device !== "mobile") {
         matchedToken.expiresIn = undefined;
         matchedToken.device = "mobile";
-        user.save().catch((err) =>
-          logger.warn("Failed to persist self-healing member token", { error: (err as Error).message })
-        );
+        if (typeof user.save === "function") {
+          user.save().catch((err) =>
+            logger.warn("Failed to persist self-healing member token", { error: (err as Error).message })
+          );
+        }
       }
     }
 
