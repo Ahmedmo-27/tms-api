@@ -487,7 +487,7 @@ MemberSchema.static(
           : "You have already booked this class"
       );
 
-    const hasAnyPackage = member.packages.length > 0;
+    const hasAnyPackage = member.packages.some((p) => p.status !== "DELETED");
     const hasAnyActivePackage = member.packages.some(
       (p) => p.status === "ACTIVE"
     );
@@ -495,9 +495,15 @@ MemberSchema.static(
       (p) => pkgs.includes(p.pkgId.toString()) && p.status === "ACTIVE"
     );
     if (memberPkgs.length <= 0) {
-      const matchingAnyStatus = member.packages.filter((p) =>
-        pkgs.includes(p.pkgId.toString())
-      );
+      const now = new Date();
+      const matchingAnyStatus = member.packages
+        .filter(
+          (p) => pkgs.includes(p.pkgId.toString()) && p.status !== "DELETED"
+        )
+        .sort(
+          (a, b) =>
+            new Date(b.pkgEndDate).getTime() - new Date(a.pkgEndDate).getTime()
+        );
       if (matchingAnyStatus.length > 0) {
         const frozen = matchingAnyStatus.find(
           (p) => p.status === "FROZEN" || (p as any).freezeInfo?.isFrozen
@@ -522,8 +528,28 @@ MemberSchema.static(
           );
         }
 
+        const activeWindowDepleted = matchingAnyStatus.find(
+          (p) =>
+            new Date(p.pkgEndDate) >= now &&
+            (p.status === "COMPLETED" || p.remainingClasses <= 0)
+        );
+        if (activeWindowDepleted) {
+          throw new ForbiddenError(
+            "NO_REMAINING_SESSIONS",
+            bookingPackageErrorMessage("NO_REMAINING_SESSIONS", className, {
+              packageName: activeWindowDepleted.name,
+              audience,
+            }),
+            {
+              className,
+              packageName: activeWindowDepleted.name,
+              remainingClasses: 0,
+            }
+          );
+        }
+
         const expired = matchingAnyStatus.find(
-          (p) => p.status === "EXPIRED" || new Date(p.pkgEndDate) < new Date()
+          (p) => p.status === "EXPIRED" || new Date(p.pkgEndDate) < now
         );
         if (expired) {
           const dateStr = new Date(expired.pkgEndDate).toLocaleDateString("en-GB", {
@@ -557,7 +583,7 @@ MemberSchema.static(
         }
 
         const future = matchingAnyStatus.find(
-          (p) => new Date(p.pkgStartDate) > new Date()
+          (p) => new Date(p.pkgStartDate) > now
         );
         if (future) {
           const dateStr = new Date(future.pkgStartDate).toLocaleDateString("en-GB", {
@@ -1156,9 +1182,14 @@ MemberSchema.static(
     );
 
     if (memberPkgs.length <= 0) {
-      const candidatePkgs = member.packages.filter((p) =>
-        pkgIds.includes(p.pkgId.toString())
-      );
+      const candidatePkgs = member.packages
+        .filter(
+          (p) => pkgIds.includes(p.pkgId.toString()) && p.status !== "DELETED"
+        )
+        .sort(
+          (a, b) =>
+            new Date(b.pkgEndDate).getTime() - new Date(a.pkgEndDate).getTime()
+        );
       const frozenPkg = candidatePkgs.find(
         (p) => p.status === "FROZEN" || p.freezeInfo?.isFrozen
       );
@@ -1417,9 +1448,15 @@ MemberSchema.static(
     );
 
     if (memberPkgs.length <= 0) {
-      const candidatePkgs = member.packages.filter((p) =>
-        pkgIds.includes(p.pkgId.toString())
-      );
+      const now = new Date();
+      const candidatePkgs = member.packages
+        .filter(
+          (p) => pkgIds.includes(p.pkgId.toString()) && p.status !== "DELETED"
+        )
+        .sort(
+          (a, b) =>
+            new Date(b.pkgEndDate).getTime() - new Date(a.pkgEndDate).getTime()
+        );
       const frozenPkg = candidatePkgs.find(
         (p) => p.status === "FROZEN" || p.freezeInfo?.isFrozen
       );
@@ -1456,8 +1493,30 @@ MemberSchema.static(
         return null;
       }
 
+      const activeWindowCompletedPkg = candidatePkgs.find(
+        (p) =>
+          new Date(p.pkgEndDate) >= now &&
+          (p.status === "COMPLETED" || Number(p.remainingClasses) <= 0)
+      );
+      if (activeWindowCompletedPkg) {
+        const catalogDoc = await Package.findById(activeWindowCompletedPkg.pkgId).session(session);
+        const pkgName = catalogDoc?.name || "Package";
+        const message = `Package "${pkgName}" has no remaining sessions.`;
+
+        io.emit("FAILED-SCAN", {
+          code: "NO_REMAINING_SESSIONS",
+          message,
+          member: (member.uid as any).name,
+          packageName: pkgName,
+          status: "COMPLETED",
+          remainingClasses: 0,
+          ...(locationId ? { locationId } : {}),
+        });
+        return null;
+      }
+
       const expiredPkg = candidatePkgs.find(
-        (p) => p.status === "EXPIRED" || new Date(p.pkgEndDate) < new Date()
+        (p) => p.status === "EXPIRED" || new Date(p.pkgEndDate) < now
       );
       if (expiredPkg) {
         const catalogDoc = await Package.findById(expiredPkg.pkgId).session(session);

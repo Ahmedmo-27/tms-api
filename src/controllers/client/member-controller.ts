@@ -39,7 +39,14 @@ export const getMemberProfile: RequestHandler = asyncHandler(async function (
 
   if (!member && !isMember) {
     new SuccessResponse("Member Found!", {
-      uid: _id,
+      uid: {
+        _id: _id,
+        id: _id,
+        name: authReq.user.name,
+        email: authReq.user.email,
+        phoneNumber: authReq.user.phoneNumber,
+        role: "user",
+      },
       packages: [],
       bookings: [],
       attendance: [],
