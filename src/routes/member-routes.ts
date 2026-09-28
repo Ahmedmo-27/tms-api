@@ -32,9 +32,12 @@ import {
   updateFcmToken,
   removeFcmToken,
 } from "../controllers/admin/notifications-controller";
+import { checkMobileAppVersion } from "../middlewares/appVersion.middleware";
 
 const memberRoutes = express.Router();
 const memberOrPending = ["member", "user"] as const;
+
+memberRoutes.use(checkMobileAppVersion);
 
 // Profile Routes
 memberRoutes.get(

@@ -23,6 +23,17 @@ import { runInTransaction } from "../../utils/transaction";
 import { normalizePhoneNumber } from "../../utils/phone";
 import { authCookieOptions } from "../../utils/authCookies";
 import { CoachService } from "../../services/coach-service";
+import {
+  evaluateAppVersion,
+  extractAppVersion,
+} from "../../middlewares/appVersion.middleware";
+
+export const getAppVersionInfo = asyncHandler(
+  async (req: Request, res: Response): Promise<void> => {
+    const versionInfo = evaluateAppVersion(extractAppVersion(req));
+    new SuccessResponse("App Version Info", versionInfo).send(res);
+  }
+);
 
 export function assertPasswordStrength(password: unknown): string {
   if (typeof password !== "string") {
@@ -173,6 +184,12 @@ export const loginUser = asyncHandler(
       req.body.deviceType === "mobile" ||
       fcmToken
     ) ? "mobile" : "web";
+    if (deviceType === "mobile") {
+      const versionInfo = evaluateAppVersion(extractAppVersion(req));
+      if (versionInfo.forceUpdate) {
+        throw new ForbiddenError("APP_UPDATE_REQUIRED", versionInfo.forceMessage);
+      }
+    }
     logger.info("Started user login", {
       data: { phoneNumber, deviceType },
     });
