@@ -210,6 +210,7 @@ export const addPackage = asyncHandler(
       classRestrictions,
       expiryPeriod,
       numberOfSessions,
+      notes,
     } = req.body;
 
     validatePackagePayload({
@@ -242,6 +243,9 @@ export const addPackage = asyncHandler(
       opensClasses,
     });
 
+    const trimmedNotes =
+      typeof notes === "string" ? notes.trim() : undefined;
+
     const pkg = new Package({
       name: name.trim(),
       numberOfSessions: normalized.numberOfSessions,
@@ -251,6 +255,7 @@ export const addPackage = asyncHandler(
       coachId,
       opensClasses,
       classRestrictions,
+      ...(trimmedNotes !== undefined ? { notes: trimmedNotes } : {}),
       ...(targetLocationId
         ? { locationId: new Types.ObjectId(targetLocationId) }
         : {}),
@@ -312,6 +317,7 @@ export const updatePackage = asyncHandler(
       "classRestrictions",
       "locationId",
       "coachId",
+      "notes",
     ];
     const updates = Object.keys(req.body);
     const isValidUpdate = updates.every((update) =>
@@ -356,6 +362,12 @@ export const updatePackage = asyncHandler(
       expiryPeriod: normalized.expiryPeriod,
       numberOfSessions: normalized.numberOfSessions,
     };
+    if (updatePayload.notes !== undefined) {
+      updatePayload.notes =
+        typeof updatePayload.notes === "string"
+          ? updatePayload.notes.trim()
+          : "";
+    }
     if (updatePayload.locationId !== undefined && updatePayload.locationId !== null) {
       const locationObjectId = toObjectId(updatePayload.locationId as string);
       if (!locationObjectId) {
