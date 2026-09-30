@@ -1,10 +1,12 @@
 import { Types } from "mongoose";
 import ScheduledClass from "../models/scheduledClass";
+import NonUserBooking from "../models/nonUserBookings";
 import { CoachService } from "./coach-service";
 import { SchedulerService } from "./scheduler-service";
 import { BadRequestError, ForbiddenError, NotFoundError } from "../core/ApiError";
 
 jest.mock("../models/scheduledClass");
+jest.mock("../models/nonUserBookings");
 
 describe("Attendance Confirmation & Missing Place", () => {
   const mockCoachDocId = new Types.ObjectId();
@@ -53,6 +55,7 @@ describe("Attendance Confirmation & Missing Place", () => {
       objectIds: [coachDocId],
       stringIds: [coachDocId.toString()],
     }));
+    (NonUserBooking.countDocuments as jest.Mock).mockResolvedValue(0);
   });
 
   afterEach(() => {
@@ -142,6 +145,31 @@ describe("Attendance Confirmation & Missing Place", () => {
       expect(mockSession.attendanceConfirmation.hasMissingPlace).toBe(false);
     });
 
+    it("includes attended/paid walk-in NonUserBookings in scanned-in count", async () => {
+      const now = Date.now();
+      const startTime = new Date(now - 40 * 60 * 1000);
+      const endTime = new Date(now + 20 * 60 * 1000);
+
+      // 5 member scans + 1 walk-in attended = 6 total scanned in
+      const mockSession = createMockSession({ startTime, endTime, bookedCount: 5, scansSuccessCount: 5 });
+      (ScheduledClass.findById as jest.Mock).mockResolvedValue(mockSession);
+      (NonUserBooking.countDocuments as jest.Mock).mockResolvedValue(1);
+
+      await CoachService.confirmAttendance(
+        mockCoachDocId,
+        mockScid,
+        { confirmedCount: 5 }
+      );
+      expect(mockSession.attendanceConfirmation.hasMissingPlace).toBe(true); // 5 < 6
+
+      await CoachService.confirmAttendance(
+        mockCoachDocId,
+        mockScid,
+        { confirmedCount: 6 }
+      );
+      expect(mockSession.attendanceConfirmation.hasMissingPlace).toBe(false); // 6 === 6
+    });
+
     it("does NOT flag missing place when headcount matches scans even if fewer than bookings", async () => {
       const now = Date.now();
       const startTime = new Date(now - 40 * 60 * 1000);
@@ -201,6 +229,86 @@ describe("Attendance Confirmation & Missing Place", () => {
       expect(mockSession.attendanceConfirmation.confirmed).toBe(true);
       expect(mockSession.attendanceConfirmation.confirmedCount).toBe(2);
       expect(mockSession.attendanceConfirmation.hasMissingPlace).toBe(true); // 2 < 3 (scans)
+    });
+  });
+
+  describe("CoachService.getScans & NonUserBooking walk-ins", () => {
+    it("merges ATTENDED (WILL_PAY) and PAID (SUCCESS) walk-ins and adjusts bookedCount and capacity", async () => {
+      const ClassModel = require("../models/class").default;
+      const CoachModel = require("../models/coach").default;
+      const cid = new Types.ObjectId();
+      const scidObj = new Types.ObjectId(mockScid);
+      const startTime = new Date("2026-09-30T10:00:00.000Z");
+      const endTime = new Date("2026-09-30T11:00:00.000Z");
+
+      jest.spyOn(CoachModel, "findById").mockResolvedValue({
+        _id: mockCoachDocId,
+        coachName: "Coach A",
+      } as any);
+
+      jest.spyOn(ClassModel, "find").mockResolvedValue([
+        { _id: cid, title: "Reformer Pilates", category: "PILATES" },
+      ] as any);
+
+      const mockQuery = {
+        populate: jest.fn().mockReturnThis(),
+        sort: jest.fn().mockResolvedValue([
+          {
+            _id: scidObj,
+            cid,
+            startTime,
+            endTime,
+            availableSlots: 3, // 10 capacity - 5 members - 2 walk-ins = 3 availableSlots
+            bookedMembers: Array.from({ length: 5 }, () => ({ uid: new Types.ObjectId() })),
+            scans: [
+              {
+                uid: { _id: new Types.ObjectId(), name: "Member One", phoneNumber: "01000000001" },
+                scanTime: startTime,
+                method: "Package",
+                status: true,
+              },
+            ],
+            coachId: [
+              { _id: mockCoachDocId, coachName: "Coach A" },
+              { _id: mockOtherCoachDocId, coachName: "Coach B" },
+            ],
+            locationId: { branchName: "New Cairo" },
+          },
+        ]),
+      };
+      (ScheduledClass.find as jest.Mock).mockReturnValue(mockQuery);
+
+      (NonUserBooking.find as jest.Mock).mockResolvedValue([
+        {
+          _id: new Types.ObjectId(),
+          scid: scidObj,
+          name: "WalkIn Attended",
+          phoneNumber: "01200000001",
+          status: "ATTENDED",
+          attendanceTime: startTime,
+          bookingTime: startTime,
+        },
+        {
+          _id: new Types.ObjectId(),
+          scid: scidObj,
+          name: "WalkIn Paid",
+          phoneNumber: "01200000002",
+          status: "PAID",
+          attendanceTime: startTime,
+          bookingTime: startTime,
+        },
+      ]);
+
+      const result = await CoachService.getScans(mockCoachDocId, startTime);
+      expect(result).toHaveLength(1);
+      const session = result[0];
+      expect(session.bookedCount).toBe(7); // 5 members + 2 walk-ins
+      expect(session.capacity).toBe(10); // 3 available + 7 booked
+      expect(session.coachNames).toBe("Coach A, Coach B");
+      expect(session.scans).toHaveLength(3);
+      expect(session.scans.map((s: any) => s.status)).toEqual(["SUCCESS", "WILL_PAY", "SUCCESS"]);
+      expect(session.scans[1].method).toBe("Walk In");
+      expect(session.scans[2].method).toBe("Walk In");
     });
   });
 });

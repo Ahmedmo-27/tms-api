@@ -1,5 +1,6 @@
 import { Types } from "mongoose";
 import ScheduledClass from "../models/scheduledClass";
+import NonUserBooking from "../models/nonUserBookings";
 import Member, { IMemberPackageData } from "../models/member";
 import Package from "../models/package";
 import DeductionLog from "../models/deductionLog";
@@ -39,6 +40,36 @@ import {
 } from "../utils/timezone";
 import { escapeRegex } from "../utils/escapeRegex";
 
+const COACH_ALIAS_GROUPS: string[][] = [
+  ["Youssef", "Youssef Khaled"],
+  ["Hana Minisy", "Hana Minissy", "Hana Elmeneisy"],
+  ["Salma", "Salma Ghazzawi"],
+  ["Omar El Alamy", "Omar ElAlamy", "Omar Alamy"],
+];
+
+function getCoachNameVariants(rawName?: string | null): string[] {
+  if (!rawName) return [];
+  const trimmed = rawName.trim();
+  if (!trimmed) return [];
+  const norm = trimmed.toLowerCase().replace(/\s+/g, " ");
+  const noSpace = norm.replace(/\s+/g, "");
+  const variants = new Set<string>([trimmed]);
+
+  for (const group of COACH_ALIAS_GROUPS) {
+    const matchesGroup = group.some((alias) => {
+      const aNorm = alias.toLowerCase().replace(/\s+/g, " ");
+      const aNoSpace = aNorm.replace(/\s+/g, "");
+      return aNorm === norm || aNoSpace === noSpace;
+    });
+    if (matchesGroup) {
+      for (const alias of group) {
+        variants.add(alias);
+      }
+    }
+  }
+  return Array.from(variants);
+}
+
 export class CoachService {
   static async getCoachDocumentByUserId(userId: Types.ObjectId): Promise<ICoach | null> {
     return Coach.findOne({ userId });
@@ -50,15 +81,16 @@ export class CoachService {
    * - Primary Coach document ID
    * - User ID (coachUserId or coachDoc.userId)
    * - Any other Coach document sharing the same userId or phoneNumber
-   * - Any Coach document with matching coachName (exact or case-insensitive)
+   * - Any Coach document with matching coachName or known alias (exact or case-insensitive)
    * - Any Coach document with composite multi-coach name including this coach (e.g. "Coach1, Coach2", "Coach1 & Coach2")
    */
   static async getCoachLookupIds(
     coachDocId: Types.ObjectId,
     coachUserId?: Types.ObjectId
-  ): Promise<{ objectIds: Types.ObjectId[]; stringIds: string[] }> {
+  ): Promise<{ objectIds: Types.ObjectId[]; stringIds: string[]; nameVariants?: string[] }> {
     const objectIdsSet = new Set<string>();
     const stringIdsSet = new Set<string>();
+    const nameVariantsSet = new Set<string>();
 
     const addId = (id: Types.ObjectId | string | undefined | null) => {
       if (!id) return;
@@ -70,14 +102,25 @@ export class CoachService {
       }
     };
 
+    const addNameVariants = (name?: string | null) => {
+      for (const v of getCoachNameVariants(name)) {
+        nameVariantsSet.add(v);
+      }
+    };
+
     addId(coachDocId);
     if (coachUserId) addId(coachUserId);
 
     const coachDoc = await Coach.findById(coachDocId);
     if (coachDoc?.userId) addId(coachDoc.userId);
+    addNameVariants(coachDoc?.coachName);
 
     const resolvedUserId = coachUserId || coachDoc?.userId;
-    const coachName = coachDoc?.coachName?.trim();
+    if (resolvedUserId) {
+      const userDoc = await User.findById(resolvedUserId).select("name phoneNumber");
+      addNameVariants(userDoc?.name);
+    }
+
     const cleanPhone = coachDoc?.phoneNumber?.replace(/\s/g, "");
 
     const orClauses: any[] = [];
@@ -87,35 +130,95 @@ export class CoachService {
     if (cleanPhone && cleanPhone.length >= 8 && cleanPhone !== "01111111111" && cleanPhone !== "00000000000") {
       orClauses.push({ phoneNumber: cleanPhone });
     }
-    if (coachName && coachName.length >= 2) {
-      orClauses.push({
-        coachName: {
-          $regex: new RegExp(`(^|[^a-z0-9])${escapeRegex(coachName)}([^a-z0-9]|$)`, "i"),
-        },
-      });
+    for (const variant of Array.from(nameVariantsSet)) {
+      if (variant.length >= 2) {
+        orClauses.push({
+          coachName: {
+            $regex: new RegExp(`(^|[^a-z0-9])${escapeRegex(variant)}([^a-z0-9]|$)`, "i"),
+          },
+        });
+      }
     }
 
     if (orClauses.length > 0) {
-      const relatedCoaches = await Coach.find({ $or: orClauses }).select("_id userId");
+      const relatedCoaches = await Coach.find({ $or: orClauses }).select("_id userId coachName");
       for (const c of relatedCoaches) {
         addId(c._id as Types.ObjectId);
         if (c.userId) addId(c.userId);
+        addNameVariants(c.coachName);
       }
     }
 
     const objectIds = Array.from(objectIdsSet).map((id) => new Types.ObjectId(id));
     const stringIds = Array.from(stringIdsSet);
+    const nameVariants = Array.from(nameVariantsSet);
 
-    return { objectIds, stringIds };
+    return { objectIds, stringIds, nameVariants };
+  }
+
+  /**
+   * Builds a MongoDB query matching all PT packages assigned to this coach
+   * (by any resolved Coach/User ObjectId or by package name containing the coach's name/alias).
+   */
+  static async buildCoachPtPackageQuery(
+    coachDocId: Types.ObjectId,
+    coachUserId?: Types.ObjectId
+  ): Promise<{
+    query: Record<string, any>;
+    objectIds: Types.ObjectId[];
+    stringIds: string[];
+    assignedIdSet: Set<string>;
+    nameVariants: string[];
+  }> {
+    const { objectIds, stringIds, nameVariants = [] } = await this.getCoachLookupIds(
+      coachDocId,
+      coachUserId
+    );
+    const assignedIdSet = new Set([
+      ...objectIds.map((id) => id.toString()),
+      ...stringIds,
+    ]);
+
+    const orClauses: any[] = [
+      { coachId: { $in: objectIds } },
+    ];
+    for (const variant of nameVariants) {
+      if (variant.length >= 3) {
+        orClauses.push({
+          category: "PERSONAL_TRAINING",
+          name: {
+            $regex: new RegExp(`(^|[^a-z0-9])${escapeRegex(variant)}([^a-z0-9]|$)`, "i"),
+          },
+        });
+      }
+    }
+
+    return {
+      query: { $or: orClauses },
+      objectIds,
+      stringIds,
+      assignedIdSet,
+      nameVariants,
+    };
+  }
+
+  static async hasCoachPtCapability(
+    coachDocId: Types.ObjectId,
+    coachUserId?: Types.ObjectId
+  ): Promise<boolean> {
+    const { query } = await this.buildCoachPtPackageQuery(coachDocId, coachUserId);
+    const ptPackagesCount = await Package.countDocuments(query);
+    return ptPackagesCount > 0;
   }
 
   /**
    * Resolves, links, or auto-provisions a Coach profile document for a user with coach role.
    * Priority:
    * 1. Direct match by userId
-   * 2. Unlinked Coach match by phoneNumber
-   * 3. Unlinked Coach match by coachName (case-insensitive)
-   * 4. Auto-provision new Coach document
+   * 2. Unlinked Coach match by phoneNumber (excluding placeholder phone numbers)
+   * 3. Unlinked Coach match by coachName or known alias (case-insensitive)
+   * 4. Existing Coach match by coachName or known alias (returns existing doc without duplicating)
+   * 5. Auto-provision new Coach document
    */
   static async resolveCoachProfileForUser(user: {
     _id: any;
@@ -131,31 +234,36 @@ export class CoachService {
       return coachDoc;
     }
 
-    // 2. Fallback: match by phoneNumber for unlinked Coach
+    // 2. Fallback: match by phoneNumber for unlinked Coach (ignore dummy seeded numbers)
     if (user.phoneNumber) {
       const cleanPhone = user.phoneNumber.replace(/\s/g, "");
-      const coachByPhone = await Coach.findOne({
-        phoneNumber: cleanPhone,
-        $or: [{ userId: { $exists: false } }, { userId: null }],
-      });
-      if (coachByPhone) {
-        coachByPhone.userId = userId;
-        try {
-          await coachByPhone.save();
-          return coachByPhone;
-        } catch {
-          const existing = await Coach.findOne({ userId });
-          if (existing) return existing;
+      if (cleanPhone && cleanPhone !== "01111111111" && cleanPhone !== "00000000000") {
+        const coachByPhone = await Coach.findOne({
+          phoneNumber: cleanPhone,
+          $or: [{ userId: { $exists: false } }, { userId: null }],
+        });
+        if (coachByPhone) {
+          coachByPhone.userId = userId;
+          try {
+            await coachByPhone.save();
+            return coachByPhone;
+          } catch {
+            const existing = await Coach.findOne({ userId });
+            if (existing) return existing;
+          }
         }
       }
     }
 
-    // 3. Fallback: match by coachName (case-insensitive) for unlinked Coach
+    // 3. Fallback: match by coachName or alias (case-insensitive) for unlinked Coach
     if (user.name) {
-      const trimmedName = user.name.trim();
-      if (trimmedName) {
+      const variants = getCoachNameVariants(user.name);
+      if (variants.length > 0) {
+        const nameRegexes = variants.map(
+          (v) => new RegExp(`^${escapeRegex(v)}$`, "i")
+        );
         const coachByName = await Coach.findOne({
-          coachName: { $regex: new RegExp(`^${escapeRegex(trimmedName)}$`, "i") },
+          coachName: { $in: nameRegexes },
           $or: [{ userId: { $exists: false } }, { userId: null }],
         });
         if (coachByName) {
@@ -685,11 +793,31 @@ export class CoachService {
     const packagesInfo = await Package.find({ _id: { $in: allPkgIds } });
     const packageMap = new Map(packagesInfo.map(p => [p._id.toString(), p]));
 
+    // Batch fetch 4: Non-User Bookings (Walk-Ins)
+    const scheduledClassIds = scheduledClasses.map(sc => sc._id as Types.ObjectId);
+    const nonUserBookings = scheduledClassIds.length > 0
+      ? await NonUserBooking.find({
+          scid: { $in: scheduledClassIds },
+          status: { $ne: "CANCELLED" },
+        })
+      : [];
+    const nonUserBookingsByScid = new Map<string, any[]>();
+    for (const entry of nonUserBookings) {
+      const scidKey = entry.scid.toString();
+      if (!nonUserBookingsByScid.has(scidKey)) {
+        nonUserBookingsByScid.set(scidKey, []);
+      }
+      nonUserBookingsByScid.get(scidKey)!.push(entry);
+    }
+
     const sessionsMap = new Map<string, any[]>();
 
     for (const scheduledClass of scheduledClasses) {
       const cls = classMap.get(scheduledClass.cid.toString());
       if (!cls) continue;
+
+      const scidStr = (scheduledClass._id as Types.ObjectId).toString();
+      const classNonUserBookings = nonUserBookingsByScid.get(scidStr) ?? [];
 
       const clients = [];
       for (const entry of scheduledClass.bookedMembers) {
@@ -716,6 +844,16 @@ export class CoachService {
         });
       }
 
+      for (const walkIn of classNonUserBookings) {
+        clients.push({
+          memberId: "",
+          name: walkIn.name ?? "Walk-In Guest",
+          phoneNumber: walkIn.phoneNumber ?? "",
+          bookingMethod: "Walk In",
+          activePackage: null,
+        });
+      }
+
       const coachesList = Array.isArray(scheduledClass.coachId)
         ? scheduledClass.coachId
         : scheduledClass.coachId
@@ -733,19 +871,22 @@ export class CoachService {
       const matchingCoach = coaches.find((c: any) => assignedIds.has(c.id));
       const sessionCoachName = matchingCoach ? matchingCoach.name : (viewerCoachName || (coaches[0]?.name ?? "Coach"));
 
+      const totalBookedCount = scheduledClass.bookedMembers.length + classNonUserBookings.length;
+      const totalCapacity = scheduledClass.availableSlots + totalBookedCount;
+
       const dateStr = formatInTimeZone(scheduledClass.startTime, "Africa/Cairo", "yyyy-MM-dd");
       const sessionDto = {
-        scheduledClassId: (scheduledClass._id as Types.ObjectId).toString(),
+        scheduledClassId: scidStr,
         classTitle: cls.title,
         category: cls.category,
         startTime: formatInTimeZone(scheduledClass.startTime, "Africa/Cairo", "HH:mm"),
         endTime: formatInTimeZone(scheduledClass.endTime, "Africa/Cairo", "HH:mm"),
-        capacity: scheduledClass.availableSlots + scheduledClass.bookedMembers.length,
-        bookedCount: scheduledClass.bookedMembers.length,
+        capacity: totalCapacity,
+        bookedCount: totalBookedCount,
         location: this.locationLabel(scheduledClass.locationId),
         coaches,
         coachName: sessionCoachName,
-        coachNames: sessionCoachName,
+        coachNames: allCoachNames || sessionCoachName,
         allCoachNames,
         clients
       };
@@ -777,7 +918,7 @@ export class CoachService {
   /**
    * GET /api/coach/scans?date=YYYY-MM-DD
    * Returns all of the coach's scheduled classes for the given calendar day,
-   * each with its full scan list (member name, phone, time, method, status).
+   * each with its full scan list (member name, phone, time, method, status, including Walk-Ins).
    * Supports multi-coach sessions: all assigned coaches see the same session.
    */
   static async getScans(coachDocId: Types.ObjectId, date: Date): Promise<any[]> {
@@ -810,14 +951,34 @@ export class CoachService {
     const classes = await Class.find({ _id: { $in: classIds } });
     const classMap = new Map(classes.map(c => [(c._id as Types.ObjectId).toString(), c]));
 
+    // Fetch NonUserBookings (Walk-Ins) for all scheduled classes on this day
+    const scheduledClassIds = scheduledClasses.map(sc => sc._id as Types.ObjectId);
+    const nonUserBookings = scheduledClassIds.length > 0
+      ? await NonUserBooking.find({
+          scid: { $in: scheduledClassIds },
+          status: { $ne: "CANCELLED" },
+        })
+      : [];
+    const nonUserBookingsByScid = new Map<string, any[]>();
+    for (const entry of nonUserBookings) {
+      const scidKey = entry.scid.toString();
+      if (!nonUserBookingsByScid.has(scidKey)) {
+        nonUserBookingsByScid.set(scidKey, []);
+      }
+      nonUserBookingsByScid.get(scidKey)!.push(entry);
+    }
+
     const result = [];
 
     for (const sc of scheduledClasses) {
       const cls = classMap.get(sc.cid.toString());
       if (!cls) continue;
 
+      const scidStr = (sc._id as Types.ObjectId).toString();
+      const classNonUserBookings = nonUserBookingsByScid.get(scidStr) ?? [];
+
       // Build scan entries — uid is populated as a User document
-      const scans = sc.scans.map((scan: any) => {
+      const memberScans = sc.scans.map((scan: any) => {
         const user = scan.uid as any; // populated User
         return {
           memberId: user?._id?.toString() ?? "",
@@ -828,6 +989,29 @@ export class CoachService {
           status: scan.status ? "SUCCESS" : "FAILED",
         };
       });
+
+      // Merge walk-in / non-user scans (ATTENDED -> WILL_PAY, PAID -> SUCCESS) matching Admin parseSchedule
+      const walkInScans: any[] = [];
+      for (const entry of classNonUserBookings) {
+        if (entry.status === "ATTENDED" || entry.status === "PAID") {
+          const scanTime = entry.attendanceTime
+            ? new Date(entry.attendanceTime)
+            : entry.bookingTime
+            ? new Date(entry.bookingTime)
+            : new Date();
+          walkInScans.push({
+            memberId: "",
+            member: entry.name || "Walk-In Guest",
+            phone: entry.phoneNumber || "",
+            time: scanTime.toISOString(),
+            method: "Walk In",
+            status: entry.status === "PAID" ? "SUCCESS" : "WILL_PAY",
+            bookingId: (entry._id as Types.ObjectId).toString(),
+          });
+        }
+      }
+
+      const scans = [...memberScans, ...walkInScans];
 
       // Derive coaches list from populated coachId
       const coachesList = Array.isArray(sc.coachId)
@@ -847,20 +1031,23 @@ export class CoachService {
       const matchingCoach = coaches.find((c) => assignedIds.has(c.id));
       const sessionCoachName = matchingCoach ? matchingCoach.name : (viewerCoachName || (coaches[0]?.name ?? "Coach"));
 
+      const totalBookedCount = sc.bookedMembers.length + classNonUserBookings.length;
+      const totalCapacity = sc.availableSlots + totalBookedCount;
+
       result.push({
-        scheduledClassId: (sc._id as Types.ObjectId).toString(),
+        scheduledClassId: scidStr,
         classTitle:  cls.title,
         category:    cls.category,
         startTime:   formatInTimeZone(sc.startTime, "Africa/Cairo", "HH:mm"),
         endTime:     formatInTimeZone(sc.endTime,   "Africa/Cairo", "HH:mm"),
         startTimeIso: sc.startTime.toISOString(),
         endTimeIso:   sc.endTime.toISOString(),
-        capacity:    sc.availableSlots + sc.bookedMembers.length,
-        bookedCount: sc.bookedMembers.length,
+        capacity:    totalCapacity,
+        bookedCount: totalBookedCount,
         location:    this.locationLabel(sc.locationId),
         coaches,
         coachName:   sessionCoachName,
-        coachNames:  sessionCoachName,
+        coachNames:  allCoachNames || sessionCoachName,
         allCoachNames,
         scans,
         attendanceConfirmation: sc.attendanceConfirmation?.confirmed
@@ -931,8 +1118,13 @@ export class CoachService {
     }
 
     const count = Math.max(0, Math.floor(Number(data.confirmedCount) || 0));
-    // Compare against actual scanned-in members (SUCCESS scans), not bookings
-    const successScanCount = scheduledClass.scans.filter((s: any) => s.status === true).length;
+    // Compare against actual scanned-in attendees (member SUCCESS scans + attended/paid Walk-Ins)
+    const memberSuccessScanCount = scheduledClass.scans.filter((s: any) => s.status === true).length;
+    const walkInAttendedCount = await NonUserBooking.countDocuments({
+      scid: scheduledClass._id,
+      status: { $in: ["ATTENDED", "PAID"] },
+    });
+    const successScanCount = memberSuccessScanCount + walkInAttendedCount;
     const hasMissingPlace =
       typeof data.hasMissingPlace === "boolean"
         ? data.hasMissingPlace
@@ -966,65 +1158,83 @@ export class CoachService {
    * authenticated coach (identified by their PT package names, coachId, or drop-in assignment).
    */
   static async getPtAttendance(coachDocId: Types.ObjectId, date: Date): Promise<any[]> {
-    // 1. Collect all PT package names assigned to this coach
-    const coachDoc = await Coach.findById(coachDocId);
-    const coachName = coachDoc?.coachName?.trim();
-
-    const ptPkgQuery: any = {
-      $or: [
-        { coachId: coachDocId },
-      ],
-    };
-    if (coachName && coachName.length >= 3) {
-      ptPkgQuery.$or.push({
-        category: "PERSONAL_TRAINING",
-        name: { $regex: new RegExp(`(^|[^a-z0-9])${escapeRegex(coachName)}([^a-z0-9]|$)`, "i") },
-      });
-    }
+    // 1. Collect all PT package names & coach IDs assigned to this coach (including aliases/secondary Coach docs)
+    const {
+      query: ptPkgQuery,
+      assignedIdSet,
+      nameVariants,
+    } = await this.buildCoachPtPackageQuery(coachDocId);
 
     const ptPackages = await Package.find(ptPkgQuery);
     const coachPkgNames = new Set(ptPackages.map((p) => p.name));
+    const nameVariantsLower = nameVariants
+      .map((v) => v.toLowerCase().trim())
+      .filter((v) => v.length >= 3);
 
-    // Also get coach name to match any PT drop-in method like "PT dropin with CoachName"
-    const coachNameLower = coachName?.toLowerCase();
+    // Collect member UIDs who have/had PT packages with this coach so "No Active Package" failed scans can be matched
+    const ptPkgIds = ptPackages.map((p) => p._id);
+    const coachPtMemberUids = new Set<string>();
+    if (ptPkgIds.length > 0) {
+      const ptMembers = await Member.find({ "packages.pkgId": { $in: ptPkgIds } })
+        .select("uid")
+        .lean();
+      for (const m of ptMembers) {
+        if (m.uid) coachPtMemberUids.add(m.uid.toString());
+      }
+    }
 
-    // 2. Find the DailyAttendance document for the requested date
-    const dayStart = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 0, 0, 0));
-    const dayEnd = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 23, 59, 59, 999));
+    // 2. Find all DailyAttendance documents for the requested date (matching SchedulerService.getDayAttendance)
+    const utcDayStart = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 0, 0, 0));
+    const utcDayEnd = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 23, 59, 59, 999));
 
-    const attendance = await DailyAttendance.findOne({
+    const attendanceDocs = await DailyAttendance.find({
       $or: [
-        { date: dayStart },
-        { date: { $gte: dayStart, $lte: dayEnd } },
+        { date: utcDayStart },
+        { date: { $gte: utcDayStart, $lte: utcDayEnd } },
       ],
     }).populate<{
       "ptAttendance.uid": any;
     }>("ptAttendance.uid");
 
-    if (!attendance) return [];
+    if (!attendanceDocs || attendanceDocs.length === 0) return [];
 
-    // 3. Filter ptAttendance entries by coach package names, direct coachId assignment, or drop-in
+    // 3. Filter ptAttendance entries across all matching documents
     const result: any[] = [];
-    for (const entry of attendance.ptAttendance) {
-      const entryMethodLower = (entry.method || "").toLowerCase();
-      const isAssignedToCoach =
-        (entry as any).coachId?.toString() === coachDocId.toString() ||
-        coachPkgNames.has(entry.method) ||
-        (coachNameLower && (entryMethodLower.includes(`with ${coachNameLower}`) || entryMethodLower.includes(coachNameLower)));
-      if (!isAssignedToCoach) continue;
-      const user = entry.uid as any; // populated User
-      result.push({
-        memberId: user?._id?.toString() ?? "",
-        member: user?.name ?? (entry as any).guestName ?? "Unknown Member",
-        phone:  user?.phoneNumber ?? (entry as any).guestPhone ?? "No Phone",
-        time:   entry.time instanceof Date ? entry.time.toISOString() : new Date(entry.time).toISOString(),
-        method: entry.method,
-        status: entry.status, // "SUCCESS" | "FAILED"
-        statusDetail:
-          entry.status === "FAILED" && entry.method === "No Active Package"
-            ? "No active package found"
-            : undefined,
-      });
+    for (const attendance of attendanceDocs) {
+      for (const entry of attendance.ptAttendance) {
+        const entryMethodLower = (entry.method || "").toLowerCase();
+        const entryCoachIdStr = (entry as any).coachId?.toString();
+        const user = entry.uid as any; // populated User
+        const memberIdStr = user?._id?.toString() ?? "";
+
+        const isAssignedToCoach =
+          (Boolean(entryCoachIdStr) && assignedIdSet.has(entryCoachIdStr)) ||
+          coachPkgNames.has(entry.method) ||
+          nameVariantsLower.some(
+            (v) =>
+              entryMethodLower.includes(`with ${v}`) ||
+              entryMethodLower.includes(v)
+          ) ||
+          (entry.status === "FAILED" &&
+            entry.method === "No Active Package" &&
+            Boolean(memberIdStr) &&
+            coachPtMemberUids.has(memberIdStr));
+
+        if (!isAssignedToCoach) continue;
+
+        result.push({
+          memberId: memberIdStr,
+          member: user?.name ?? (entry as any).guestName ?? "Unknown Member",
+          phone:  user?.phoneNumber ?? (entry as any).guestPhone ?? "No Phone",
+          time:   entry.time instanceof Date ? entry.time.toISOString() : new Date(entry.time).toISOString(),
+          method: entry.method,
+          status: entry.status, // "SUCCESS" | "FAILED"
+          statusDetail:
+            entry.status === "FAILED" && entry.method === "No Active Package"
+              ? "No active package found"
+              : undefined,
+        });
+      }
     }
 
     return result;
@@ -1051,22 +1261,8 @@ export class CoachService {
       }
     }
 
-    const coachDoc = await Coach.findById(coachDocId);
-    const coachName = coachDoc?.coachName?.trim();
-
-    const ptPkgQuery: any = {
-      $or: [
-        { coachId: coachDocId },
-      ],
-    };
-    if (coachName && coachName.length >= 3) {
-      ptPkgQuery.$or.push({
-        category: "PERSONAL_TRAINING",
-        name: { $regex: new RegExp(`(^|[^a-z0-9])${escapeRegex(coachName)}([^a-z0-9]|$)`, "i") },
-      });
-    }
-
-    const { objectIds, stringIds } = await this.getCoachLookupIds(coachDocId, coachUserId);
+    const { query: ptPkgQuery, objectIds, stringIds } =
+      await this.buildCoachPtPackageQuery(coachDocId, coachUserId);
 
     const [ptCount, classCount] = await Promise.all([
       Package.countDocuments(ptPkgQuery),
@@ -1182,8 +1378,9 @@ export class CoachService {
   private static async getPtAlerts(
     coachDocId: Types.ObjectId,
   ): Promise<TodayPtAlertDto[]> {
+    const { query: ptPkgQuery } = await this.buildCoachPtPackageQuery(coachDocId);
     const ptPackages = await Package.find({
-      coachId: coachDocId,
+      ...ptPkgQuery,
       category: "PERSONAL_TRAINING",
     });
     if (ptPackages.length === 0) return [];

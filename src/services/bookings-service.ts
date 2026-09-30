@@ -665,11 +665,24 @@ export class BookingsService {
     if (!pkgIds.length) {
       throw new NotFoundError("PACKAGE_NOT_FOUND", "Pt Package not found");
     }
+    const pkgById = new Map(pkgs.map((p) => [p._id.toString(), p]));
     const pkgName = pkgs[0]?.name ?? "Personal Training";
     await runInTransaction(async (session: ClientSession) => {
       const pid = await Member.recordPtAttendance(uid, pkgIds, session, io, pkgName);
       // check if failed record failed
       if (!pid) {
+        let fallbackCoachId: string | undefined;
+        const memberDoc = await Member.findOne({ uid }, null, { session });
+        if (memberDoc?.packages?.length) {
+          for (let i = memberDoc.packages.length - 1; i >= 0; i--) {
+            const mp = memberDoc.packages[i];
+            const catalogPkg = mp?.pkgId ? pkgById.get(mp.pkgId.toString()) : undefined;
+            if (catalogPkg?.coachId) {
+              fallbackCoachId = catalogPkg.coachId.toString();
+              break;
+            }
+          }
+        }
         await DailyAttendance.recordPtAttendance(
           uid,
           "No Active Package",
@@ -677,6 +690,7 @@ export class BookingsService {
           "FAILED",
           io,
           locationId,
+          fallbackCoachId,
         );
         throw new ForbiddenError(
           "NO_ACTIVE_PACKAGE_FOUND",
@@ -693,6 +707,7 @@ export class BookingsService {
         "SUCCESS",
         io,
         locationId,
+        pkg.coachId ? pkg.coachId.toString() : undefined,
       );
       io.emit("SUCCESS-SCAN", {
         code: "PT_CLASS_ATTENDED",
