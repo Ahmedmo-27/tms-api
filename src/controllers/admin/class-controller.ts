@@ -497,6 +497,7 @@ export const bookNonUser = asyncHandler(async function (
     phoneNumber,
     scid
   );
+  req.app.get("io")?.emit("SUCCESS-SCAN");
   new SuccessResponse("Class Booked!", booking).send(res);
 });
 
@@ -510,6 +511,7 @@ export const recordNonUserAttendance = asyncHandler(async function (
   const booking = await BookingsService.recordNonUserAttendance(
     bookingId,
   );
+  req.app.get("io")?.emit("SUCCESS-SCAN");
   new SuccessResponse("Class Attended!").send(res);
 });
 
@@ -532,6 +534,7 @@ export const saveNonUserPayment = asyncHandler(async function (
     undefined,
     branchLocationId
   );
+  req.app.get("io")?.emit("SUCCESS-SCAN");
   new SuccessResponse("Class Attended!").send(res);
 });
 
@@ -571,6 +574,7 @@ export const addWalkIn = asyncHandler(async function (
     }
   });
   if(!finalBooking) throw new InternalError("INTERNAL_ERROR", "UnknownError")
+  req.app.get("io")?.emit("SUCCESS-SCAN");
   new SuccessResponse("Class Booked!", finalBooking).send(res);
 });
 
@@ -597,6 +601,7 @@ export const updateNonUserBookingPhone = asyncHandler(async function (
       nonMemberPhone: trimmedPhone,
     });
   }
+  req.app.get("io")?.emit("SUCCESS-SCAN");
   new SuccessResponse("Phone number updated!", booking).send(res);
 });
 
@@ -608,6 +613,7 @@ export const cancelNonUserBooking = asyncHandler(async function (
   if (!bookingId || bookingId === "")
     throw new BadRequestError("INVALID_BOOKING_ID", "Booking Id is invalid");
   const booking = await BookingsService.cancelNonUserBooking(bookingId);
+  req.app.get("io")?.emit("SUCCESS-SCAN");
   new SuccessResponse("Class Cancelled!", booking).send(res);
 });
 
@@ -633,6 +639,7 @@ export const manualRemoveMemberAttendance = asyncHandler(async function (
     throw new BadRequestError("INVALID_REQUEST", "uid and scid are required");
   await assertSessionAccess(req, scid);
   await BookingsService.manualRemoveClassAttendance(uid, scid);
+  req.app.get("io")?.emit("SUCCESS-SCAN");
   new SuccessResponse("Attendance removed").send(res);
 });
 
@@ -645,6 +652,7 @@ export const removeFailedScan = asyncHandler(async function (
     throw new BadRequestError("INVALID_REQUEST", "uid and scid are required");
   await assertSessionAccess(req, scid);
   await BookingsService.removeFailedClassScan(uid, scid);
+  req.app.get("io")?.emit("SUCCESS-SCAN");
   new SuccessResponse("Failed scan removed").send(res);
 });
 
