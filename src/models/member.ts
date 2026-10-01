@@ -49,6 +49,8 @@ export interface IAdjustmentRecord {
     | "PT_ATTENDANCE"
     | "SPACE_WALK"
     | "ADMIN"
+    | "COACH"
+    | "ATTENDANCE"
     | "MEMBER_CANCELLATION"
     | "FRONTDESK_CANCELLATION";
 }
@@ -299,7 +301,7 @@ const AdjustmentRecordSchema = new Schema<IAdjustmentRecord>({
   type:           { type: String, enum: ["ADD", "DEDUCT"], required: true },
   source:         {
     type: String,
-    enum: ["BOOKING", "PT_ATTENDANCE", "SPACE_WALK", "ADMIN", "MEMBER_CANCELLATION", "FRONTDESK_CANCELLATION"],
+    enum: ["BOOKING", "PT_ATTENDANCE", "SPACE_WALK", "ADMIN", "COACH", "ATTENDANCE", "MEMBER_CANCELLATION", "FRONTDESK_CANCELLATION"],
     required: true,
   },
 });
@@ -1368,6 +1370,11 @@ MemberSchema.static(
         }
       );
 
+      let resolvedPkgName = pkg.name;
+      if (!resolvedPkgName) {
+        const catalogDoc = await Package.findById(pkg.pkgId).select("name").session(session);
+        resolvedPkgName = catalogDoc?.name || pkgName || "Personal Training";
+      }
       await this.pushAdjustmentRecord(
         uid,
         pkg.pkgId.toString(),
@@ -1377,9 +1384,9 @@ MemberSchema.static(
           source: "PT_ATTENDANCE",
           type: "DEDUCT",
           amount: 1,
-          className: pkgName,
+          className: resolvedPkgName,
           attendanceDate: new Date(),
-          reason: `PT attendance: ${pkgName}`,
+          reason: `PT attendance: ${resolvedPkgName}`,
         },
         session
       );

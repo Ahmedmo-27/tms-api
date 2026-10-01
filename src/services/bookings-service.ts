@@ -666,7 +666,7 @@ export class BookingsService {
       throw new NotFoundError("PACKAGE_NOT_FOUND", "Pt Package not found");
     }
     const pkgById = new Map(pkgs.map((p) => [p._id.toString(), p]));
-    const pkgName = pkgs[0]?.name ?? "Personal Training";
+    const pkgName = "Personal Training";
     await runInTransaction(async (session: ClientSession) => {
       const pid = await Member.recordPtAttendance(uid, pkgIds, session, io, pkgName);
       // check if failed record failed

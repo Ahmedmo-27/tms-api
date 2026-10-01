@@ -166,6 +166,19 @@ export const getDeductionHistory = asyncHandler(async (req: Request, res: Respon
   return new SuccessResponse("Deductions fetched", { deductions }).send(res);
 });
 
+export const getClientAttendanceHistory = asyncHandler(async (req: Request, res: Response) => {
+  const coachReq = req as CoachAuthRequest;
+  const { memberId } = req.params;
+  if (!memberId || !Types.ObjectId.isValid(memberId)) {
+    throw new BadRequestError("INVALID_ID", "Invalid member ID format");
+  }
+  const attendance = await CoachService.getClientAttendanceHistory(
+    coachReq.coachDocId,
+    memberId,
+  );
+  return new SuccessResponse("Attendance history fetched", { attendance }).send(res);
+});
+
 export const confirmClassAttendance = asyncHandler(async (req: Request, res: Response) => {
   const coachReq = req as CoachAuthRequest;
   const { scid } = req.params;
