@@ -512,6 +512,11 @@ export const adjustMemberPackageClasses = asyncHandler(async function (
       ? pkg.remainingClasses + Number(amount)
       : pkg.remainingClasses - Number(amount);
 
+  const targetDate =
+    sessionDate && !isNaN(new Date(sessionDate).getTime())
+      ? new Date(sessionDate)
+      : new Date();
+
   await runInTransaction(async (session: ClientSession) => {
     await Member.editPackageClasses(uid, pkgId, pkgStartDate, newClasses);
     await Member.pushAdjustmentRecord(
@@ -523,16 +528,14 @@ export const adjustMemberPackageClasses = asyncHandler(async function (
         source: "ADMIN",
         type,
         amount: Number(amount),
+        className: packageDoc?.name || pkg.name,
+        ...(type === "DEDUCT" ? { attendanceDate: targetDate } : {}),
         reason: reason.toString().trim(),
       },
       session
     );
 
     if (isCompletedSession && packageDoc) {
-      const targetDate = sessionDate && !isNaN(new Date(sessionDate).getTime())
-        ? new Date(sessionDate)
-        : new Date();
-
       const deductAmount = Number(amount) || 1;
       for (let i = 0; i < deductAmount; i++) {
         await DailyAttendance.recordPtAttendance(
