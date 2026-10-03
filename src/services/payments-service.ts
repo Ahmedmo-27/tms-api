@@ -243,13 +243,13 @@ export class PaymentsService {
 
     // Filter out payments where package name contains "PT"
     const filteredPayments = allPayments.filter(payment => {
+      // remove deducted from package payments
+      if(payment.paymentMethod === "DEDUCTED") return false;
+
       // If there's no package associated, include the payment
       if (!payment.pkgId) {
         return true;
       }
-
-      // remove deducted from package payments
-      if(payment.paymentMethod === "DEDUCTED") return false
 
       // If package exists, check if name contains "PT" (case insensitive)
       const packageName = (payment.pkgId as any).name;

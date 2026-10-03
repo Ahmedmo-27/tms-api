@@ -603,6 +603,28 @@ export class CoachService {
       throw new BadRequestError("INVALID_FIELDS", "sessionDate is not a valid ISO 8601 date");
     }
 
+    const now = new Date();
+    let sessionAttendanceDate = parsedSessionDate;
+    if (typeof sessionDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sessionDate.trim())) {
+      const [y, m, d] = sessionDate.trim().split("-").map(Number);
+      sessionAttendanceDate = new Date(
+        y,
+        m - 1,
+        d,
+        now.getHours(),
+        now.getMinutes(),
+        now.getSeconds(),
+        now.getMilliseconds()
+      );
+    } else if (isSameCairoDay(parsedSessionDate, now)) {
+      if (
+        (parsedSessionDate.getUTCHours() === 0 && parsedSessionDate.getUTCMinutes() === 0 && parsedSessionDate.getUTCSeconds() === 0) ||
+        (parsedSessionDate.getUTCHours() === 12 && parsedSessionDate.getUTCMinutes() === 0 && parsedSessionDate.getUTCSeconds() === 0)
+      ) {
+        sessionAttendanceDate = now;
+      }
+    }
+
     // --- 3. Find member and verify Authorization_Link (Req 7.2, 7.3, 7.7) ---
     const member = await Member.findOne({ uid: new Types.ObjectId(memberId) });
     if (!member) {
@@ -708,7 +730,7 @@ export class CoachService {
             type: "DEDUCT",
             amount: 1,
             className: packageDoc.name,
-            attendanceDate: parsedSessionDate,
+            attendanceDate: sessionAttendanceDate,
             reason,
           },
         },
@@ -720,8 +742,8 @@ export class CoachService {
         updateOp.$addToSet = {
           ptAttendance: {
             pkgId: pkg.pkgId,
-            date: format(parsedSessionDate, "yyyy-MM-dd"),
-            attendanceTime: parsedSessionDate,
+            date: format(sessionAttendanceDate, "yyyy-MM-dd"),
+            attendanceTime: sessionAttendanceDate,
           },
         };
       }
@@ -747,7 +769,7 @@ export class CoachService {
         pkgId: pkg.pkgId,
         memberPackageStartDate: pkg.pkgStartDate,
         reason,
-        sessionDate: parsedSessionDate,
+        sessionDate: sessionAttendanceDate,
         classesRemainingAfter,
       }).save({ session });
 
@@ -761,7 +783,7 @@ export class CoachService {
           io,
           (pkg as any).locationId?.toString() || packageDoc.locationId?.toString(),
           coachDocId.toString(),
-          parsedSessionDate,
+          sessionAttendanceDate,
         );
       }
     });

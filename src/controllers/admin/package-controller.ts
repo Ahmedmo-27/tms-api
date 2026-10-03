@@ -512,10 +512,36 @@ export const adjustMemberPackageClasses = asyncHandler(async function (
       ? pkg.remainingClasses + Number(amount)
       : pkg.remainingClasses - Number(amount);
 
-  const targetDate =
-    sessionDate && !isNaN(new Date(sessionDate).getTime())
-      ? new Date(sessionDate)
-      : new Date();
+  const now = new Date();
+  let targetDate = now;
+  if (sessionDate) {
+    const parsed = new Date(sessionDate);
+    if (!isNaN(parsed.getTime())) {
+      if (typeof sessionDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sessionDate.trim())) {
+        const [y, m, d] = sessionDate.trim().split("-").map(Number);
+        targetDate = new Date(
+          y,
+          m - 1,
+          d,
+          now.getHours(),
+          now.getMinutes(),
+          now.getSeconds(),
+          now.getMilliseconds()
+        );
+      } else if (isSameCairoDay(parsed, now)) {
+        if (
+          (parsed.getUTCHours() === 0 && parsed.getUTCMinutes() === 0 && parsed.getUTCSeconds() === 0) ||
+          (parsed.getUTCHours() === 12 && parsed.getUTCMinutes() === 0 && parsed.getUTCSeconds() === 0)
+        ) {
+          targetDate = now;
+        } else {
+          targetDate = parsed;
+        }
+      } else {
+        targetDate = parsed;
+      }
+    }
+  }
 
   await runInTransaction(async (session: ClientSession) => {
     await Member.editPackageClasses(uid, pkgId, pkgStartDate, newClasses);
