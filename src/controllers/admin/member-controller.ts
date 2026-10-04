@@ -56,11 +56,18 @@ export const getMember = asyncHandler(async function (
   const { uid, limit = "10", page = "1", name, phone, search, pkgId } = req.query;
 
   const searchTerm = (search || name || phone) ? String(search || name || phone).trim() : "";
-  let uids: Types.ObjectId[] = [];
+
+  const pageNumber = parseInt(page as string, 10);
+  const limitNumber = parseInt(limit as string, 10);
+  const skip = (pageNumber - 1) * limitNumber;
+
+  const memberQuery: any = {
+    isActive: { $ne: false },
+  };
 
   if (uid && !searchTerm && Types.ObjectId.isValid(uid as string)) {
-    uids = [new Types.ObjectId(uid as string)];
-  } else {
+    memberQuery.uid = new Types.ObjectId(uid as string);
+  } else if (searchTerm || (uid && Types.ObjectId.isValid(uid as string))) {
     const userQuery: any = {};
     if (uid && Types.ObjectId.isValid(uid as string)) {
       userQuery._id = new Types.ObjectId(uid as string);
@@ -84,17 +91,8 @@ export const getMember = asyncHandler(async function (
       new SuccessResponse("No members found", { members: [], total: 0 }).send(res);
       return;
     }
-    uids = users.map((user) => user._id as Types.ObjectId);
+    memberQuery.uid = { $in: users.map((user) => user._id as Types.ObjectId) };
   }
-
-  const pageNumber = parseInt(page as string, 10);
-  const limitNumber = parseInt(limit as string, 10);
-  const skip = (pageNumber - 1) * limitNumber;
-
-  const memberQuery: any = {
-    uid: { $in: uids },
-    isActive: { $ne: false },
-  };
 
   if (pkgId && Types.ObjectId.isValid(pkgId as string)) {
     memberQuery.packages = {
