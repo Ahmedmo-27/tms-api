@@ -30,13 +30,13 @@ app.use(
 );
 app.use(express.json());
 app.use(cookieParser());
-app.use(defaultLimiter);
-
 // Sanitize request logging — never log passwords, tokens, or auth headers
 app.use((req: Request, res: Response, next: NextFunction) => {
   logger.info("Route accessed:", getRequestContext(req, { includeHeaders: false }));
   next();
 });
+
+app.use(defaultLimiter);
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(specs));
 app.use(router);
 // Mirror all routes under /api for dashboard clients that prefix requests with /api
