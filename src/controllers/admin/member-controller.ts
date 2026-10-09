@@ -390,6 +390,8 @@ export const getMember = asyncHandler(async function (
           "PT_ATTENDANCE",
           "COACH",
           "ADMIN",
+          "BOOKING",
+          "ATTENDANCE",
         ])
       ) {
         targetPkg.adjustmentHistory.push({
@@ -438,6 +440,8 @@ export const getMember = asyncHandler(async function (
           "PT_ATTENDANCE",
           "COACH",
           "ADMIN",
+          "BOOKING",
+          "ATTENDANCE",
         ])
       ) {
         targetPkg.adjustmentHistory.push({
@@ -662,7 +666,8 @@ export const getMember = asyncHandler(async function (
         new Date(b.attendanceTime ?? b.date ?? 0).getTime() -
         new Date(a.attendanceTime ?? a.date ?? 0).getTime()
     );
-    m.ptAttendance = ptList;
+    // Exclude group classes from ptAttendance; classes belong to package attendance and member bookings/attendance
+    m.ptAttendance = ptList.filter((a: any) => a?.type !== "CLASS");
 
     return m;
   });
