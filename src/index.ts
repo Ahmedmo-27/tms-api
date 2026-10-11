@@ -178,7 +178,7 @@ const startServer = async () => {
         }
 
         const role = user.role === "admin" ? "management" : user.role;
-        const allowedRoles = ["management", "managing_coach", "mailer"];
+        const allowedRoles = ["management", "managing_coach", "mailer", "accountant"];
         if (!allowedRoles.includes(role)) {
           socket.emit("error", { message: "Forbidden: No mailing access" });
           return;

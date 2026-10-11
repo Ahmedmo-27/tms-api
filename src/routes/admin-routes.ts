@@ -78,6 +78,11 @@ import {
 import { addMember, getMember } from "../controllers/admin/member-controller";
 import { getAttendanceHistory } from "../controllers/admin/attendance-controller";
 import {
+  deleteScanRow,
+  getScanRow,
+  updateScanRow,
+} from "../controllers/admin/scan-admin-controller";
+import {
   getPendingMembers,
   listUsers,
   createUser,
@@ -333,6 +338,29 @@ adminRoutes.delete(
   authenticateUser,
   authorizeUser(["management", "branch_admin"]),
   removeFailedScan
+);
+
+// Scans Monitor row corrections. :source is class | pt | open-gym, :parentId is
+// the scheduled class (class) or the daily attendance document (pt, open-gym).
+adminRoutes.get(
+  "/scans/:source/:parentId/:rowId",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  getScanRow
+);
+
+adminRoutes.patch(
+  "/scans/:source/:parentId/:rowId",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  updateScanRow
+);
+
+adminRoutes.delete(
+  "/scans/:source/:parentId/:rowId",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  deleteScanRow
 );
 
 adminRoutes.post(
@@ -623,7 +651,7 @@ adminRoutes.delete(
 adminRoutes.get(
   "/locations",
   authenticateUser,
-  authorizeUser(["management", "branch_admin"]),
+  authorizeUser(["management", "branch_admin", "accountant"]),
   getLocation
 );
 adminRoutes.post(
@@ -648,7 +676,7 @@ adminRoutes.delete(
 adminRoutes.get(
   "/payments",
   authenticateUser,
-  authorizeUser(["management", "branch_admin"]),
+  authorizeUser(["management", "branch_admin", "accountant"]),
   getPayments
 );
 adminRoutes.patch(
@@ -823,21 +851,21 @@ adminRoutes.post(
 adminRoutes.get(
   "/mail/logs",
   authenticateUser,
-  authorizeUser(["management", "managing_coach", "mailer"]),
+  authorizeUser(["management", "managing_coach", "mailer", "accountant"]),
   getLogs
 );
 
 adminRoutes.get(
   "/mail/inbox",
   authenticateUser,
-  authorizeUser(["management", "managing_coach", "mailer"]),
+  authorizeUser(["management", "managing_coach", "mailer", "accountant"]),
   getInbox
 );
 
 adminRoutes.get(
   "/mail/profile",
   authenticateUser,
-  authorizeUser(["management", "managing_coach", "mailer"]),
+  authorizeUser(["management", "managing_coach", "mailer", "accountant"]),
   getMailProfile
 );
 

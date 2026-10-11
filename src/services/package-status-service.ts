@@ -2,6 +2,7 @@ import { Types } from "mongoose";
 import Member, { IMember, IMemberPackageData } from "../models/member";
 import Package, { isUnlimitedSpaceAccess } from "../models/package";
 import logger from "../config/logger";
+import { activeEndDateBound, isPackageExpired } from "../utils/timezone";
 
 export type PackageEffectiveStatus =
   | "ACTIVE"
@@ -75,17 +76,18 @@ export function resolvePackageStatus(
     }
   }
 
-  // Expiration check: if pkgEndDate is strictly before now
+  // Expiration check: expiry is inclusive of the end day's Cairo calendar day,
+  // so a package ending today stays ACTIVE until midnight Cairo.
   if (pkg.pkgEndDate) {
     const endDate = new Date(pkg.pkgEndDate);
-    if (!isNaN(endDate.getTime()) && endDate < now) {
+    if (!isNaN(endDate.getTime()) && isPackageExpired(endDate, now)) {
       return "EXPIRED";
     }
   }
 
   // Depleted sessions check: if remainingClasses <= 0
   // For packages with open gym/space access (e.g. MIXED / Spacer Mix, OPEN_GYM, ULTIMATE_MINDSPACER),
-  // depleting scheduled class credits does NOT complete the package while it is within its validity period (pkgEndDate >= now).
+  // depleting scheduled class credits does NOT complete the package while it is within its validity period (end day >= today).
   // It remains ACTIVE for open gym until pkgEndDate.
   const hasSpaceAccess = isSpaceEligiblePackage(pkg, category);
   if (
@@ -144,9 +146,10 @@ export class PackageStatusService {
 
   /**
    * Bulk database synchronization:
-   * 1. Marks all active packages whose pkgEndDate < now as EXPIRED.
+   * 1. Marks all active packages whose end day is before today (Cairo) as EXPIRED.
    * 2. Marks all active packages whose remainingClasses <= 0 as COMPLETED (for non-space packages).
-   * 3. Restores space-eligible packages with remainingClasses <= 0 and pkgEndDate >= now to ACTIVE.
+   * 3. Restores space-eligible packages with remainingClasses <= 0 whose end day is today or later to ACTIVE.
+   * 3b. Restores prematurely EXPIRED packages whose end day is today or later.
    * 4. Syncs frozen packages whose freeze period ended.
    */
   static async syncAllPackageStatuses(
@@ -162,12 +165,14 @@ export class PackageStatusService {
         catalogPkgs.map((p) => [p._id.toString(), p.category])
       );
 
-      // Find members with packages that might need status updates
+      // Find members with packages that might need status updates.
+      // Day-inclusive expiry: only end days strictly before today are expired.
+      const todayCairoStart = activeEndDateBound(now);
       const members = await Member.find({
         $or: [
           {
             "packages.status": "ACTIVE",
-            "packages.pkgEndDate": { $lt: now },
+            "packages.pkgEndDate": { $lt: todayCairoStart },
           },
           {
             "packages.status": "ACTIVE",
@@ -175,7 +180,13 @@ export class PackageStatusService {
           },
           {
             "packages.status": "COMPLETED",
-            "packages.pkgEndDate": { $gte: now },
+            "packages.pkgEndDate": { $gte: todayCairoStart },
+          },
+          // Recovers packages that an earlier, time-of-day-based expiry rule
+          // flagged EXPIRED before their end day was actually over.
+          {
+            "packages.status": "EXPIRED",
+            "packages.pkgEndDate": { $gte: todayCairoStart },
           },
           {
             "packages.status": "FROZEN",

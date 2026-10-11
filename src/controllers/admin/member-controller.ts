@@ -9,6 +9,7 @@ import { SubscriptionsService } from "../../services/subscriptions-service";
 import { PackageStatusService } from "../../services/package-status-service";
 import { runInTransaction } from "../../utils/transaction";
 import { escapeRegex } from "../../utils/escapeRegex";
+import { activeEndDateBound } from "../../utils/timezone";
 
 export const addMember = asyncHandler(async function (
   req: Request,
@@ -97,7 +98,7 @@ export const getMember = asyncHandler(async function (
       $elemMatch: {
         pkgId: new Types.ObjectId(pkgId as string),
         status: "ACTIVE",
-        pkgEndDate: { $gte: new Date() },
+        pkgEndDate: { $gte: activeEndDateBound() },
       },
     };
   }
