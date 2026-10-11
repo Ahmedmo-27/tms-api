@@ -55,7 +55,7 @@ export const updateScanRow = asyncHandler(async function (
   const ref = readRef(req);
   await assertRowAccess(req, ref);
 
-  const { uid, pkgId, time, status, guestName, guestPhone, targetScid } = req.body ?? {};
+  const { uid, pkgId, time, status, guestName, guestPhone, name, phoneNumber, targetScid } = req.body ?? {};
   if (targetScid && targetScid !== ref.parentId) {
     const restrictTo = resolveLocationFilter(req);
     if (restrictTo) {
@@ -79,8 +79,13 @@ export const updateScanRow = asyncHandler(async function (
     return;
   }
 
-  if (status !== undefined && status !== "SUCCESS" && status !== "FAILED") {
-    throw new BadRequestError("INVALID_STATUS", "Status must be SUCCESS or FAILED");
+  if (
+    status !== undefined &&
+    status !== "SUCCESS" &&
+    status !== "FAILED" &&
+    status !== "WILL_PAY"
+  ) {
+    throw new BadRequestError("INVALID_STATUS", "Status must be SUCCESS, FAILED, or WILL_PAY");
   }
 
   const changes: ScanRowChanges = {};
@@ -88,14 +93,20 @@ export const updateScanRow = asyncHandler(async function (
   if (pkgId !== undefined) changes.pkgId = pkgId;
   if (time !== undefined) changes.time = time;
   if (status !== undefined) changes.status = status;
-  if (guestName !== undefined) changes.guestName = guestName;
-  if (guestPhone !== undefined) changes.guestPhone = guestPhone;
+  const effectiveName = guestName ?? name;
+  const effectivePhone = guestPhone ?? phoneNumber;
+  if (effectiveName !== undefined) changes.guestName = effectiveName;
+  if (effectivePhone !== undefined) changes.guestPhone = effectivePhone;
 
   if (Object.keys(changes).length === 0) {
     throw new BadRequestError("NO_CHANGES", "No fields to update");
   }
 
   const row = await ScanAdminService.updateScanRow(ref, changes);
+  const io = req.app.get("io");
+  if (io) {
+    io.emit("SUCCESS-SCAN");
+  }
   new SuccessResponse("Scan updated", row).send(res);
 });
 
@@ -112,6 +123,15 @@ export const moveScanToClass = asyncHandler(async function (
       "TARGET_CLASS_REQUIRED",
       "targetScid is required",
     );
+  }
+
+  if (
+    status !== undefined &&
+    status !== "SUCCESS" &&
+    status !== "FAILED" &&
+    status !== "WILL_PAY"
+  ) {
+    throw new BadRequestError("INVALID_STATUS", "Status must be SUCCESS, FAILED, or WILL_PAY");
   }
 
   const restrictTo = resolveLocationFilter(req);

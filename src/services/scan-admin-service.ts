@@ -4,6 +4,8 @@ import DailyAttendance from "../models/dailyAttendance";
 import ScheduledClass from "../models/scheduledClass";
 import Package, { isUnlimitedSpaceAccess } from "../models/package";
 import User from "../models/user";
+import NonUserBooking from "../models/nonUserBookings";
+import Payment from "../models/payment";
 import { BadRequestError, ConflictError, NotFoundError } from "../core/ApiError";
 import { runInTransaction } from "../utils/transaction";
 import { cairoDateKey } from "../utils/timezone";
@@ -36,7 +38,7 @@ export interface ScanRowRef {
   source: ScanSource;
   /** Scheduled class id for "class"; DailyAttendance document id otherwise. */
   parentId: string;
-  /** _id of the scan subdocument inside its parent array. */
+  /** _id of the scan subdocument inside its parent array or NonUserBooking id. */
   rowId: string;
 }
 
@@ -47,10 +49,12 @@ export interface ScanRowChanges {
   pkgId?: string;
   /** Corrected check-in timestamp. */
   time?: string | Date;
-  status?: "SUCCESS" | "FAILED";
-  /** Open gym guest rows only — these store their own name and phone. */
+  status?: "SUCCESS" | "FAILED" | "WILL_PAY";
+  /** Guest rows (open gym or class walk-in) — these store their own name and phone. */
   guestName?: string;
   guestPhone?: string;
+  name?: string;
+  phoneNumber?: string;
   /** Move this scan to a new scheduled class (for false QR code scans). */
   targetScid?: string;
 }
@@ -67,13 +71,13 @@ export interface ScanRowView {
   pkgId?: string;
   method: string;
   time: Date;
-  status: "SUCCESS" | "FAILED";
+  status: "SUCCESS" | "FAILED" | "WILL_PAY";
 }
 
 interface ScanEffect {
   uid?: string;
   pkgId?: string;
-  status: "SUCCESS" | "FAILED";
+  status: "SUCCESS" | "FAILED" | "WILL_PAY";
   time: Date;
 }
 
@@ -406,11 +410,18 @@ async function resolveLegacyPkgId(
 
 type RowDoc = Record<string, any>;
 
+interface LoadedRow {
+  parent: any;
+  row: RowDoc;
+  arrayPath: string;
+  isNonUserBooking?: boolean;
+}
+
 /** Locates the parent document and the subdocument array holding the row. */
 async function loadRow(
   ref: ScanRowRef,
   session?: ClientSession,
-): Promise<{ parent: any; row: RowDoc; arrayPath: string }> {
+): Promise<LoadedRow> {
   const parentId = toObjectId(ref.parentId, "parentId");
   toObjectId(ref.rowId, "rowId");
 
@@ -419,9 +430,18 @@ async function loadRow(
     if (!parent) {
       throw new NotFoundError("CLASS_NOT_FOUND", "Scheduled class not found");
     }
-    const row = (parent.scans as any).id(ref.rowId);
-    if (!row) throw new NotFoundError("SCAN_NOT_FOUND", "Scan row not found");
-    return { parent, row, arrayPath: "scans" };
+    const row =
+      typeof (parent.scans as any)?.id === "function"
+        ? (parent.scans as any).id(ref.rowId)
+        : (parent.scans as any[])?.find((s: any) => s._id?.toString() === ref.rowId);
+    if (row) {
+      return { parent, row, arrayPath: "scans", isNonUserBooking: false };
+    }
+    const nonUser = await NonUserBooking.findById(ref.rowId).session(session ?? null);
+    if (nonUser) {
+      return { parent, row: nonUser, arrayPath: "scans", isNonUserBooking: true };
+    }
+    throw new NotFoundError("SCAN_NOT_FOUND", "Scan row not found");
   }
 
   const parent = await DailyAttendance.findById(parentId).session(session ?? null);
@@ -429,13 +449,26 @@ async function loadRow(
     throw new NotFoundError("ATTENDANCE_NOT_FOUND", "Attendance day not found");
   }
   const arrayPath = ref.source === "pt" ? "ptAttendance" : "openGymAttendance";
-  const row = (parent[arrayPath] as any).id(ref.rowId);
+  const row =
+    typeof (parent[arrayPath] as any)?.id === "function"
+      ? (parent[arrayPath] as any).id(ref.rowId)
+      : (parent[arrayPath] as any[])?.find((s: any) => s._id?.toString() === ref.rowId);
   if (!row) throw new NotFoundError("SCAN_NOT_FOUND", "Scan row not found");
-  return { parent, row, arrayPath };
+  return { parent, row, arrayPath, isNonUserBooking: false };
 }
 
-/** Class rows store status as a boolean; the daily arrays use a string enum. */
-function readStatus(source: ScanSource, row: RowDoc): "SUCCESS" | "FAILED" {
+/** Class rows store status as boolean or 'WILL_PAY'; daily arrays use string enum; NonUserBooking uses its own status enum. */
+function readStatus(
+  source: ScanSource,
+  row: RowDoc,
+  isNonUserBooking?: boolean,
+): "SUCCESS" | "FAILED" | "WILL_PAY" {
+  if (isNonUserBooking) {
+    if (row.status === "PAID") return "SUCCESS";
+    if (row.status === "CANCELLED") return "FAILED";
+    return "WILL_PAY";
+  }
+  if (row.status === "WILL_PAY") return "WILL_PAY";
   if (source === "class") return row.status === false ? "FAILED" : "SUCCESS";
   return row.status === "FAILED" ? "FAILED" : "SUCCESS";
 }
@@ -443,16 +476,45 @@ function readStatus(source: ScanSource, row: RowDoc): "SUCCESS" | "FAILED" {
 function writeStatus(
   source: ScanSource,
   row: RowDoc,
-  status: "SUCCESS" | "FAILED",
+  status: "SUCCESS" | "FAILED" | "WILL_PAY",
+  isNonUserBooking?: boolean,
 ): void {
-  row.status = source === "class" ? status === "SUCCESS" : status;
+  if (isNonUserBooking) {
+    if (status === "SUCCESS") row.status = "PAID";
+    else if (status === "FAILED") row.status = "CANCELLED";
+    else row.status = "ATTENDED";
+    return;
+  }
+  if (status === "WILL_PAY") {
+    row.status = "WILL_PAY";
+  } else if (source === "class") {
+    row.status = status === "SUCCESS";
+  } else {
+    row.status = status;
+  }
 }
 
-function readTime(source: ScanSource, row: RowDoc): Date {
+function readTime(
+  source: ScanSource,
+  row: RowDoc,
+  isNonUserBooking?: boolean,
+): Date {
+  if (isNonUserBooking) {
+    return new Date(row.attendanceTime || row.bookingTime || Date.now());
+  }
   return new Date(source === "class" ? row.scanTime : row.time);
 }
 
-function writeTime(source: ScanSource, row: RowDoc, time: Date): void {
+function writeTime(
+  source: ScanSource,
+  row: RowDoc,
+  time: Date,
+  isNonUserBooking?: boolean,
+): void {
+  if (isNonUserBooking) {
+    row.attendanceTime = time;
+    return;
+  }
   if (source === "class") row.scanTime = time;
   else row.time = time;
 }
@@ -469,14 +531,23 @@ export class ScanAdminService {
     const restoreSession = options.restoreSession !== false;
 
     await runInTransaction(async (session: ClientSession) => {
-      const { parent, row, arrayPath } = await loadRow(ref, session);
+      const { parent, row, arrayPath, isNonUserBooking } = await loadRow(ref, session);
+
+      if (isNonUserBooking) {
+        if (row.status !== "CANCELLED") {
+          await NonUserBooking.cancelBooking(ref.rowId, session);
+          await ScheduledClass.removeBookedNonUser(ref.parentId, session);
+        }
+        return;
+      }
+
       const effect: ScanEffect = {
         uid: row.uid?.toString(),
         pkgId:
           row.pkgId?.toString() ??
           (await resolveLegacyPkgId(row.method, session)),
-        status: readStatus(ref.source, row),
-        time: readTime(ref.source, row),
+        status: readStatus(ref.source, row, false),
+        time: readTime(ref.source, row, false),
       };
 
       if (restoreSession) {
@@ -517,23 +588,189 @@ export class ScanAdminService {
       });
     }
 
-    if (ref.source !== "open-gym" && (changes.guestName || changes.guestPhone)) {
+    if (ref.source === "pt" && (changes.guestName || changes.guestPhone)) {
       throw new BadRequestError(
         "GUEST_FIELDS_NOT_SUPPORTED",
-        "Guest name and phone can only be set on open gym rows",
+        "Guest name and phone can only be set on open gym or class walk-in rows",
       );
     }
 
     await runInTransaction(async (session: ClientSession) => {
-      const { parent, row, arrayPath } = await loadRow(ref, session);
+      const { parent, row, arrayPath, isNonUserBooking } = await loadRow(ref, session);
+
+      if (isNonUserBooking) {
+        if (changes.uid) {
+          if (row.status !== "CANCELLED") {
+            await NonUserBooking.cancelBooking(ref.rowId, session);
+            await ScheduledClass.removeBookedNonUser(ref.parentId, session);
+          }
+
+          const user = await User.findById(toObjectId(changes.uid, "uid"))
+            .select("_id")
+            .session(session);
+          if (!user) throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
+
+          const targetStatus = changes.status ?? (row.status === "PAID" ? "SUCCESS" : "WILL_PAY");
+          const scanTime = changes.time ? new Date(changes.time) : readTime(ref.source, row, true);
+          if (isNaN(scanTime.getTime())) {
+            throw new BadRequestError("INVALID_TIME", "Check-in time is not a valid date");
+          }
+
+          let pkgIdToUse = changes.pkgId;
+          let methodName = "Walk In";
+
+          if (targetStatus === "SUCCESS") {
+            const isBooked = (parent.bookedMembers ?? []).some(
+              (b: RowDoc) => b.uid?.toString() === changes.uid,
+            );
+            if (!isBooked) {
+              if (!pkgIdToUse && parent.cid) {
+                const validPkgs = await Package.find({ opensClasses: parent.cid }).session(session);
+                const validIds = new Set(validPkgs.map((p) => p._id.toString()));
+                const memberDoc = await Member.findOne({ uid: changes.uid }).session(session);
+                const eligibleHoldings = (memberDoc?.packages ?? []).filter(
+                  (p) =>
+                    validIds.has(p.pkgId.toString()) &&
+                    p.status === "ACTIVE" &&
+                    p.remainingClasses > 0,
+                );
+                if (eligibleHoldings.length === 1) {
+                  pkgIdToUse = eligibleHoldings[0].pkgId.toString();
+                } else {
+                  throw new BadRequestError(
+                    "PACKAGE_REQUIRED",
+                    "Choose which of the member's packages to charge",
+                  );
+                }
+              }
+
+              if (pkgIdToUse) {
+                const catalog = await Package.findById(pkgIdToUse)
+                  .select("name opensClasses")
+                  .session(session);
+                if (!catalog) {
+                  throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found");
+                }
+                methodName = catalog.name;
+
+                await adjustCredit(
+                  changes.uid,
+                  pkgIdToUse,
+                  "charge",
+                  "Walk-in assigned to member — session charged",
+                  session,
+                  scanTime,
+                );
+
+                await ScheduledClass.bookMember(
+                  ref.parentId,
+                  changes.uid,
+                  methodName,
+                  session,
+                  true,
+                );
+
+                await Member.updateOne(
+                  {
+                    uid: changes.uid,
+                    "bookings.scid": { $ne: new Types.ObjectId(ref.parentId) },
+                  },
+                  {
+                    $push: {
+                      bookings: {
+                        scid: new Types.ObjectId(ref.parentId),
+                        cid: parent.cid,
+                      },
+                    },
+                  },
+                  { session },
+                );
+              }
+            }
+
+            await Member.updateOne(
+              {
+                uid: changes.uid,
+                "attendance.scid": { $ne: new Types.ObjectId(ref.parentId) },
+              },
+              {
+                $push: {
+                  attendance: {
+                    scid: new Types.ObjectId(ref.parentId),
+                    date: scanTime,
+                  },
+                },
+              },
+              { session },
+            );
+          }
+
+          const newScanId = new Types.ObjectId();
+          (parent.scans as any).push({
+            _id: newScanId,
+            uid: user._id,
+            scanTime,
+            method: methodName,
+            status: targetStatus === "WILL_PAY" ? "WILL_PAY" : targetStatus === "SUCCESS",
+            pkgId: pkgIdToUse ? new Types.ObjectId(pkgIdToUse) : undefined,
+          });
+
+          await parent.save({ session });
+          ref.rowId = newScanId.toString();
+          return;
+        }
+
+        const effectiveName = changes.guestName ?? changes.name;
+        const effectivePhone = changes.guestPhone ?? changes.phoneNumber;
+
+        if (effectiveName !== undefined) {
+          row.name = effectiveName;
+          if (row.paymentId) {
+            await Payment.findByIdAndUpdate(row.paymentId, {
+              nonMemberName: effectiveName,
+            }).session(session);
+          }
+        }
+        if (effectivePhone !== undefined) {
+          row.phoneNumber = effectivePhone;
+          if (row.paymentId) {
+            await Payment.findByIdAndUpdate(row.paymentId, {
+              nonMemberPhone: effectivePhone,
+            }).session(session);
+          }
+        }
+        if (changes.time) row.attendanceTime = new Date(changes.time);
+
+        if (changes.status) {
+          const oldStatus = row.status;
+          const newStatus =
+            changes.status === "SUCCESS"
+              ? "PAID"
+              : changes.status === "FAILED"
+              ? "CANCELLED"
+              : "ATTENDED";
+
+          if (newStatus !== oldStatus) {
+            if (newStatus === "CANCELLED" && oldStatus !== "CANCELLED") {
+              await ScheduledClass.removeBookedNonUser(ref.parentId, session);
+            } else if (oldStatus === "CANCELLED" && newStatus !== "CANCELLED") {
+              await ScheduledClass.bookNonUser(ref.parentId, session, true);
+            }
+            row.status = newStatus;
+          }
+        }
+
+        await row.save({ session });
+        return;
+      }
 
       const before: ScanEffect = {
         uid: row.uid?.toString(),
         pkgId:
           row.pkgId?.toString() ??
           (await resolveLegacyPkgId(row.method, session)),
-        status: readStatus(ref.source, row),
-        time: readTime(ref.source, row),
+        status: readStatus(ref.source, row, false),
+        time: readTime(ref.source, row, false),
       };
 
       const after: ScanEffect = {
@@ -622,11 +859,8 @@ export class ScanAdminService {
         if (!user) throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
         row.uid = user._id;
         row.pkgId = after.pkgId ? new Types.ObjectId(after.pkgId) : undefined;
-        // A reassigned row belongs to a member, not a guest.
-        if (ref.source === "open-gym") {
-          row.guestName = undefined;
-          row.guestPhone = undefined;
-        }
+        row.guestName = undefined;
+        row.guestPhone = undefined;
       }
 
       if (after.pkgId && (after.pkgId !== before.pkgId || changes.uid)) {
@@ -647,8 +881,8 @@ export class ScanAdminService {
         }
       }
 
-      if (changes.time) writeTime(ref.source, row, after.time);
-      if (changes.status) writeStatus(ref.source, row, after.status);
+      if (changes.time) writeTime(ref.source, row, after.time, false);
+      if (changes.status) writeStatus(ref.source, row, after.status, false);
       if (changes.guestName !== undefined) row.guestName = changes.guestName;
       if (changes.guestPhone !== undefined) row.guestPhone = changes.guestPhone;
 
@@ -674,7 +908,7 @@ export class ScanAdminService {
       uid?: string;
       pkgId?: string;
       time?: string | Date;
-      status?: "SUCCESS" | "FAILED";
+      status?: "SUCCESS" | "FAILED" | "WILL_PAY";
     } = {},
   ): Promise<ScanRowView> {
     const targetObjectId = toObjectId(targetScid, "targetScid");
@@ -693,19 +927,50 @@ export class ScanAdminService {
         throw new NotFoundError("CLASS_NOT_FOUND", "Target scheduled class not found");
       }
 
-      const { parent: oldParent, row, arrayPath } = await loadRow(ref, session);
+      const { parent: oldParent, row, arrayPath, isNonUserBooking } = await loadRow(ref, session);
+
+      if (isNonUserBooking) {
+        if (row.status !== "CANCELLED") {
+          await ScheduledClass.removeBookedNonUser(ref.parentId, session);
+        }
+
+        const targetUid = options.uid;
+        if (!targetUid) {
+          // Moving walk-in to new class as walk-in
+          if (row.status !== "CANCELLED") {
+            await ScheduledClass.bookNonUser(targetScid, session, true);
+          }
+          row.scid = targetObjectId;
+          if (options.time) row.attendanceTime = new Date(options.time);
+          if (options.status) {
+            row.status =
+              options.status === "SUCCESS"
+                ? "PAID"
+                : options.status === "FAILED"
+                ? "CANCELLED"
+                : "ATTENDED";
+          }
+          await row.save({ session });
+          newRowId = row._id;
+          return;
+        }
+
+        // Converting walk-in to member in target class
+        await NonUserBooking.cancelBooking(ref.rowId, session);
+      }
+
       const oldUid = row.uid?.toString();
       const targetUid = options.uid ?? oldUid;
       if (!targetUid) {
         throw new BadRequestError(
           "MEMBER_REQUIRED",
-          "Guest check-ins cannot be moved to a class",
+          "Guest check-ins cannot be moved to a class without specifying a member",
         );
       }
 
       const scanTime = options.time
         ? new Date(options.time)
-        : readTime(ref.source, row);
+        : readTime(ref.source, row, isNonUserBooking);
       if (isNaN(scanTime.getTime())) {
         throw new BadRequestError("INVALID_TIME", "Check-in time is not a valid date");
       }
@@ -732,20 +997,22 @@ export class ScanAdminService {
           pkgId:
             row.pkgId?.toString() ??
             (await resolveLegacyPkgId(row.method, session)),
-          status: readStatus(ref.source, row),
-          time: readTime(ref.source, row),
+          status: readStatus(ref.source, row, false),
+          time: readTime(ref.source, row, false),
         };
 
         await revertEffect(ref.source, beforeEffect, session, ref.parentId);
       }
 
-      // Remove row from old parent
-      (oldParent[arrayPath] as any).pull({ _id: new Types.ObjectId(ref.rowId) });
-      await oldParent.save({ session });
+      // Remove row from old parent if not walk-in
+      if (!isNonUserBooking) {
+        (oldParent[arrayPath] as any).pull({ _id: new Types.ObjectId(ref.rowId) });
+        await oldParent.save({ session });
+      }
 
       // 2. Apply check-in to target class
       let targetPkgId = options.pkgId;
-      let targetMethod = row.method || "Class Scan";
+      let targetMethod = isNonUserBooking ? "Walk In" : (row.method || "Class Scan");
 
       // Validate target package if provided
       if (targetPkgId) {
@@ -866,7 +1133,7 @@ export class ScanAdminService {
         uid: new Types.ObjectId(targetUid),
         scanTime,
         method: targetMethod,
-        status: targetStatus === "SUCCESS",
+        status: targetStatus === "WILL_PAY" ? "WILL_PAY" : targetStatus === "SUCCESS",
         pkgId: targetPkgId ? new Types.ObjectId(targetPkgId) : undefined,
       });
 
@@ -886,7 +1153,7 @@ export class ScanAdminService {
 
   /** Reads back a single row, with the member's current name and phone. */
   static async getScanRow(ref: ScanRowRef): Promise<ScanRowView> {
-    const { row } = await loadRow(ref);
+    const { row, isNonUserBooking } = await loadRow(ref);
     const uid = row.uid?.toString();
 
     let memberName: string | undefined;
@@ -897,19 +1164,22 @@ export class ScanAdminService {
       phone = user?.phoneNumber;
     }
 
+    const guestName = isNonUserBooking ? row.name : row.guestName;
+    const guestPhone = isNonUserBooking ? row.phoneNumber : row.guestPhone;
+
     return {
       source: ref.source,
       parentId: ref.parentId,
       rowId: ref.rowId,
       uid,
-      memberName,
-      phone,
-      guestName: row.guestName,
-      guestPhone: row.guestPhone,
+      memberName: memberName ?? (isNonUserBooking ? row.name : undefined),
+      phone: phone ?? (isNonUserBooking ? row.phoneNumber : undefined),
+      guestName,
+      guestPhone,
       pkgId: row.pkgId?.toString(),
-      method: row.method,
-      time: readTime(ref.source, row),
-      status: readStatus(ref.source, row),
+      method: isNonUserBooking ? "Walk In" : row.method,
+      time: readTime(ref.source, row, isNonUserBooking),
+      status: readStatus(ref.source, row, isNonUserBooking),
     };
   }
 }

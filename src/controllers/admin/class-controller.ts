@@ -583,26 +583,40 @@ export const updateNonUserBookingPhone = asyncHandler(async function (
   res: Response
 ): Promise<void> {
   const { bookingId } = req.params;
-  const { phoneNumber } = req.body;
+  const { phoneNumber, name } = req.body;
   if (!bookingId)
     throw new BadRequestError("INVALID_BOOKING_ID", "Booking Id is invalid");
-  if (!phoneNumber || !/^\d{11}$/.test(phoneNumber.trim()))
-    throw new BadRequestError("INVALID_PHONE", "Please enter a valid 11-digit phone number");
-  const trimmedPhone = phoneNumber.trim();
+
+  const updateObj: Record<string, any> = {};
+  if (phoneNumber !== undefined) {
+    if (phoneNumber && !/^\d{11}$/.test(phoneNumber.trim()))
+      throw new BadRequestError("INVALID_PHONE", "Please enter a valid 11-digit phone number");
+    updateObj.phoneNumber = phoneNumber ? phoneNumber.trim() : "";
+  }
+  if (name !== undefined) {
+    if (!name || !name.trim())
+      throw new BadRequestError("INVALID_NAME", "Please enter a valid name");
+    updateObj.name = name.trim();
+  }
+  if (Object.keys(updateObj).length === 0) {
+    throw new BadRequestError("NO_FIELDS", "No fields to update");
+  }
+
   const booking = await NonUserBooking.findByIdAndUpdate(
     bookingId,
-    { phoneNumber: trimmedPhone },
+    updateObj,
     { new: true }
   );
   if (!booking)
     throw new NotFoundError("BOOKING_NOT_FOUND", "Booking not found");
   if (booking.paymentId) {
-    await Payment.findByIdAndUpdate(booking.paymentId, {
-      nonMemberPhone: trimmedPhone,
-    });
+    const payUpdate: Record<string, any> = {};
+    if (updateObj.phoneNumber !== undefined) payUpdate.nonMemberPhone = updateObj.phoneNumber;
+    if (updateObj.name !== undefined) payUpdate.nonMemberName = updateObj.name;
+    await Payment.findByIdAndUpdate(booking.paymentId, payUpdate);
   }
   req.app.get("io")?.emit("SUCCESS-SCAN");
-  new SuccessResponse("Phone number updated!", booking).send(res);
+  new SuccessResponse("Booking updated!", booking).send(res);
 });
 
 export const cancelNonUserBooking = asyncHandler(async function (
