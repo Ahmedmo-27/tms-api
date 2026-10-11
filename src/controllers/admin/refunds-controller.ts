@@ -21,7 +21,11 @@ import { sendRefundToRentalSystem, refundPaymentToRentalSystem } from "../../ser
 import logger from "../../config/logger";
 import { IRefund } from "../../models/refund";
 import { IPayment } from "../../models/payment";
-import { startOfDateCairo, endOfDateCairo } from "../../utils/timezone";
+import {
+  startOfDateCairo,
+  endOfDateCairo,
+  isPackageExpired,
+} from "../../utils/timezone";
 import { resolveLocationFilter, resolveLocationIdForWrite, locationIdScalarQuery } from "../../utils/location-scope";
 
 async function syncRefundToErp(
@@ -450,7 +454,7 @@ export const getMemberRecentPayments = asyncHandler(
             matchingPkg.status === "EXPIRED" ||
             matchingPkg.status === "COMPLETED" ||
             matchingPkg.status === "DELETED" ||
-            new Date(matchingPkg.pkgEndDate) < new Date();
+            isPackageExpired(matchingPkg.pkgEndDate);
           if (isExpired) {
             continue;
           }

@@ -13,6 +13,7 @@ import NonUserBooking from "../models/nonUserBookings";
 import NonUserPackage from "../models/nonUserPackage";
 import { NotFoundError } from "../core/ApiError";
 import { locationIdScalarQuery } from "../utils/location-scope";
+import { isPackageExpired } from "../utils/timezone";
 import {
   DROP_IN_METHOD,
   FinanceRange,
@@ -1467,7 +1468,7 @@ export class FinanceService {
       const activeMembers = new Map<string, Set<string>>();
       for (const m of members as AnyDoc[]) {
         for (const mp of m.packages ?? []) {
-          if (!["ACTIVE", "FROZEN"].includes(mp.status) || new Date(mp.pkgEndDate) < now) continue;
+          if (!["ACTIVE", "FROZEN"].includes(mp.status) || isPackageExpired(mp.pkgEndDate, now)) continue;
           const loc = (mp.locationId && idStr(mp.locationId)) || lookups.packages.get(idStr(mp.pkgId))?.locationId || "";
           if (!activeMembers.has(loc)) activeMembers.set(loc, new Set());
           activeMembers.get(loc)!.add(idStr(m.uid));

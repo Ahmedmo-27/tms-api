@@ -11,6 +11,7 @@ import Ticket from "../models/ticket";
 import User from "../models/user";
 import Location from "../models/location";
 import { BadRequestError, ForbiddenError, NotFoundError } from "../core/ApiError";
+import { cairoDaysUntil, isPackageExpired } from "../utils/timezone";
 import {
   ClientResponseDto,
   PaginatedClientsResponseDto,
@@ -124,7 +125,7 @@ export class CoachService {
     coachDocId: Types.ObjectId,
     pkgMeta: Map<string, { category: string; coachId: string | null }>,
   ): Pick<ClientResponseDto, "remainingClasses" | "daysUntilExpiry" | "nearestExpiryDate"> {
-    const now = Date.now();
+    const now = new Date();
     const coachIdStr = coachDocId.toString();
     let lowestRemaining: number | null = null;
     let nearestEnd: Date | null = null;
@@ -135,7 +136,7 @@ export class CoachService {
       if (meta.category !== "PERSONAL_TRAINING") continue;
       if (!meta.coachId || meta.coachId !== coachIdStr) continue;
       if (pkg.status !== "ACTIVE") continue;
-      if (pkg.pkgEndDate.getTime() < now) continue;
+      if (isPackageExpired(pkg.pkgEndDate, now)) continue;
 
       if (lowestRemaining === null || pkg.remainingClasses < lowestRemaining) {
         lowestRemaining = pkg.remainingClasses;
@@ -147,7 +148,7 @@ export class CoachService {
 
     return {
       remainingClasses: lowestRemaining,
-      daysUntilExpiry: nearestEnd ? Math.ceil((nearestEnd.getTime() - now) / 86400000) : null,
+      daysUntilExpiry: nearestEnd ? cairoDaysUntil(nearestEnd, now) : null,
       nearestExpiryDate: nearestEnd ? nearestEnd.toISOString() : null,
     };
   }
@@ -878,7 +879,7 @@ export class CoachService {
       select: "name",
     });
 
-    const now = Date.now();
+    const now = new Date();
     const alerts: TodayPtAlertDto[] = [];
 
     for (const member of members) {
@@ -886,8 +887,8 @@ export class CoachService {
       for (const pkg of member.packages) {
         const catalog = pkgMap.get(pkg.pkgId.toString());
         if (!catalog || pkg.status !== "ACTIVE") continue;
-        if (pkg.pkgEndDate.getTime() < now) continue;
-        const daysUntilExpiry = Math.ceil((pkg.pkgEndDate.getTime() - now) / 86400000);
+        if (isPackageExpired(pkg.pkgEndDate, now)) continue;
+        const daysUntilExpiry = cairoDaysUntil(pkg.pkgEndDate, now);
         if (pkg.remainingClasses > 2 && daysUntilExpiry > 14) continue;
         alerts.push({
           memberId: member.uid._id.toString(),

@@ -5,7 +5,12 @@ import FreezeRequest, { IFreezeRequest } from "../models/freezeRequest";
 import User from "../models/user";
 import Location from "../models/location";
 import { BadRequestError, ConflictError, NotFoundError } from "../core/ApiError";
-import { isSameCairoDay, toStoredPackageDate, startOfTodayCairo } from "../utils/timezone";
+import {
+  isSameCairoDay,
+  isPackageExpired,
+  toStoredPackageDate,
+  startOfTodayCairo,
+} from "../utils/timezone";
 import { NotificationsService } from "./notifications-service";
 import logger from "../config/logger";
 
@@ -38,7 +43,7 @@ export class FreezeService {
       if (pkg.status === "FROZEN" || pkg.freezeInfo?.isFrozen) {
         if (pkg.freezeInfo?.freezeEndDate && now >= new Date(pkg.freezeInfo.freezeEndDate)) {
           pkg.freezeInfo.isFrozen = false;
-          pkg.status = new Date(pkg.pkgEndDate) >= now ? "ACTIVE" : "EXPIRED";
+          pkg.status = isPackageExpired(pkg.pkgEndDate, now) ? "EXPIRED" : "ACTIVE";
           modified = true;
           logger.info(`Auto-unfroze package ${pkg.pkgId} for member ${member.uid}`);
         }
@@ -216,7 +221,7 @@ export class FreezeService {
     }
 
     // Determine status based on new expiry date
-    pkg.status = new Date(pkg.pkgEndDate) >= now ? "ACTIVE" : "EXPIRED";
+    pkg.status = isPackageExpired(pkg.pkgEndDate, now) ? "EXPIRED" : "ACTIVE";
 
     await member.save();
     return pkg;
