@@ -5,6 +5,7 @@ import ScheduledClass from "../models/scheduledClass";
 import Package, { isUnlimitedSpaceAccess } from "../models/package";
 import User from "../models/user";
 import NonUserBooking from "../models/nonUserBookings";
+import Payment from "../models/payment";
 import { BadRequestError, ConflictError, NotFoundError } from "../core/ApiError";
 import { runInTransaction } from "../utils/transaction";
 import { cairoDateKey } from "../utils/timezone";
@@ -52,6 +53,8 @@ export interface ScanRowChanges {
   /** Guest rows (open gym or class walk-in) — these store their own name and phone. */
   guestName?: string;
   guestPhone?: string;
+  name?: string;
+  phoneNumber?: string;
   /** Move this scan to a new scheduled class (for false QR code scans). */
   targetScid?: string;
 }
@@ -717,8 +720,25 @@ export class ScanAdminService {
           return;
         }
 
-        if (changes.guestName !== undefined) row.name = changes.guestName;
-        if (changes.guestPhone !== undefined) row.phoneNumber = changes.guestPhone;
+        const effectiveName = changes.guestName ?? changes.name;
+        const effectivePhone = changes.guestPhone ?? changes.phoneNumber;
+
+        if (effectiveName !== undefined) {
+          row.name = effectiveName;
+          if (row.paymentId) {
+            await Payment.findByIdAndUpdate(row.paymentId, {
+              nonMemberName: effectiveName,
+            }).session(session);
+          }
+        }
+        if (effectivePhone !== undefined) {
+          row.phoneNumber = effectivePhone;
+          if (row.paymentId) {
+            await Payment.findByIdAndUpdate(row.paymentId, {
+              nonMemberPhone: effectivePhone,
+            }).session(session);
+          }
+        }
         if (changes.time) row.attendanceTime = new Date(changes.time);
 
         if (changes.status) {

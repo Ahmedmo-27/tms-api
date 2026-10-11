@@ -504,6 +504,20 @@ adminRoutes.patch(
   updateNonUserBookingPhone
 )
 
+adminRoutes.patch(
+  "/nonUserBooking/:bookingId/name",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  updateNonUserBookingPhone
+)
+
+adminRoutes.patch(
+  "/nonUserBooking/:bookingId",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  updateNonUserBookingPhone
+)
+
 adminRoutes.post(
   "/nonUserBooking/walk-in",
   authenticateUser,
