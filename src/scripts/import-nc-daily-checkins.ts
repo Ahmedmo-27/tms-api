@@ -612,7 +612,7 @@ async function bookAndScan(opts: {
   }
 
   const alreadyScan = sc.scans?.some(
-    (s) => s.uid.toString() === opts.uid && s.status === true,
+    (s) => s.uid?.toString() === opts.uid && s.status === true,
   );
   if (!alreadyScan) {
     await ScheduledClass.updateOne(

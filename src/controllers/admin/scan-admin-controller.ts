@@ -79,8 +79,13 @@ export const updateScanRow = asyncHandler(async function (
     return;
   }
 
-  if (status !== undefined && status !== "SUCCESS" && status !== "FAILED") {
-    throw new BadRequestError("INVALID_STATUS", "Status must be SUCCESS or FAILED");
+  if (
+    status !== undefined &&
+    status !== "SUCCESS" &&
+    status !== "FAILED" &&
+    status !== "WILL_PAY"
+  ) {
+    throw new BadRequestError("INVALID_STATUS", "Status must be SUCCESS, FAILED, or WILL_PAY");
   }
 
   const changes: ScanRowChanges = {};
@@ -112,6 +117,15 @@ export const moveScanToClass = asyncHandler(async function (
       "TARGET_CLASS_REQUIRED",
       "targetScid is required",
     );
+  }
+
+  if (
+    status !== undefined &&
+    status !== "SUCCESS" &&
+    status !== "FAILED" &&
+    status !== "WILL_PAY"
+  ) {
+    throw new BadRequestError("INVALID_STATUS", "Status must be SUCCESS, FAILED, or WILL_PAY");
   }
 
   const restrictTo = resolveLocationFilter(req);

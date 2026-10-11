@@ -100,10 +100,12 @@ type IScheduledClassModel = Model<IScheduledClass, {}, IScheduledClassMethods> &
 
 interface IMemberScan {
   _id?: Types.ObjectId;
-  uid: Types.ObjectId;
+  uid?: Types.ObjectId;
+  guestName?: string;
+  guestPhone?: string;
   scanTime: Date;
   method?: string;
-  status: boolean;
+  status: boolean | string;
   pkgId?: Types.ObjectId;
 }
 
@@ -111,7 +113,15 @@ const MemberScanSchema = new Schema({
   uid: {
     type: Schema.Types.ObjectId,
     ref: "User",
-    required: true,
+    required: false,
+  },
+  guestName: {
+    type: String,
+    required: false,
+  },
+  guestPhone: {
+    type: String,
+    required: false,
   },
   scanTime: {
     type: Date,
@@ -122,7 +132,7 @@ const MemberScanSchema = new Schema({
     required: false,
   },
   status: {
-    type: Boolean,
+    type: Schema.Types.Mixed,
     default: true,
   },
   pkgId: {

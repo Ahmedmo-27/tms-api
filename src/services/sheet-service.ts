@@ -1393,7 +1393,7 @@ export class SheetService {
     }
     const sc = await ScheduledClass.findById(row.scid).select("scans");
     const already = sc?.scans?.some(
-      (scan) => scan.uid.toString() === person.uid && scan.status === true,
+      (scan) => scan.uid?.toString() === person.uid && scan.status === true,
     );
     if (already) return;
     await BookingsService.manualRecordClassAttendance(person.uid, row.scid!, io);
