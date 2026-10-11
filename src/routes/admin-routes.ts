@@ -80,6 +80,7 @@ import { getAttendanceHistory } from "../controllers/admin/attendance-controller
 import {
   deleteScanRow,
   getScanRow,
+  moveScanToClass,
   updateScanRow,
 } from "../controllers/admin/scan-admin-controller";
 import {
@@ -361,6 +362,13 @@ adminRoutes.delete(
   authenticateUser,
   authorizeUser(["management", "branch_admin"]),
   deleteScanRow
+);
+
+adminRoutes.post(
+  "/scans/:source/:parentId/:rowId/move-class",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  moveScanToClass
 );
 
 adminRoutes.post(

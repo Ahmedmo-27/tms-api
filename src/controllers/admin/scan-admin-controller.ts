@@ -55,7 +55,30 @@ export const updateScanRow = asyncHandler(async function (
   const ref = readRef(req);
   await assertRowAccess(req, ref);
 
-  const { uid, pkgId, time, status, guestName, guestPhone } = req.body ?? {};
+  const { uid, pkgId, time, status, guestName, guestPhone, targetScid } = req.body ?? {};
+  if (targetScid && targetScid !== ref.parentId) {
+    const restrictTo = resolveLocationFilter(req);
+    if (restrictTo) {
+      await SchedulerService.assertSessionAtLocation(targetScid, restrictTo);
+    }
+    const row = await ScanAdminService.moveScanToClass(ref, targetScid, {
+      uid,
+      pkgId,
+      time,
+      status,
+    });
+    const io = req.app.get("io");
+    if (io) {
+      io.emit("SUCCESS-SCAN", {
+        code: "CLASS_ATTENDED",
+        message: "Check-in moved to class",
+        scid: targetScid,
+      });
+    }
+    new SuccessResponse("Scan moved to class", row).send(res);
+    return;
+  }
+
   if (status !== undefined && status !== "SUCCESS" && status !== "FAILED") {
     throw new BadRequestError("INVALID_STATUS", "Status must be SUCCESS or FAILED");
   }
@@ -74,6 +97,45 @@ export const updateScanRow = asyncHandler(async function (
 
   const row = await ScanAdminService.updateScanRow(ref, changes);
   new SuccessResponse("Scan updated", row).send(res);
+});
+
+export const moveScanToClass = asyncHandler(async function (
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const ref = readRef(req);
+  await assertRowAccess(req, ref);
+
+  const { targetScid, uid, pkgId, time, status } = req.body ?? {};
+  if (!targetScid) {
+    throw new BadRequestError(
+      "TARGET_CLASS_REQUIRED",
+      "targetScid is required",
+    );
+  }
+
+  const restrictTo = resolveLocationFilter(req);
+  if (restrictTo) {
+    await SchedulerService.assertSessionAtLocation(targetScid, restrictTo);
+  }
+
+  const row = await ScanAdminService.moveScanToClass(ref, targetScid, {
+    uid,
+    pkgId,
+    time,
+    status,
+  });
+
+  const io = req.app.get("io");
+  if (io) {
+    io.emit("SUCCESS-SCAN", {
+      code: "CLASS_ATTENDED",
+      message: "Check-in moved to class",
+      scid: targetScid,
+    });
+  }
+
+  new SuccessResponse("Scan moved to class", row).send(res);
 });
 
 export const deleteScanRow = asyncHandler(async function (

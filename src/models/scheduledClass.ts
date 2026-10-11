@@ -99,10 +99,12 @@ type IScheduledClassModel = Model<IScheduledClass, {}, IScheduledClassMethods> &
   IScheduledClassStatics;
 
 interface IMemberScan {
+  _id?: Types.ObjectId;
   uid: Types.ObjectId;
   scanTime: Date;
-  method: string;
+  method?: string;
   status: boolean;
+  pkgId?: Types.ObjectId;
 }
 
 const MemberScanSchema = new Schema({
@@ -122,6 +124,11 @@ const MemberScanSchema = new Schema({
   status: {
     type: Boolean,
     default: true,
+  },
+  pkgId: {
+    type: Schema.Types.ObjectId,
+    ref: "Package",
+    required: false,
   },
 });
 // trigger redeployment
