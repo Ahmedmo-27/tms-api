@@ -25,7 +25,12 @@ import {
   type BookingPackageSkipReason,
   type BookingAudience,
 } from "../utils/booking-package-errors";
-import { cairoDayRange } from "../utils/timezone";
+import {
+  activeEndDateBound,
+  cairoDayRange,
+  isPackageExpired,
+  isPackageNotStarted,
+} from "../utils/timezone";
 
 interface IAttendance {
   scid: Types.ObjectId;
@@ -551,7 +556,7 @@ MemberSchema.static(
         }
 
         const expired = matchingAnyStatus.find(
-          (p) => p.status === "EXPIRED" || new Date(p.pkgEndDate) < now
+          (p) => p.status === "EXPIRED" || isPackageExpired(p.pkgEndDate, now)
         );
         if (expired) {
           const dateStr = new Date(expired.pkgEndDate).toLocaleDateString("en-GB", {
@@ -585,7 +590,7 @@ MemberSchema.static(
         }
 
         const future = matchingAnyStatus.find(
-          (p) => new Date(p.pkgStartDate) > now
+          (p) => isPackageNotStarted(p.pkgStartDate, now)
         );
         if (future) {
           const dateStr = new Date(future.pkgStartDate).toLocaleDateString("en-GB", {
@@ -642,7 +647,7 @@ MemberSchema.static(
       const category = categoryByPkgId.get(pkg.pkgId.toString()) ?? "";
       const isSpace = isUnlimitedSpaceAccess(category);
 
-      if (pkg.pkgEndDate < new Date()) {
+      if (isPackageExpired(pkg.pkgEndDate)) {
         skipReasons.push("expired");
         await this.updateOne(
           {
@@ -733,7 +738,7 @@ MemberSchema.static(
                 "pkg.pkgId": new Types.ObjectId(pkg.pkgId),
                 "pkg.pkgStartDate": new Date(pkg.pkgStartDate),
                 "pkg.status": "ACTIVE",
-                "pkg.pkgEndDate": { $gte: new Date() },
+                "pkg.pkgEndDate": { $gte: activeEndDateBound() },
                 "pkg.remainingClasses": { $gte: points },
               },
             ],
@@ -761,7 +766,7 @@ MemberSchema.static(
                 "pkg.pkgId": new Types.ObjectId(pkg.pkgId),
                 "pkg.pkgStartDate": new Date(pkg.pkgStartDate),
                 "pkg.status": "ACTIVE",
-                "pkg.pkgEndDate": { $gte: new Date() },
+                "pkg.pkgEndDate": { $gte: activeEndDateBound() },
                 "pkg.remainingClasses": { $gt: 0 },
               },
             ],
@@ -1221,7 +1226,7 @@ MemberSchema.static(
       }
 
       const expiredPkg = candidatePkgs.find(
-        (p) => p.status === "EXPIRED" || new Date(p.pkgEndDate) < new Date()
+        (p) => p.status === "EXPIRED" || isPackageExpired(p.pkgEndDate)
       );
       if (expiredPkg) {
         const expDateFormatted = new Date(expiredPkg.pkgEndDate).toLocaleDateString("en-GB", {
@@ -1258,7 +1263,7 @@ MemberSchema.static(
     );
 
     for (const pkg of memberPkgs) {
-      if (pkg.pkgEndDate < new Date()) {
+      if (isPackageExpired(pkg.pkgEndDate)) {
         await this.updateOne(
           {
             uid,
@@ -1339,7 +1344,7 @@ MemberSchema.static(
               "pkg.pkgStartDate": new Date(pkg.pkgStartDate),
               "pkg.status": "ACTIVE",
               "pkg.remainingClasses": { $gt: 0 },
-              "pkg.pkgEndDate": { $gte: new Date() },
+              "pkg.pkgEndDate": { $gte: activeEndDateBound() },
             },
           ],
           session,
@@ -1523,7 +1528,7 @@ MemberSchema.static(
       }
 
       const expiredPkg = candidatePkgs.find(
-        (p) => p.status === "EXPIRED" || new Date(p.pkgEndDate) < now
+        (p) => p.status === "EXPIRED" || isPackageExpired(p.pkgEndDate, now)
       );
       if (expiredPkg) {
         const catalogDoc = await Package.findById(expiredPkg.pkgId).session(session);
@@ -1621,7 +1626,7 @@ MemberSchema.static(
       const category = categoryByPkgId.get(pkg.pkgId.toString()) ?? "";
       const unlimitedAccess = isUnlimitedSpaceAccess(category);
 
-      if (pkg.pkgEndDate < new Date()) {
+      if (isPackageExpired(pkg.pkgEndDate)) {
         await this.updateOne(
           {
             uid,
@@ -1676,7 +1681,7 @@ MemberSchema.static(
                 "pkg.pkgStartDate": new Date(pkg.pkgStartDate),
                 "pkg.status": "ACTIVE",
                 "pkg.remainingClasses": { $gt: 0 },
-                "pkg.pkgEndDate": { $gte: new Date() },
+                "pkg.pkgEndDate": { $gte: activeEndDateBound() },
               },
             ],
             session,
@@ -1961,7 +1966,7 @@ MemberSchema.static(
     if (p.status !== "DELETED") {
       if (isFrozen) {
         targetStatus = "FROZEN";
-      } else if (new Date(p.pkgEndDate) < now) {
+      } else if (isPackageExpired(p.pkgEndDate, now)) {
         targetStatus = "EXPIRED";
       } else if (newClasses <= 0 && !isSpace) {
         targetStatus = "COMPLETED";

@@ -93,3 +93,48 @@ export function isSameCairoDay(a: Date | string, b: Date | string): boolean {
 export function nowInCairo(): Date {
   return toZonedTime(new Date(), CAIRO_TZ);
 }
+
+/**
+ * Package validity is inclusive of its end day on the Cairo calendar: a package
+ * ending 28/10 stays usable for the whole of 28/10.
+ *
+ * Stored package dates are UTC noon of their Cairo day (see
+ * toStoredPackageDate), so comparing `pkgEndDate` directly against `now` cut
+ * the final day off at ~14:00 Cairo — members lost the evening of their last
+ * day. Compare Cairo calendar days instead.
+ */
+export function isPackageExpired(
+  pkgEndDate: Date | string,
+  now: Date | string = new Date(),
+): boolean {
+  return cairoDateKey(pkgEndDate) < cairoDateKey(now);
+}
+
+/** True when the package's Cairo start day has not arrived yet. */
+export function isPackageNotStarted(
+  pkgStartDate: Date | string,
+  now: Date | string = new Date(),
+): boolean {
+  return cairoDateKey(pkgStartDate) > cairoDateKey(now);
+}
+
+/**
+ * Lower bound for "the package's end day is today or later", for Mongo
+ * queries and array filters. Pairs with isPackageExpired: any pkgEndDate on
+ * today's Cairo day or later is >= this instant.
+ */
+export function activeEndDateBound(now: Date | string = new Date()): Date {
+  return startOfDateCairo(now);
+}
+
+/** Whole Cairo calendar days from `now` until `date` (0 = ends today). */
+export function cairoDaysUntil(
+  date: Date | string,
+  now: Date | string = new Date(),
+): number {
+  const dayStartUtc = (value: Date | string) => {
+    const [y, m, d] = cairoDateKey(value).split("-").map(Number);
+    return Date.UTC(y, m - 1, d);
+  };
+  return Math.round((dayStartUtc(date) - dayStartUtc(now)) / 86400000);
+}

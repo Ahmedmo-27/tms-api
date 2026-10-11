@@ -5,6 +5,7 @@ import {
   formatDateShort,
   resolveBookingPackageFailure,
 } from "./booking-package-errors";
+import { isPackageExpired, isPackageNotStarted } from "./timezone";
 
 export type EligibilityPackage = {
   pkgId: string;
@@ -107,7 +108,7 @@ export function selectEligiblePackage(input: {
       }
 
       const expired = matchingAll.find(
-        (p) => p.status === "EXPIRED" || new Date(p.pkgEndDate) < now,
+        (p) => p.status === "EXPIRED" || isPackageExpired(p.pkgEndDate, now),
       );
       if (expired) {
         return {
@@ -134,7 +135,9 @@ export function selectEligiblePackage(input: {
         };
       }
 
-      const future = matchingAll.find((p) => new Date(p.pkgStartDate) > now);
+      const future = matchingAll.find((p) =>
+        isPackageNotStarted(p.pkgStartDate, now),
+      );
       if (future) {
         return {
           ok: false,
@@ -168,12 +171,12 @@ export function selectEligiblePackage(input: {
   let lastSkippedPkg: EligibilityPackage | undefined;
 
   for (const pkg of candidates) {
-    if (new Date(pkg.pkgStartDate) > now) {
+    if (isPackageNotStarted(pkg.pkgStartDate, now)) {
       skipReasons.push("future");
       lastSkippedPkg = pkg;
       continue;
     }
-    if (new Date(pkg.pkgEndDate) < now) {
+    if (isPackageExpired(pkg.pkgEndDate, now)) {
       skipReasons.push("expired");
       lastSkippedPkg = pkg;
       continue;

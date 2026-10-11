@@ -1,4 +1,5 @@
 import { IMemberPackageData } from "../models/member";
+import { cairoDaysUntil, isPackageExpired } from "../utils/timezone";
 
 // ---------------------------------------------------------------------------
 // Request DTOs
@@ -212,8 +213,7 @@ export interface ClientAttendanceItemDto {
 export function mapMemberPackageResponseDto(
   pkg: IMemberPackageData
 ): MemberPackageResponseDto {
-  const now = Date.now();
-  const endTime = pkg.pkgEndDate.getTime();
+  const now = new Date();
   return {
     pkgId: pkg.pkgId.toString(),
     name: pkg.name,
@@ -221,8 +221,8 @@ export function mapMemberPackageResponseDto(
     pkgEndDate: pkg.pkgEndDate,
     remainingClasses: pkg.remainingClasses,
     status: pkg.status,
-    isExpired: pkg.pkgEndDate < new Date(now),
-    daysUntilExpiry: Math.ceil((endTime - now) / 86400000),
+    isExpired: isPackageExpired(pkg.pkgEndDate, now),
+    daysUntilExpiry: cairoDaysUntil(pkg.pkgEndDate, now),
   };
 }
 
