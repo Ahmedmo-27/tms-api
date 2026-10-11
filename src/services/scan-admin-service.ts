@@ -4,7 +4,7 @@ import DailyAttendance from "../models/dailyAttendance";
 import ScheduledClass from "../models/scheduledClass";
 import Package, { isUnlimitedSpaceAccess } from "../models/package";
 import User from "../models/user";
-import { BadRequestError, NotFoundError } from "../core/ApiError";
+import { BadRequestError, ConflictError, NotFoundError } from "../core/ApiError";
 import { runInTransaction } from "../utils/transaction";
 import { cairoDateKey } from "../utils/timezone";
 import { resolvePackageStatus } from "./package-status-service";
@@ -18,9 +18,10 @@ import logger from "../config/logger";
  * "revert the old effect, apply the new one", which keeps member balances
  * consistent no matter which field the front desk changed.
  *
- * Classes are the exception: their credit is spent at booking time, not at
- * check-in, so a class row's effect is the attendance record alone and the
- * booking keeps its credit until the booking itself is cancelled.
+ * Moving a check-in to another member returns the session to the original member
+ * and charges the new member across all scan sources (class, PT, open-gym).
+ * Moving a scan to a new class moves attendance and adjusts credits accordingly
+ * (e.g. if a member scanned a false QR code).
  */
 
 export type ScanSource = "class" | "pt" | "open-gym";
@@ -50,6 +51,8 @@ export interface ScanRowChanges {
   /** Open gym guest rows only — these store their own name and phone. */
   guestName?: string;
   guestPhone?: string;
+  /** Move this scan to a new scheduled class (for false QR code scans). */
+  targetScid?: string;
 }
 
 export interface ScanRowView {
@@ -176,12 +179,63 @@ async function revertEffect(
   if (effect.status !== "SUCCESS" || !effect.uid) return;
 
   if (source === "class") {
-    // The booking keeps its credit; only the attendance mark is undone.
     await Member.updateOne(
       { uid: effect.uid },
       { $pull: { attendance: { scid: new Types.ObjectId(parentId) } } },
       { session },
     );
+
+    await ScheduledClass.updateOne(
+      { _id: new Types.ObjectId(parentId) },
+      { $pull: { bookedMembers: { uid: new Types.ObjectId(effect.uid) } } },
+      { session },
+    );
+
+    await Member.updateOne(
+      { uid: effect.uid },
+      { $pull: { bookings: { scid: new Types.ObjectId(parentId) } } },
+      { session },
+    );
+
+    let pkgIdToRefund = effect.pkgId;
+    if (!pkgIdToRefund) {
+      const scheduledClass = await ScheduledClass.findById(parentId).session(session);
+      const booked = (scheduledClass?.bookedMembers ?? []).find(
+        (b: any) => b.uid?.toString() === effect.uid,
+      );
+      if (booked?.method) {
+        pkgIdToRefund = await resolveLegacyPkgId(booked.method, session);
+      }
+      if (!pkgIdToRefund && scheduledClass?.cid) {
+        const validPkgs = await Package.find({ opensClasses: scheduledClass.cid }).session(session);
+        const validIds = new Set(validPkgs.map((p) => p._id.toString()));
+        const member = await Member.findOne({ uid: effect.uid }).session(session);
+        const holding = (member?.packages ?? []).find((p) =>
+          validIds.has(p.pkgId.toString()),
+        );
+        if (holding) {
+          pkgIdToRefund = holding.pkgId.toString();
+        }
+      }
+    }
+
+    if (pkgIdToRefund) {
+      try {
+        await adjustCredit(
+          effect.uid,
+          pkgIdToRefund,
+          "refund",
+          "Scan corrected by front desk — session returned",
+          session,
+          effect.time,
+        );
+      } catch (err) {
+        logger.warn(
+          `[ScanAdmin] Could not refund credit for member ${effect.uid} package ${pkgIdToRefund}:`,
+          err,
+        );
+      }
+    }
     return;
   }
 
@@ -230,9 +284,79 @@ async function applyEffect(
         uid: effect.uid,
         "attendance.scid": { $ne: new Types.ObjectId(parentId) },
       },
-      { $push: { attendance: { scid: new Types.ObjectId(parentId) } } },
+      {
+        $push: {
+          attendance: {
+            scid: new Types.ObjectId(parentId),
+            date: effect.time,
+          },
+        },
+      },
       { session },
     );
+
+    const scheduledClass = await ScheduledClass.findById(parentId).session(session);
+    const isAlreadyBooked = (scheduledClass?.bookedMembers ?? []).some(
+      (b: any) => b.uid?.toString() === effect.uid,
+    );
+
+    if (!isAlreadyBooked) {
+      let pkgIdToCharge = effect.pkgId;
+      if (!pkgIdToCharge && scheduledClass?.cid) {
+        const validPkgs = await Package.find({ opensClasses: scheduledClass.cid }).session(session);
+        const validIds = new Set(validPkgs.map((p) => p._id.toString()));
+        const member = await Member.findOne({ uid: effect.uid }).session(session);
+        const holding = (member?.packages ?? []).find(
+          (p) =>
+            validIds.has(p.pkgId.toString()) &&
+            p.status === "ACTIVE" &&
+            p.remainingClasses > 0,
+        );
+        if (holding) {
+          pkgIdToCharge = holding.pkgId.toString();
+        }
+      }
+
+      if (pkgIdToCharge) {
+        await adjustCredit(
+          effect.uid,
+          pkgIdToCharge,
+          "charge",
+          "Scan corrected by front desk — session charged",
+          session,
+          effect.time,
+        );
+
+        const catalog = await Package.findById(pkgIdToCharge)
+          .select("name")
+          .session(session);
+        const methodName = catalog?.name || "Class Package";
+
+        await ScheduledClass.bookMember(
+          parentId,
+          effect.uid,
+          methodName,
+          session,
+          true,
+        );
+
+        await Member.updateOne(
+          {
+            uid: effect.uid,
+            "bookings.scid": { $ne: new Types.ObjectId(parentId) },
+          },
+          {
+            $push: {
+              bookings: {
+                scid: new Types.ObjectId(parentId),
+                cid: scheduledClass?.cid,
+              },
+            },
+          },
+          { session },
+        );
+      }
+    }
     return;
   }
 
@@ -357,6 +481,13 @@ export class ScanAdminService {
 
       if (restoreSession) {
         await revertEffect(ref.source, effect, session, ref.parentId);
+      } else if (ref.source === "class" && effect.uid) {
+        // restoreSession=false keeps booking/charges intact, but clears attendance
+        await Member.updateOne(
+          { uid: effect.uid },
+          { $pull: { attendance: { scid: new Types.ObjectId(ref.parentId) } } },
+          { session },
+        );
       }
 
       (parent[arrayPath] as any).pull({ _id: new Types.ObjectId(ref.rowId) });
@@ -371,11 +502,21 @@ export class ScanAdminService {
   /**
    * Edits a scan row. Changing the member, the package or the status moves the
    * credit accordingly; changing only the time or guest details does not.
+   * Passing targetScid moves the check-in to that scheduled class.
    */
   static async updateScanRow(
     ref: ScanRowRef,
     changes: ScanRowChanges,
   ): Promise<ScanRowView> {
+    if (changes.targetScid && changes.targetScid !== ref.parentId) {
+      return ScanAdminService.moveScanToClass(ref, changes.targetScid, {
+        uid: changes.uid,
+        pkgId: changes.pkgId,
+        time: changes.time,
+        status: changes.status,
+      });
+    }
+
     if (ref.source !== "open-gym" && (changes.guestName || changes.guestPhone)) {
       throw new BadRequestError(
         "GUEST_FIELDS_NOT_SUPPORTED",
@@ -402,14 +543,66 @@ export class ScanAdminService {
         time: changes.time ? new Date(changes.time) : before.time,
       };
 
-      if (changes.uid && !changes.pkgId && ref.source !== "class") {
-        throw new BadRequestError(
-          "PACKAGE_REQUIRED",
-          "Choose which of the new member's packages to charge",
-        );
+      if (changes.uid && !changes.pkgId) {
+        if (ref.source === "class") {
+          const isBooked = (parent.bookedMembers ?? []).some(
+            (b: RowDoc) => b.uid?.toString() === changes.uid,
+          );
+          if (!isBooked) {
+            const memberDoc = await Member.findOne({ uid: changes.uid }).session(session);
+            const validPkgs = parent.cid
+              ? await Package.find({ opensClasses: parent.cid }).session(session)
+              : [];
+            const validIds = new Set(validPkgs.map((p) => p._id.toString()));
+            const eligibleHoldings = (memberDoc?.packages ?? []).filter(
+              (p) =>
+                validIds.has(p.pkgId.toString()) &&
+                p.status === "ACTIVE" &&
+                p.remainingClasses > 0,
+            );
+            if (eligibleHoldings.length === 1) {
+              changes.pkgId = eligibleHoldings[0].pkgId.toString();
+              after.pkgId = changes.pkgId;
+            } else {
+              throw new BadRequestError(
+                "PACKAGE_REQUIRED",
+                "Choose which of the new member's packages to charge",
+              );
+            }
+          }
+        } else {
+          throw new BadRequestError(
+            "PACKAGE_REQUIRED",
+            "Choose which of the new member's packages to charge",
+          );
+        }
       }
+
       if (after.time && isNaN(after.time.getTime())) {
         throw new BadRequestError("INVALID_TIME", "Check-in time is not a valid date");
+      }
+
+      if (after.pkgId && (after.pkgId !== before.pkgId || changes.uid)) {
+        const catalog = await Package.findById(after.pkgId)
+          .select("name opensClasses")
+          .session(session);
+        if (!catalog) {
+          throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found");
+        }
+        if (
+          ref.source === "class" &&
+          parent.cid &&
+          catalog.opensClasses &&
+          catalog.opensClasses.length > 0 &&
+          !catalog.opensClasses.some(
+            (c: any) => (c._id?.toString() || c.toString()) === parent.cid.toString(),
+          )
+        ) {
+          throw new BadRequestError(
+            "PACKAGE_NOT_ELIGIBLE",
+            "Selected package does not cover this class",
+          );
+        }
       }
 
       const effectChanged =
@@ -428,8 +621,7 @@ export class ScanAdminService {
           .session(session);
         if (!user) throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
         row.uid = user._id;
-        // The old member's package is meaningless on the new member's row.
-        if (!changes.pkgId) row.pkgId = undefined;
+        row.pkgId = after.pkgId ? new Types.ObjectId(after.pkgId) : undefined;
         // A reassigned row belongs to a member, not a guest.
         if (ref.source === "open-gym") {
           row.guestName = undefined;
@@ -437,22 +629,21 @@ export class ScanAdminService {
         }
       }
 
-      if (after.pkgId && after.pkgId !== before.pkgId) {
+      if (after.pkgId && (after.pkgId !== before.pkgId || changes.uid)) {
         const catalog = await Package.findById(after.pkgId)
           .select("name")
           .session(session);
-        if (!catalog) {
-          throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found");
-        }
-        row.pkgId = catalog._id;
-        row.method = catalog.name;
+        if (catalog) {
+          row.pkgId = catalog._id;
+          row.method = catalog.name;
 
-        // Keep the class roster's label in step with the corrected row.
-        if (ref.source === "class" && after.uid) {
-          const booked = (parent.bookedMembers ?? []).find(
-            (b: RowDoc) => b.uid?.toString() === after.uid,
-          );
-          if (booked) booked.method = catalog.name;
+          // Keep the class roster's label in step with the corrected row.
+          if (ref.source === "class" && after.uid) {
+            const booked = (parent.bookedMembers ?? []).find(
+              (b: RowDoc) => b.uid?.toString() === after.uid,
+            );
+            if (booked) booked.method = catalog.name;
+          }
         }
       }
 
@@ -469,6 +660,228 @@ export class ScanAdminService {
     );
 
     return ScanAdminService.getScanRow(ref);
+  }
+
+  /**
+   * Moves a member's check-in to a new scheduled class (e.g. if the member scanned a false QR code).
+   * Reverts the effect from the false class (session returned, attendance removed)
+   * and applies the check-in to the target class (session charged if not already booked, attendance added).
+   */
+  static async moveScanToClass(
+    ref: ScanRowRef,
+    targetScid: string,
+    options: {
+      uid?: string;
+      pkgId?: string;
+      time?: string | Date;
+      status?: "SUCCESS" | "FAILED";
+    } = {},
+  ): Promise<ScanRowView> {
+    const targetObjectId = toObjectId(targetScid, "targetScid");
+    const parentObjectId = toObjectId(ref.parentId, "parentId");
+    toObjectId(ref.rowId, "rowId");
+
+    if (ref.source === "class" && parentObjectId.equals(targetObjectId)) {
+      throw new BadRequestError("SAME_CLASS", "Cannot move check-in to the same class");
+    }
+
+    let newRowId: Types.ObjectId | undefined;
+
+    await runInTransaction(async (session: ClientSession) => {
+      const targetClass = await ScheduledClass.findById(targetObjectId).session(session);
+      if (!targetClass) {
+        throw new NotFoundError("CLASS_NOT_FOUND", "Target scheduled class not found");
+      }
+
+      const { parent: oldParent, row, arrayPath } = await loadRow(ref, session);
+      const oldUid = row.uid?.toString();
+      const targetUid = options.uid ?? oldUid;
+      if (!targetUid) {
+        throw new BadRequestError(
+          "MEMBER_REQUIRED",
+          "Guest check-ins cannot be moved to a class",
+        );
+      }
+
+      const scanTime = options.time
+        ? new Date(options.time)
+        : readTime(ref.source, row);
+      if (isNaN(scanTime.getTime())) {
+        throw new BadRequestError("INVALID_TIME", "Check-in time is not a valid date");
+      }
+
+      const targetStatus = options.status ?? "SUCCESS";
+
+      // Check if target member already has a SUCCESS scan in target class
+      if (targetStatus === "SUCCESS") {
+        const alreadyScanned = (targetClass.scans ?? []).some(
+          (s: RowDoc) => s.uid?.toString() === targetUid && s.status !== false,
+        );
+        if (alreadyScanned) {
+          throw new ConflictError(
+            "CLASS_ALREADY_SCANNED",
+            "Member is already checked in to target class",
+          );
+        }
+      }
+
+      // 1. Revert effect from false class / old check-in
+      if (oldUid) {
+        const beforeEffect: ScanEffect = {
+          uid: oldUid,
+          pkgId:
+            row.pkgId?.toString() ??
+            (await resolveLegacyPkgId(row.method, session)),
+          status: readStatus(ref.source, row),
+          time: readTime(ref.source, row),
+        };
+
+        await revertEffect(ref.source, beforeEffect, session, ref.parentId);
+      }
+
+      // Remove row from old parent
+      (oldParent[arrayPath] as any).pull({ _id: new Types.ObjectId(ref.rowId) });
+      await oldParent.save({ session });
+
+      // 2. Apply check-in to target class
+      let targetPkgId = options.pkgId;
+      let targetMethod = row.method || "Class Scan";
+
+      // Validate target package if provided
+      if (targetPkgId) {
+        const catalog = await Package.findById(targetPkgId).session(session);
+        if (!catalog) {
+          throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found");
+        }
+        if (
+          targetClass.cid &&
+          catalog.opensClasses &&
+          catalog.opensClasses.length > 0 &&
+          !catalog.opensClasses.some(
+            (c: any) => (c._id?.toString() || c.toString()) === targetClass.cid.toString(),
+          )
+        ) {
+          throw new BadRequestError(
+            "PACKAGE_NOT_ELIGIBLE",
+            "Selected package does not cover this class",
+          );
+        }
+        targetMethod = catalog.name;
+      }
+
+      if (targetStatus === "SUCCESS") {
+        const isBookedInTarget = (targetClass.bookedMembers ?? []).some(
+          (b: RowDoc) => b.uid?.toString() === targetUid,
+        );
+
+        if (!isBookedInTarget) {
+          if (!targetPkgId && targetClass.cid) {
+            const validPkgs = await Package.find({ opensClasses: targetClass.cid }).session(session);
+            const validIds = new Set(validPkgs.map((p) => p._id.toString()));
+            const memberDoc = await Member.findOne({ uid: targetUid }).session(session);
+            const candidate = (memberDoc?.packages ?? []).find(
+              (p) =>
+                validIds.has(p.pkgId.toString()) &&
+                p.status === "ACTIVE" &&
+                p.remainingClasses > 0,
+            );
+            if (candidate) {
+              targetPkgId = candidate.pkgId.toString();
+              const cat = validPkgs.find((p) => p._id.toString() === targetPkgId);
+              if (cat) targetMethod = cat.name;
+            } else {
+              throw new BadRequestError(
+                "PACKAGE_REQUIRED",
+                "Choose which package to charge for the new class",
+              );
+            }
+          }
+
+          if (targetPkgId) {
+            await adjustCredit(
+              targetUid,
+              targetPkgId,
+              "charge",
+              "Scan moved from false QR code — session charged",
+              session,
+              scanTime,
+            );
+
+            await ScheduledClass.bookMember(
+              targetScid,
+              targetUid,
+              targetMethod,
+              session,
+              true,
+            );
+
+            await Member.updateOne(
+              {
+                uid: targetUid,
+                "bookings.scid": { $ne: targetObjectId },
+              },
+              {
+                $push: {
+                  bookings: {
+                    scid: targetObjectId,
+                    cid: targetClass.cid,
+                  },
+                },
+              },
+              { session },
+            );
+          }
+        } else {
+          const booking = (targetClass.bookedMembers ?? []).find(
+            (b: RowDoc) => b.uid?.toString() === targetUid,
+          );
+          if (booking?.method) targetMethod = booking.method;
+          if (!targetPkgId && booking?.method) {
+            targetPkgId = await resolveLegacyPkgId(booking.method, session);
+          }
+        }
+
+        // Mark attendance in Member
+        await Member.updateOne(
+          {
+            uid: targetUid,
+            "attendance.scid": { $ne: targetObjectId },
+          },
+          {
+            $push: {
+              attendance: {
+                scid: targetObjectId,
+                date: scanTime,
+              },
+            },
+          },
+          { session },
+        );
+      }
+
+      // Add scan row into targetClass.scans
+      newRowId = new Types.ObjectId();
+      (targetClass.scans as any).push({
+        _id: newRowId,
+        uid: new Types.ObjectId(targetUid),
+        scanTime,
+        method: targetMethod,
+        status: targetStatus === "SUCCESS",
+        pkgId: targetPkgId ? new Types.ObjectId(targetPkgId) : undefined,
+      });
+
+      await targetClass.save({ session });
+    });
+
+    logger.info(
+      `[ScanAdmin] Moved scan ${ref.rowId} from ${ref.source} (${ref.parentId}) to class ${targetScid} (new row ${newRowId})`,
+    );
+
+    return ScanAdminService.getScanRow({
+      source: "class",
+      parentId: targetScid,
+      rowId: newRowId!.toString(),
+    });
   }
 
   /** Reads back a single row, with the member's current name and phone. */

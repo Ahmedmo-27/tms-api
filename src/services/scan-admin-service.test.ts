@@ -78,12 +78,14 @@ function ptRow(overrides: Record<string, unknown> = {}) {
 
 /** Both call sites read the catalog as findById(id).select(...).session(...). */
 function mockCatalog(category: string, name = "20 PT") {
+  const sessionFn = jest
+    .fn()
+    .mockResolvedValue({ _id: new Types.ObjectId(ptPkgId), category, name });
   (Package.findById as jest.Mock).mockReturnValue({
     select: jest.fn().mockReturnValue({
-      session: jest
-        .fn()
-        .mockResolvedValue({ _id: new Types.ObjectId(ptPkgId), category, name }),
+      session: sessionFn,
     }),
+    session: sessionFn,
   });
 }
 
@@ -100,6 +102,8 @@ function mockLegacyLookup(found: string | null) {
 beforeEach(() => {
   jest.clearAllMocks();
   (Member.updateOne as jest.Mock).mockResolvedValue({ matchedCount: 1 });
+  (ScheduledClass.updateOne as jest.Mock) = jest.fn().mockResolvedValue({ matchedCount: 1 });
+  (ScheduledClass.bookMember as jest.Mock) = jest.fn().mockResolvedValue(undefined);
   mockCatalog("PERSONAL_TRAINING");
   mockLegacyLookup(null);
 });
@@ -188,10 +192,11 @@ describe("ScanAdminService.deleteScanRow", () => {
     expect(day.openGymAttendance.pull).toHaveBeenCalled();
   });
 
-  it("drops a class attendance mark without touching the booking's credit", async () => {
+  it("drops a class attendance mark and returns session credit by default", async () => {
     const scanRow = {
       _id: new Types.ObjectId(rowId),
       uid: new Types.ObjectId(uidA),
+      pkgId: new Types.ObjectId(ptPkgId),
       method: "20 Functional Training",
       scanTime: new Date("2026-10-10T16:00:00Z"),
       status: true,
@@ -199,9 +204,19 @@ describe("ScanAdminService.deleteScanRow", () => {
     const arr: any = [scanRow];
     arr.id = (id: string) => (scanRow._id.toString() === id ? scanRow : null);
     arr.pull = jest.fn();
-    const cls = { _id: new Types.ObjectId(scid), scans: arr, save: jest.fn() };
+    const cls = {
+      _id: new Types.ObjectId(scid),
+      scans: arr,
+      bookedMembers: [{ uid: new Types.ObjectId(uidA), method: "20 Functional Training" }],
+      save: jest.fn(),
+    };
     (ScheduledClass.findById as jest.Mock).mockReturnValue({
       session: jest.fn().mockResolvedValue(cls),
+    });
+    const pkg = makePackage(ptPkgId, 3, "20 Functional Training");
+    const member = makeMember(uidA, [pkg]);
+    (Member.findOne as jest.Mock).mockReturnValue({
+      session: jest.fn().mockResolvedValue(member),
     });
 
     await ScanAdminService.deleteScanRow({
@@ -215,7 +230,46 @@ describe("ScanAdminService.deleteScanRow", () => {
       { $pull: { attendance: { scid: new Types.ObjectId(scid) } } },
       expect.anything(),
     );
-    // No package lookup: the class credit was spent at booking time.
+    expect(ScheduledClass.updateOne).toHaveBeenCalledWith(
+      { _id: new Types.ObjectId(scid) },
+      { $pull: { bookedMembers: { uid: new Types.ObjectId(uidA) } } },
+      expect.anything(),
+    );
+    expect(pkg.remainingClasses).toBe(4);
+    expect(arr.pull).toHaveBeenCalled();
+  });
+
+  it("drops a class attendance mark without refunding credit when restoreSession is false", async () => {
+    const scanRow = {
+      _id: new Types.ObjectId(rowId),
+      uid: new Types.ObjectId(uidA),
+      pkgId: new Types.ObjectId(ptPkgId),
+      method: "20 Functional Training",
+      scanTime: new Date("2026-10-10T16:00:00Z"),
+      status: true,
+    };
+    const arr: any = [scanRow];
+    arr.id = (id: string) => (scanRow._id.toString() === id ? scanRow : null);
+    arr.pull = jest.fn();
+    const cls = { _id: new Types.ObjectId(scid), scans: arr, save: jest.fn() };
+    (ScheduledClass.findById as jest.Mock).mockReturnValue({
+      session: jest.fn().mockResolvedValue(cls),
+    });
+
+    await ScanAdminService.deleteScanRow(
+      {
+        source: "class",
+        parentId: scid,
+        rowId,
+      },
+      { restoreSession: false },
+    );
+
+    expect(Member.updateOne).toHaveBeenCalledWith(
+      { uid: uidA },
+      { $pull: { attendance: { scid: new Types.ObjectId(scid) } } },
+      expect.anything(),
+    );
     expect(Member.findOne).not.toHaveBeenCalled();
     expect(arr.pull).toHaveBeenCalled();
   });
@@ -310,6 +364,350 @@ describe("ScanAdminService.updateScanRow", () => {
         { guestName: "Walk In" },
       ),
     ).rejects.toThrow(/open gym/i);
+  });
+
+  it("moving a class check-in to another member returns session to original member and charges the new one", async () => {
+    const scanRow = {
+      _id: new Types.ObjectId(rowId),
+      uid: new Types.ObjectId(uidA),
+      pkgId: new Types.ObjectId(ptPkgId),
+      method: "20 Functional Training",
+      scanTime: new Date("2026-10-10T16:00:00Z"),
+      status: true,
+    };
+    const arr: any = [scanRow];
+    arr.id = (id: string) => (scanRow._id.toString() === id ? scanRow : null);
+    const cls = {
+      _id: new Types.ObjectId(scid),
+      scans: arr,
+      bookedMembers: [{ uid: new Types.ObjectId(uidA), method: "20 Functional Training" }],
+      save: jest.fn(),
+    };
+    (ScheduledClass.findById as jest.Mock).mockReturnValue({
+      session: jest.fn().mockResolvedValue(cls),
+    });
+
+    const pkgA = makePackage(ptPkgId, 3, "20 Functional Training");
+    const pkgB = makePackage(otherPkgId, 8, "10 Functional Training");
+    const memberA = makeMember(uidA, [pkgA]);
+    const memberB = makeMember(uidB, [pkgB]);
+
+    (Member.findOne as jest.Mock).mockImplementation(({ uid }: { uid: string }) => ({
+      session: jest.fn().mockResolvedValue(uid === uidA ? memberA : memberB),
+    }));
+    (User.findById as jest.Mock).mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        session: jest.fn().mockResolvedValue({ _id: new Types.ObjectId(uidB), name: "Member B" }),
+      }),
+    });
+    mockCatalog("FUNCTIONAL_TRAINING", "10 Functional Training");
+
+    await ScanAdminService.updateScanRow(
+      { source: "class", parentId: scid, rowId },
+      { uid: uidB, pkgId: otherPkgId },
+    );
+
+    expect(pkgA.remainingClasses).toBe(4); // original member made whole (+1)
+    expect(pkgB.remainingClasses).toBe(7); // new member charged (-1)
+    expect(ScheduledClass.bookMember).toHaveBeenCalledWith(
+      scid,
+      uidB,
+      expect.any(String),
+      expect.anything(),
+      true,
+    );
+  });
+});
+
+describe("ScanAdminService.moveScanToClass", () => {
+  it("moves a member's check-in to a new class when member scanned a false QR code", async () => {
+    const targetScid = new Types.ObjectId().toString();
+    const falseScanRow = {
+      _id: new Types.ObjectId(rowId),
+      uid: new Types.ObjectId(uidA),
+      pkgId: new Types.ObjectId(ptPkgId),
+      method: "20 Functional Training",
+      scanTime: new Date("2026-10-10T16:00:00Z"),
+      status: true,
+    };
+    const falseArr: any = [falseScanRow];
+    falseArr.id = (id: string) => (falseScanRow._id.toString() === id ? falseScanRow : null);
+    falseArr.pull = jest.fn();
+    const falseCls = {
+      _id: new Types.ObjectId(scid),
+      scans: falseArr,
+      bookedMembers: [{ uid: new Types.ObjectId(uidA), method: "20 Functional Training" }],
+      save: jest.fn(),
+    };
+
+    const targetScansArr: any = [];
+    targetScansArr.id = jest.fn((id: string) => ({
+      _id: new Types.ObjectId(id),
+      uid: new Types.ObjectId(uidA),
+      method: "10 Pilates",
+      scanTime: new Date("2026-10-10T16:00:00Z"),
+      status: true,
+    }));
+    const targetCls = {
+      _id: new Types.ObjectId(targetScid),
+      scans: targetScansArr,
+      bookedMembers: [],
+      save: jest.fn(),
+    };
+
+    (ScheduledClass.findById as jest.Mock).mockImplementation((id: Types.ObjectId | string) => {
+      const idStr = id.toString();
+      const cls = idStr === scid ? falseCls : targetCls;
+      return {
+        session: jest.fn().mockResolvedValue(cls),
+      };
+    });
+
+    const pkgA = makePackage(ptPkgId, 3, "20 Functional Training");
+    const pkgTarget = makePackage(otherPkgId, 5, "10 Pilates");
+    const member = makeMember(uidA, [pkgA, pkgTarget]);
+    (Member.findOne as jest.Mock).mockReturnValue({
+      session: jest.fn().mockResolvedValue(member),
+    });
+    (User.findById as jest.Mock).mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        session: jest.fn().mockResolvedValue({ _id: new Types.ObjectId(uidA), name: "Member A" }),
+      }),
+    });
+    mockCatalog("PILATES", "10 Pilates");
+
+    const result = await ScanAdminService.moveScanToClass(
+      { source: "class", parentId: scid, rowId },
+      targetScid,
+      { pkgId: otherPkgId },
+    );
+
+    expect(pkgA.remainingClasses).toBe(4); // false class session returned (+1)
+    expect(pkgTarget.remainingClasses).toBe(4); // new class session charged (-1)
+    expect(falseArr.pull).toHaveBeenCalled();
+    expect(targetCls.scans).toHaveLength(1);
+    expect(ScheduledClass.bookMember).toHaveBeenCalledWith(
+      targetScid,
+      uidA,
+      expect.any(String),
+      expect.anything(),
+      true,
+    );
+    expect(result.parentId).toBe(targetScid);
+  });
+
+  it("does not charge twice if member is already booked in the target class", async () => {
+    const targetScid = new Types.ObjectId().toString();
+    const falseScanRow = {
+      _id: new Types.ObjectId(rowId),
+      uid: new Types.ObjectId(uidA),
+      pkgId: new Types.ObjectId(ptPkgId),
+      method: "20 Functional Training",
+      scanTime: new Date("2026-10-10T16:00:00Z"),
+      status: true,
+    };
+    const falseArr: any = [falseScanRow];
+    falseArr.id = (id: string) => (falseScanRow._id.toString() === id ? falseScanRow : null);
+    falseArr.pull = jest.fn();
+    const falseCls = {
+      _id: new Types.ObjectId(scid),
+      scans: falseArr,
+      bookedMembers: [{ uid: new Types.ObjectId(uidA), method: "20 Functional Training" }],
+      save: jest.fn(),
+    };
+
+    const targetScansArr: any = [];
+    targetScansArr.id = jest.fn((id: string) => ({
+      _id: new Types.ObjectId(id),
+      uid: new Types.ObjectId(uidA),
+      method: "10 Pilates",
+      scanTime: new Date("2026-10-10T16:00:00Z"),
+      status: true,
+    }));
+    const targetCls = {
+      _id: new Types.ObjectId(targetScid),
+      scans: targetScansArr,
+      bookedMembers: [{ uid: new Types.ObjectId(uidA), method: "10 Pilates" }], // already booked!
+      save: jest.fn(),
+    };
+
+    (ScheduledClass.findById as jest.Mock).mockImplementation((id: Types.ObjectId | string) => {
+      const idStr = id.toString();
+      const cls = idStr === scid ? falseCls : targetCls;
+      return {
+        session: jest.fn().mockResolvedValue(cls),
+      };
+    });
+
+    const pkgA = makePackage(ptPkgId, 3, "20 Functional Training");
+    const pkgTarget = makePackage(otherPkgId, 5, "10 Pilates");
+    const member = makeMember(uidA, [pkgA, pkgTarget]);
+    (Member.findOne as jest.Mock).mockReturnValue({
+      session: jest.fn().mockResolvedValue(member),
+    });
+    (User.findById as jest.Mock).mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        session: jest.fn().mockResolvedValue({ _id: new Types.ObjectId(uidA), name: "Member A" }),
+      }),
+    });
+    mockCatalog("PILATES", "10 Pilates");
+
+    await ScanAdminService.moveScanToClass(
+      { source: "class", parentId: scid, rowId },
+      targetScid,
+      { pkgId: otherPkgId },
+    );
+
+    expect(pkgA.remainingClasses).toBe(4); // false class session returned (+1)
+    expect(pkgTarget.remainingClasses).toBe(5); // not charged twice!
+    expect(targetCls.scans).toHaveLength(1);
+  });
+
+  it("moves a scan to a new class and reassigns member, refunding old and charging new", async () => {
+    const targetScid = new Types.ObjectId().toString();
+    const falseScanRow = {
+      _id: new Types.ObjectId(rowId),
+      uid: new Types.ObjectId(uidA),
+      pkgId: new Types.ObjectId(ptPkgId),
+      method: "20 Functional Training",
+      scanTime: new Date("2026-10-10T16:00:00Z"),
+      status: true,
+    };
+    const falseArr: any = [falseScanRow];
+    falseArr.id = (id: string) => (falseScanRow._id.toString() === id ? falseScanRow : null);
+    falseArr.pull = jest.fn();
+    const falseCls = {
+      _id: new Types.ObjectId(scid),
+      scans: falseArr,
+      bookedMembers: [{ uid: new Types.ObjectId(uidA), method: "20 Functional Training" }],
+      save: jest.fn(),
+    };
+
+    const targetScansArr: any = [];
+    targetScansArr.id = jest.fn((id: string) => ({
+      _id: new Types.ObjectId(id),
+      uid: new Types.ObjectId(uidB),
+      method: "10 Pilates",
+      scanTime: new Date("2026-10-10T16:00:00Z"),
+      status: true,
+    }));
+    const targetCid = new Types.ObjectId();
+    const targetCls = {
+      _id: new Types.ObjectId(targetScid),
+      cid: targetCid,
+      scans: targetScansArr,
+      bookedMembers: [],
+      save: jest.fn(),
+    };
+
+    (ScheduledClass.findById as jest.Mock).mockImplementation((id: Types.ObjectId | string) => {
+      const idStr = id.toString();
+      const cls = idStr === scid ? falseCls : targetCls;
+      return {
+        session: jest.fn().mockResolvedValue(cls),
+      };
+    });
+
+    const pkgA = makePackage(ptPkgId, 3, "20 Functional Training");
+    const pkgB = makePackage(otherPkgId, 5, "10 Pilates");
+    (Member.findOne as jest.Mock).mockImplementation(({ uid }: { uid: string }) => {
+      const member = uid === uidA ? makeMember(uidA, [pkgA]) : makeMember(uidB, [pkgB]);
+      return {
+        session: jest.fn().mockResolvedValue(member),
+      };
+    });
+    (User.findById as jest.Mock).mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        session: jest.fn().mockResolvedValue({ _id: new Types.ObjectId(uidB), name: "Member B" }),
+      }),
+    });
+    const sessionFn = jest.fn().mockResolvedValue({
+      _id: new Types.ObjectId(otherPkgId),
+      category: "PILATES",
+      name: "10 Pilates",
+      opensClasses: [targetCid],
+    });
+    (Package.findById as jest.Mock).mockReturnValue({
+      select: jest.fn().mockReturnValue({ session: sessionFn }),
+      session: sessionFn,
+    });
+
+    await ScanAdminService.moveScanToClass(
+      { source: "class", parentId: scid, rowId },
+      targetScid,
+      { uid: uidB, pkgId: otherPkgId },
+    );
+
+    expect(pkgA.remainingClasses).toBe(4); // Member A got session refunded (+1)
+    expect(pkgB.remainingClasses).toBe(4); // Member B got session charged (-1)
+    expect(targetCls.scans).toHaveLength(1);
+  });
+
+  it("refuses to move a scan if package does not open target class", async () => {
+    const targetScid = new Types.ObjectId().toString();
+    const targetCid = new Types.ObjectId();
+    const otherClassCid = new Types.ObjectId();
+
+    const falseScanRow = {
+      _id: new Types.ObjectId(rowId),
+      uid: new Types.ObjectId(uidA),
+      pkgId: new Types.ObjectId(ptPkgId),
+      method: "20 Functional Training",
+      scanTime: new Date("2026-10-10T16:00:00Z"),
+      status: true,
+    };
+    const falseArr: any = [falseScanRow];
+    falseArr.id = (id: string) => (falseScanRow._id.toString() === id ? falseScanRow : null);
+    falseArr.pull = jest.fn();
+    const falseCls = {
+      _id: new Types.ObjectId(scid),
+      scans: falseArr,
+      bookedMembers: [{ uid: new Types.ObjectId(uidA), method: "20 Functional Training" }],
+      save: jest.fn(),
+    };
+    const targetCls = {
+      _id: new Types.ObjectId(targetScid),
+      cid: targetCid,
+      scans: [],
+      bookedMembers: [],
+      save: jest.fn(),
+    };
+
+    (ScheduledClass.findById as jest.Mock).mockImplementation((id: Types.ObjectId | string) => {
+      const idStr = id.toString();
+      const cls = idStr === scid ? falseCls : targetCls;
+      return {
+        session: jest.fn().mockResolvedValue(cls),
+      };
+    });
+
+    const sessionFn = jest.fn().mockResolvedValue({
+      _id: new Types.ObjectId(otherPkgId),
+      category: "PILATES",
+      name: "10 Pilates",
+      opensClasses: [otherClassCid], // does NOT include targetCid
+    });
+    (Package.findById as jest.Mock).mockReturnValue({
+      select: jest.fn().mockReturnValue({ session: sessionFn }),
+      session: sessionFn,
+    });
+
+    await expect(
+      ScanAdminService.moveScanToClass(
+        { source: "class", parentId: scid, rowId },
+        targetScid,
+        { pkgId: otherPkgId },
+      ),
+    ).rejects.toThrow(/Selected package does not cover this class/i);
+  });
+
+  it("refuses to move a scan to the same class", async () => {
+    await expect(
+      ScanAdminService.moveScanToClass(
+        { source: "class", parentId: scid, rowId },
+        scid,
+      ),
+    ).rejects.toThrow(/same class/i);
   });
 });
 
