@@ -1,14 +1,33 @@
 import Payment from "../models/payment";
 import Refund, { IRefund } from "../models/refund";
+import Member from "../models/member";
 import { ClientSession, Types } from "mongoose";
 import axios from "axios";
 import { BadRequestError, ConflictError, NotFoundError } from "../core/ApiError";
 import { IPayment } from "../models/payment";
+
+export interface UpdatePaymentInput {
+  amount?: number;
+  paymentMethod?: "APP" | "VISA" | "CASH" | "INSTAPAY" | "VALU" | "PAYMENT_LINK" | "DEDUCTED";
+  paymentTime?: Date | string;
+  purpose?:
+    | "DROPIN"
+    | "PACKAGE"
+    | "WALKIN"
+    | "NON_USER_BOOKING"
+    | "NON_USER_PACKAGE"
+    | "OTHER";
+  note?: string;
+  nonMemberName?: string;
+  nonMemberPhone?: string;
+  locationId?: string | Types.ObjectId;
+}
 import logger from "../config/logger";
 import { refundPaymentToRentalSystem } from "./egygap-erp-service";
 import { startOfDay, endOfDay, startOfMonth, endOfMonth } from "date-fns";
 import { buildCairoDateRangeQuery } from "../utils/date-range-query";
 import { resolveOpenGymPaymentPurposeLabel } from "../utils/open-gym-payment-purpose";
+import { resolvePtPaymentPurposeLabel } from "../utils/pt-payment-purpose";
 import { locationIdScalarQuery, locationIdsArrayQuery, toObjectId } from "../utils/location-scope";
 
 export type PaymentListEntry = IPayment & {
@@ -125,12 +144,13 @@ export class PaymentsService {
 
     function buildPaymentLabel(p: IPayment | any): string {
       const openGymPurpose = resolveOpenGymPaymentPurposeLabel(p);
+      const ptPurpose = resolvePtPaymentPurposeLabel(p);
       let itemName: string =
-        openGymPurpose ?? purposeLabels[p.purpose] ?? p.purpose;
-      if (!openGymPurpose && p.purpose === "PACKAGE" && p.pkgId) {
+        openGymPurpose ?? ptPurpose ?? purposeLabels[p.purpose] ?? p.purpose;
+      if (!openGymPurpose && !ptPurpose && p.purpose === "PACKAGE" && p.pkgId) {
         const pkg = p.pkgId as unknown as { name: string };
         itemName = pkg.name;
-      } else if (!openGymPurpose && p.scid) {
+      } else if (!openGymPurpose && !ptPurpose && p.scid) {
         const sc = p.scid as unknown as { cid?: { title?: string } };
         if (sc.cid?.title) itemName = sc.cid.title;
       }
@@ -404,6 +424,99 @@ export class PaymentsService {
     } catch (error) {
       logger.error(`Failed to send refund for payment ${paymentId} to ERP`, error);
       // We do not throw an error here to prevent blocking the refund if ERP is down
+    }
+  }
+
+  static async updatePayment(
+    id: string,
+    data: UpdatePaymentInput
+  ): Promise<IPayment> {
+    const payment = await Payment.findById(id);
+    if (!payment) {
+      throw new NotFoundError("PAYMENT_NOT_FOUND", "Payment not found", { id });
+    }
+
+    if (data.amount !== undefined) {
+      payment.amount = data.amount;
+    }
+    if (data.paymentMethod !== undefined) {
+      payment.paymentMethod = data.paymentMethod;
+    }
+    if (data.paymentTime !== undefined) {
+      payment.paymentTime = new Date(data.paymentTime);
+    }
+    if (data.purpose !== undefined) {
+      payment.purpose = data.purpose;
+    }
+    if (data.note !== undefined) {
+      payment.note = data.note;
+    }
+    if (data.nonMemberName !== undefined) {
+      payment.nonMemberName = data.nonMemberName;
+    }
+    if (data.nonMemberPhone !== undefined) {
+      payment.nonMemberPhone = data.nonMemberPhone;
+    }
+    if (data.locationId !== undefined) {
+      const resolvedLoc = data.locationId
+        ? (toObjectId(data.locationId as string) ?? undefined)
+        : undefined;
+      if (resolvedLoc) {
+        payment.locationId = resolvedLoc;
+      }
+    }
+
+    await payment.save();
+
+    const populated = await Payment.findById(payment._id)
+      .populate("uid")
+      .populate("locationId")
+      .populate({
+        path: "scid",
+        populate: [
+          { path: "cid", populate: { path: "locations" } },
+          { path: "locationId" },
+        ],
+      })
+      .populate({
+        path: "pkgId",
+        select: "name category renewalPeriod locationId",
+        populate: { path: "locationId" },
+      });
+
+    return populated ?? payment;
+  }
+
+  static async deletePayment(id: string): Promise<void> {
+    const payment = await Payment.findById(id);
+    if (!payment) {
+      throw new NotFoundError("PAYMENT_NOT_FOUND", "Payment not found", { id });
+    }
+
+    if (payment.isRefunded) {
+      throw new BadRequestError(
+        "CANNOT_DELETE_REFUNDED_PAYMENT",
+        "Cannot delete a payment that has been refunded"
+      );
+    }
+
+    const linkedRefund = await Refund.findOne({ paymentId: payment._id });
+    if (linkedRefund) {
+      throw new BadRequestError(
+        "CANNOT_DELETE_REFUNDED_PAYMENT",
+        "Cannot delete a payment that has a linked refund record"
+      );
+    }
+
+    await Payment.findByIdAndDelete(payment._id);
+
+    try {
+      await Member.updateMany(
+        { "bookings.paymentId": payment._id },
+        { $unset: { "bookings.$.paymentId": "" } }
+      );
+    } catch (err) {
+      logger.warn(`Failed to clean up booking paymentId references for payment ${id}`, err);
     }
   }
 }

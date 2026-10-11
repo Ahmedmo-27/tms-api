@@ -30,7 +30,8 @@ export class OrdersService {
 
   static async deleteOrder(orderId: string){
     await runInTransaction(async (session: ClientSession) => {
-        const order = Order.findByIdAndDelete(orderId).session(session);
+        const order = await Order.findByIdAndDelete(orderId).session(session);
+        if (!order) throw new NotFoundError("ORDER_NOT_FOUND", "Order is not found");
         for(const item of (order as any).cart) {
             const product = await Product.findOne({barcode: item.barcode}).session(session);
             if(!product) throw new NotFoundError("PRODUCT_NOT_FOUND", "Product is not found")

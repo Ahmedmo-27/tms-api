@@ -31,12 +31,83 @@ import {
 import { runInTransaction } from "../utils/transaction";
 import { addDays, format, startOfWeek } from "date-fns";
 import { formatInTimeZone, fromZonedTime, toZonedTime } from "date-fns-tz";
-import { CAIRO_TZ, cairoDateKey, isSameCairoDay } from "../utils/timezone";
+import {
+  CAIRO_TZ,
+  cairoDateKey,
+  isSameCairoDay,
+  startOfDateCairo,
+  endOfDateCairo,
+} from "../utils/timezone";
 import { escapeRegex } from "../utils/escapeRegex";
 
 export class CoachService {
   static async getCoachDocumentByUserId(userId: Types.ObjectId): Promise<ICoach | null> {
     return Coach.findOne({ userId });
+  }
+
+  /**
+   * Resolves all possible identifier matches for a coach across Coach documents and User records.
+   * This handles:
+   * - Primary Coach document ID
+   * - User ID (coachUserId or coachDoc.userId)
+   * - Any other Coach document sharing the same userId or phoneNumber
+   * - Any Coach document with matching coachName (exact or case-insensitive)
+   * - Any Coach document with composite multi-coach name including this coach (e.g. "Coach1, Coach2", "Coach1 & Coach2")
+   */
+  static async getCoachLookupIds(
+    coachDocId: Types.ObjectId,
+    coachUserId?: Types.ObjectId
+  ): Promise<{ objectIds: Types.ObjectId[]; stringIds: string[] }> {
+    const objectIdsSet = new Set<string>();
+    const stringIdsSet = new Set<string>();
+
+    const addId = (id: Types.ObjectId | string | undefined | null) => {
+      if (!id) return;
+      const str = id.toString().trim();
+      if (!str) return;
+      stringIdsSet.add(str);
+      if (Types.ObjectId.isValid(str)) {
+        objectIdsSet.add(new Types.ObjectId(str).toString());
+      }
+    };
+
+    addId(coachDocId);
+    if (coachUserId) addId(coachUserId);
+
+    const coachDoc = await Coach.findById(coachDocId);
+    if (coachDoc?.userId) addId(coachDoc.userId);
+
+    const resolvedUserId = coachUserId || coachDoc?.userId;
+    const coachName = coachDoc?.coachName?.trim();
+    const cleanPhone = coachDoc?.phoneNumber?.replace(/\s/g, "");
+
+    const orClauses: any[] = [];
+    if (resolvedUserId) {
+      orClauses.push({ userId: resolvedUserId });
+    }
+    if (cleanPhone && cleanPhone.length >= 8 && cleanPhone !== "01111111111" && cleanPhone !== "00000000000") {
+      orClauses.push({ phoneNumber: cleanPhone });
+    }
+    if (coachName && coachName.length >= 2) {
+      orClauses.push({
+        coachName: {
+          $regex: new RegExp(`(^|[^a-z0-9])${escapeRegex(coachName)}([^a-z0-9]|$)`, "i"),
+        },
+      });
+    }
+
+    if (orClauses.length > 0) {
+      const relatedCoaches = await Coach.find({ $or: orClauses }).select("_id userId");
+      for (const c of relatedCoaches) {
+        addId(c._id as Types.ObjectId);
+        if (c.userId) addId(c.userId);
+      }
+    }
+
+    const objectIds = Array.from(objectIdsSet).map((id) => new Types.ObjectId(id));
+    const stringIds = Array.from(stringIdsSet);
+
+    return { objectIds, stringIds };
   }
 
   /**
@@ -177,7 +248,22 @@ export class CoachService {
   ): Promise<PaginatedClientsResponseDto> {
     const clientsMap = new Map<string, ClientResponseDto>();
 
-    const ptPackages = await Package.find({ coachId: coachDocId });
+    const coachDoc = await Coach.findById(coachDocId);
+    const coachName = coachDoc?.coachName?.trim();
+
+    const ptPkgQuery: any = {
+      $or: [
+        { coachId: coachDocId },
+      ],
+    };
+    if (coachName && coachName.length >= 3) {
+      ptPkgQuery.$or.push({
+        category: "PERSONAL_TRAINING",
+        name: { $regex: new RegExp(`(^|[^a-z0-9])${escapeRegex(coachName)}([^a-z0-9]|$)`, "i") },
+      });
+    }
+
+    const ptPackages = await Package.find(ptPkgQuery);
     const ptPkgIds = ptPackages.map(p => p._id);
     const ptMembers = await Member.find({ "packages.pkgId": { $in: ptPkgIds } }).populate<{ uid: any }>({
       path: "uid",
@@ -288,8 +374,12 @@ export class CoachService {
 
     // Verify Authorization_Link — a ScheduledClass must link this coach to the requested member
     // OR the member must have a PT package assigned to this coach.
+    const { objectIds, stringIds } = await this.getCoachLookupIds(coachDocId);
     const link = await ScheduledClass.findOne({
-      coachId: coachDocId,
+      $or: [
+        { coachId: { $in: objectIds } },
+        { coachId: { $in: stringIds } },
+      ],
       "bookedMembers.uid": new Types.ObjectId(memberId),
     });
 
@@ -354,8 +444,9 @@ export class CoachService {
   static async deductSession(
     coachDocId: Types.ObjectId,
     dto: DeductSessionRequestDto,
+    io?: any,
   ): Promise<DeductSessionResponseDto> {
-    const { memberId, memberPackageStartDate, reason, sessionDate } = dto;
+    const { memberId, pkgId, memberPackageStartDate, reason, sessionDate } = dto;
 
     // --- 1. Validate required fields (Req 7.1) ---
     if (!memberId || !memberPackageStartDate || !reason || !sessionDate) {
@@ -364,6 +455,10 @@ export class CoachService {
 
     if (!Types.ObjectId.isValid(memberId)) {
       throw new BadRequestError("INVALID_ID", "Invalid member ID format");
+    }
+
+    if (pkgId && !Types.ObjectId.isValid(pkgId)) {
+      throw new BadRequestError("INVALID_ID", "Invalid package ID format");
     }
 
     // --- 2. Validate date strings are parseable ISO 8601 (Req 7.1) ---
@@ -383,8 +478,12 @@ export class CoachService {
       throw new NotFoundError("PACKAGE_NOT_FOUND", "Member not found");
     }
 
+    const { objectIds, stringIds } = await this.getCoachLookupIds(coachDocId);
     const link = await ScheduledClass.findOne({
-      coachId: coachDocId,
+      $or: [
+        { coachId: { $in: objectIds } },
+        { coachId: { $in: stringIds } },
+      ],
       "bookedMembers.uid": new Types.ObjectId(memberId),
     });
 
@@ -397,9 +496,42 @@ export class CoachService {
     }
 
     // Match by Africa/Cairo calendar day (avoids UTC toDateString off-by-one).
-    const pkg = member.packages.find((p) =>
+    const candidatePackages = member.packages.filter((p) =>
       isSameCairoDay(p.pkgStartDate, parsedPackageStartDate),
     );
+
+    let pkg: (typeof member.packages)[0] | undefined;
+
+    if (pkgId) {
+      // If pkgId is explicitly passed, match by pkgId and start date
+      pkg = candidatePackages.find((p) => p.pkgId.toString() === pkgId);
+      // Fallback: match by pkgId directly in case of slight timezone difference
+      if (!pkg) {
+        pkg = member.packages.find((p) => p.pkgId.toString() === pkgId);
+      }
+    } else {
+      // Disambiguate when multiple packages match the start date:
+      // 1. Prefer packages assigned to this coach
+      const coachPkgIdSet = new Set(
+        packagesInfo
+          .filter((info) => {
+            if (!info.coachId) return false;
+            const cid = info.coachId.toString();
+            return (
+              cid === coachDocId.toString() ||
+              objectIds.some((id) => id.toString() === cid) ||
+              stringIds.includes(cid)
+            );
+          })
+          .map((info) => info._id.toString()),
+      );
+
+      const coachMatches = candidatePackages.filter((p) => coachPkgIdSet.has(p.pkgId.toString()));
+      const pool = coachMatches.length > 0 ? coachMatches : candidatePackages;
+
+      // 2. Prefer ACTIVE package over DELETED/EXPIRED/COMPLETED
+      pkg = pool.find((p) => p.status === "ACTIVE") || pool[0];
+    }
 
     if (!pkg) {
       throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found for the given start date");
@@ -408,6 +540,16 @@ export class CoachService {
     const packageDoc = packagesInfo.find(p => p._id.toString() === pkg.pkgId.toString());
     if (!packageDoc || packageDoc.category !== "PERSONAL_TRAINING") {
       throw new BadRequestError("INVALID_PACKAGE", "Deduction is only allowed for Personal Training packages");
+    }
+
+    // Ensure this coach is authorized for this particular PT package (if package has coachId)
+    const isCoachForThisPkg = !packageDoc.coachId ||
+      packageDoc.coachId.toString() === coachDocId.toString() ||
+      objectIds.some((id) => id.toString() === packageDoc.coachId?.toString()) ||
+      stringIds.includes(packageDoc.coachId?.toString());
+
+    if (!isCoachForThisPkg && !link) {
+      throw new ForbiddenError("ACCESS_DENIED", "You are not authorized to deduct sessions for this package");
     }
 
     // --- 5. Check remainingClasses > 0 (Req 7.4) ---
@@ -422,16 +564,34 @@ export class CoachService {
 
     // --- 7. Execute atomic transaction (Req 7.5) ---
     const classesRemainingAfter = pkg.remainingClasses - 1;
+    const isCompletedSession = reason.trim().toLowerCase().startsWith("completed session");
 
     await runInTransaction(async (session) => {
       // (a) Decrement remainingClasses on the matched package subdocument
+      const updateOp: any = {
+        $inc: { "packages.$[pkg].remainingClasses": -1 },
+      };
+      if (classesRemainingAfter === 0) {
+        updateOp.$set = { "packages.$[pkg].status": "COMPLETED" };
+      }
+      if (isCompletedSession) {
+        updateOp.$addToSet = {
+          ptAttendance: {
+            pkgId: pkg.pkgId,
+            date: format(parsedSessionDate, "yyyy-MM-dd"),
+            attendanceTime: parsedSessionDate,
+          },
+        };
+      }
+
       await Member.updateOne(
         { uid: new Types.ObjectId(memberId) },
-        { $inc: { "packages.$[pkg].remainingClasses": -1 } },
+        updateOp,
         {
           arrayFilters: [
             {
-              "pkg.pkgStartDate": parsedPackageStartDate,
+              "pkg.pkgId": pkg.pkgId,
+              "pkg.pkgStartDate": pkg.pkgStartDate,
             },
           ],
           session,
@@ -443,29 +603,67 @@ export class CoachService {
         coachId: coachDocId,
         memberId: new Types.ObjectId(memberId),
         pkgId: pkg.pkgId,
-        memberPackageStartDate: parsedPackageStartDate,
+        memberPackageStartDate: pkg.pkgStartDate,
         reason,
         sessionDate: parsedSessionDate,
         classesRemainingAfter,
       }).save({ session });
+
+      // (c) Record PT attendance only when reason is Completed session
+      if (isCompletedSession) {
+        await DailyAttendance.recordPtAttendance(
+          memberId,
+          packageDoc.name,
+          session,
+          "SUCCESS",
+          io,
+          (pkg as any).locationId?.toString() || packageDoc.locationId?.toString(),
+          coachDocId.toString(),
+          parsedSessionDate,
+        );
+      }
     });
+
+    if (isCompletedSession && io) {
+      io.emit("SUCCESS-SCAN", {
+        code: "PT_CLASS_ATTENDED",
+        message: "Success",
+        memberId,
+        coach: packageDoc.name,
+      });
+    }
 
     // --- 8. Return the updated Member_Package subdocument (Req 7.6) ---
     // Construct the updated state from known values (avoids a second DB round-trip)
     const updatedPkg = {
       ...pkg.toObject(),
       remainingClasses: classesRemainingAfter,
+      ...(classesRemainingAfter === 0 ? { status: "COMPLETED" } : {}),
     };
 
     return mapDeductSessionResponseDto(updatedPkg);
   }
 
   static async getSchedule(coachDocId: Types.ObjectId, weekStart: Date): Promise<ScheduleResponseDto> {
+    const { objectIds, stringIds } = await this.getCoachLookupIds(coachDocId);
+    const assignedIds = new Set([
+      ...objectIds.map((id) => id.toString()),
+      ...stringIds,
+    ]);
+    const viewerCoachDoc = await Coach.findById(coachDocId);
+    const viewerCoachName = viewerCoachDoc?.coachName?.trim();
+
     const weekEnd = addDays(weekStart, 7);
     const scheduledClasses = await ScheduledClass.find({
-      coachId: coachDocId,
+      $or: [
+        { coachId: { $in: objectIds } },
+        { coachId: { $in: stringIds } },
+      ],
       startTime: { $gte: weekStart, $lt: weekEnd }
-    }).populate("locationId").sort({ startTime: 1 });
+    })
+      .populate("locationId")
+      .populate("coachId", "coachName")
+      .sort({ startTime: 1 });
 
     // Batch fetch 1: Classes
     const classIds = Array.from(new Set(scheduledClasses.map(s => s.cid.toString())));
@@ -488,7 +686,6 @@ export class CoachService {
     const packagesInfo = await Package.find({ _id: { $in: allPkgIds } });
     const packageMap = new Map(packagesInfo.map(p => [p._id.toString(), p]));
 
-    const coachIdStr = coachDocId.toString();
     const sessionsMap = new Map<string, any[]>();
 
     for (const scheduledClass of scheduledClasses) {
@@ -504,7 +701,7 @@ export class CoachService {
           if (!p.pkgId || p.status !== "ACTIVE") return false;
           const pkgDoc = packageMap.get(p.pkgId.toString());
           if (!pkgDoc) return false;
-          return !pkgDoc.coachId || pkgDoc.coachId.toString() === coachIdStr;
+          return !pkgDoc.coachId || assignedIds.has(pkgDoc.coachId.toString());
         });
 
         clients.push({
@@ -520,6 +717,23 @@ export class CoachService {
         });
       }
 
+      const coachesList = Array.isArray(scheduledClass.coachId)
+        ? scheduledClass.coachId
+        : scheduledClass.coachId
+        ? [scheduledClass.coachId]
+        : [];
+      const coaches = coachesList
+        .map((c: any) => {
+          if (!c) return null;
+          const id = (c._id || c).toString();
+          const name = c.coachName || c.name || "Coach";
+          return { id, name };
+        })
+        .filter(Boolean);
+      const allCoachNames = coaches.map((c: any) => c.name).join(", ");
+      const matchingCoach = coaches.find((c: any) => assignedIds.has(c.id));
+      const sessionCoachName = matchingCoach ? matchingCoach.name : (viewerCoachName || (coaches[0]?.name ?? "Coach"));
+
       const dateStr = formatInTimeZone(scheduledClass.startTime, "Africa/Cairo", "yyyy-MM-dd");
       const sessionDto = {
         scheduledClassId: (scheduledClass._id as Types.ObjectId).toString(),
@@ -530,6 +744,10 @@ export class CoachService {
         capacity: scheduledClass.availableSlots + scheduledClass.bookedMembers.length,
         bookedCount: scheduledClass.bookedMembers.length,
         location: this.locationLabel(scheduledClass.locationId),
+        coaches,
+        coachName: sessionCoachName,
+        coachNames: sessionCoachName,
+        allCoachNames,
         clients
       };
 
@@ -561,18 +779,32 @@ export class CoachService {
    * GET /api/coach/scans?date=YYYY-MM-DD
    * Returns all of the coach's scheduled classes for the given calendar day,
    * each with its full scan list (member name, phone, time, method, status).
+   * Supports multi-coach sessions: all assigned coaches see the same session.
    */
   static async getScans(coachDocId: Types.ObjectId, date: Date): Promise<any[]> {
-    // Build a [start-of-day, start-of-next-day) window in UTC
-    const dayStart = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-    const dayEnd   = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + 1));
+    // Resolve all coach lookup IDs (handles multi-coach and composite coach docs)
+    const { objectIds, stringIds } = await this.getCoachLookupIds(coachDocId);
+    const assignedIds = new Set([
+      ...objectIds.map((id) => id.toString()),
+      ...stringIds,
+    ]);
+    const viewerCoachDoc = await Coach.findById(coachDocId);
+    const viewerCoachName = viewerCoachDoc?.coachName?.trim();
+
+    // Use Cairo calendar-day boundaries to avoid UTC midnight misalignment
+    const dayStart = startOfDateCairo(date);
+    const dayEnd   = endOfDateCairo(date);
 
     const scheduledClasses = await ScheduledClass.find({
-      coachId: coachDocId,
+      $or: [
+        { coachId: { $in: objectIds } },
+        { coachId: { $in: stringIds } },
+      ],
       startTime: { $gte: dayStart, $lt: dayEnd },
     })
       .populate<{ "scans.uid": any }>("scans.uid")
       .populate("locationId")
+      .populate("coachId", "coachName")
       .sort({ startTime: 1 });
 
     const classIds = Array.from(new Set(scheduledClasses.map(sc => sc.cid.toString())));
@@ -598,6 +830,24 @@ export class CoachService {
         };
       });
 
+      // Derive coaches list from populated coachId
+      const coachesList = Array.isArray(sc.coachId)
+        ? sc.coachId
+        : sc.coachId
+        ? [sc.coachId]
+        : [];
+      const coaches = coachesList
+        .map((c: any) => {
+          if (!c) return null;
+          const id = (c._id || c).toString();
+          const name = c.coachName || c.name || "Coach";
+          return { id, name };
+        })
+        .filter(Boolean) as { id: string; name: string }[];
+      const allCoachNames = coaches.map((c) => c.name).join(", ");
+      const matchingCoach = coaches.find((c) => assignedIds.has(c.id));
+      const sessionCoachName = matchingCoach ? matchingCoach.name : (viewerCoachName || (coaches[0]?.name ?? "Coach"));
+
       result.push({
         scheduledClassId: (sc._id as Types.ObjectId).toString(),
         classTitle:  cls.title,
@@ -609,6 +859,10 @@ export class CoachService {
         capacity:    sc.availableSlots + sc.bookedMembers.length,
         bookedCount: sc.bookedMembers.length,
         location:    this.locationLabel(sc.locationId),
+        coaches,
+        coachName:   sessionCoachName,
+        coachNames:  sessionCoachName,
+        allCoachNames,
         scans,
         attendanceConfirmation: sc.attendanceConfirmation?.confirmed
           ? {
@@ -650,8 +904,13 @@ export class CoachService {
       throw new NotFoundError("CLASS_NOT_FOUND", "Scheduled class not found", { scid });
     }
 
+    const { objectIds, stringIds } = await this.getCoachLookupIds(coachDocId);
+    const assignedIds = new Set([
+      ...objectIds.map((id) => id.toString()),
+      ...stringIds,
+    ]);
     const isAssigned = (scheduledClass.coachId || []).some(
-      (id) => id.toString() === coachDocId.toString()
+      (id) => assignedIds.has(id.toString())
     );
     if (!isAssigned) {
       throw new ForbiddenError(
@@ -673,10 +932,12 @@ export class CoachService {
     }
 
     const count = Math.max(0, Math.floor(Number(data.confirmedCount) || 0));
+    // Compare against actual scanned-in members (SUCCESS scans), not bookings
+    const successScanCount = scheduledClass.scans.filter((s: any) => s.status === true).length;
     const hasMissingPlace =
       typeof data.hasMissingPlace === "boolean"
         ? data.hasMissingPlace
-        : count < scheduledClass.bookedMembers.length;
+        : count < successScanCount;
 
     scheduledClass.attendanceConfirmation = {
       confirmed: true,
@@ -703,40 +964,67 @@ export class CoachService {
   /**
    * GET /api/coach/pt-attendance?date=YYYY-MM-DD
    * Returns the PT check-in entries for the given date that belong to the
-   * authenticated coach (identified by their PT package names).
-   * Does NOT return the coach/package name — only member identity and status.
+   * authenticated coach (identified by their PT package names, coachId, or drop-in assignment).
    */
   static async getPtAttendance(coachDocId: Types.ObjectId, date: Date): Promise<any[]> {
     // 1. Collect all PT package names assigned to this coach
-    const ptPackages = await Package.find({
-      coachId: coachDocId,
-      category: "PERSONAL_TRAINING",
-    });
+    const coachDoc = await Coach.findById(coachDocId);
+    const coachName = coachDoc?.coachName?.trim();
+
+    const ptPkgQuery: any = {
+      $or: [
+        { coachId: coachDocId },
+      ],
+    };
+    if (coachName && coachName.length >= 3) {
+      ptPkgQuery.$or.push({
+        category: "PERSONAL_TRAINING",
+        name: { $regex: new RegExp(`(^|[^a-z0-9])${escapeRegex(coachName)}([^a-z0-9]|$)`, "i") },
+      });
+    }
+
+    const ptPackages = await Package.find(ptPkgQuery);
     const coachPkgNames = new Set(ptPackages.map((p) => p.name));
 
-    if (coachPkgNames.size === 0) return [];
+    // Also get coach name to match any PT drop-in method like "PT dropin with CoachName"
+    const coachNameLower = coachName?.toLowerCase();
 
     // 2. Find the DailyAttendance document for the requested date
-    const dayStart = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+    const dayStart = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 0, 0, 0));
+    const dayEnd = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 23, 59, 59, 999));
 
-    const attendance = await DailyAttendance.findOne({ date: dayStart }).populate<{
+    const attendance = await DailyAttendance.findOne({
+      $or: [
+        { date: dayStart },
+        { date: { $gte: dayStart, $lte: dayEnd } },
+      ],
+    }).populate<{
       "ptAttendance.uid": any;
     }>("ptAttendance.uid");
 
     if (!attendance) return [];
 
-    // 3. Filter ptAttendance entries by coach package names and map to response
+    // 3. Filter ptAttendance entries by coach package names, direct coachId assignment, or drop-in
     const result: any[] = [];
     for (const entry of attendance.ptAttendance) {
-      if (!coachPkgNames.has(entry.method)) continue;
+      const entryMethodLower = (entry.method || "").toLowerCase();
+      const isAssignedToCoach =
+        (entry as any).coachId?.toString() === coachDocId.toString() ||
+        coachPkgNames.has(entry.method) ||
+        (coachNameLower && (entryMethodLower.includes(`with ${coachNameLower}`) || entryMethodLower.includes(coachNameLower)));
+      if (!isAssignedToCoach) continue;
       const user = entry.uid as any; // populated User
       result.push({
         memberId: user?._id?.toString() ?? "",
-        member: user?.name ?? "Unknown",
-        phone:  user?.phoneNumber ?? "",
-        time:   entry.time.toISOString(),
+        member: user?.name ?? (entry as any).guestName ?? "Unknown Member",
+        phone:  user?.phoneNumber ?? (entry as any).guestPhone ?? "No Phone",
+        time:   entry.time instanceof Date ? entry.time.toISOString() : new Date(entry.time).toISOString(),
         method: entry.method,
         status: entry.status, // "SUCCESS" | "FAILED"
+        statusDetail:
+          entry.status === "FAILED" && entry.method === "No Active Package"
+            ? "No active package found"
+            : undefined,
       });
     }
 
@@ -764,9 +1052,31 @@ export class CoachService {
       }
     }
 
+    const coachDoc = await Coach.findById(coachDocId);
+    const coachName = coachDoc?.coachName?.trim();
+
+    const ptPkgQuery: any = {
+      $or: [
+        { coachId: coachDocId },
+      ],
+    };
+    if (coachName && coachName.length >= 3) {
+      ptPkgQuery.$or.push({
+        category: "PERSONAL_TRAINING",
+        name: { $regex: new RegExp(`(^|[^a-z0-9])${escapeRegex(coachName)}([^a-z0-9]|$)`, "i") },
+      });
+    }
+
+    const { objectIds, stringIds } = await this.getCoachLookupIds(coachDocId, coachUserId);
+
     const [ptCount, classCount] = await Promise.all([
-      Package.countDocuments({ coachId: coachDocId }),
-      ScheduledClass.countDocuments({ coachId: coachDocId }),
+      Package.countDocuments(ptPkgQuery),
+      ScheduledClass.countDocuments({
+        $or: [
+          { coachId: { $in: objectIds } },
+          { coachId: { $in: stringIds } },
+        ],
+      }),
     ]);
 
     return {
@@ -813,6 +1123,10 @@ export class CoachService {
         endTime: string;
         capacity: number;
         bookedCount: number;
+        coachName?: string;
+        coachNames?: string;
+        allCoachNames?: string;
+        coaches?: { id: string; name: string }[];
       },
       date: string,
     ): TodaySessionSummaryDto => ({
@@ -824,6 +1138,10 @@ export class CoachService {
       endTime: session.endTime,
       capacity: session.capacity,
       bookedCount: session.bookedCount,
+      coachName: session.coachName,
+      coachNames: session.coachNames,
+      allCoachNames: session.allCoachNames,
+      coaches: session.coaches,
     });
 
     const todaySessions = (schedule.days.find((d) => d.date === todayKey)?.sessions ?? []).map(

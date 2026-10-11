@@ -95,6 +95,7 @@ export interface IPackage {
   isDeprecated?: boolean;
   classRestrictions?: IClassRestriction[];
   opensClasses: Types.ObjectId[];
+  notes?: string;
 }
 
 export interface IPackageMethods {}
@@ -181,6 +182,10 @@ const PackageSchema = new Schema<IPackage, IPackageModel, IPackageMethods>({
     required: false,
   },
   classRestrictions: [classRestrictionsSchema],
+  notes: {
+    type: String,
+    required: false,
+  },
 });
 
 PackageSchema.static(

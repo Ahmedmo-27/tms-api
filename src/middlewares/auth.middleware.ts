@@ -12,6 +12,7 @@ import {
 } from "../core/ApiError";
 import {Types} from "mongoose";
 import { SuccessResponse } from "../core/ApiResponse";
+import logger from "../config/logger";
 
 // This interface is for routes/controllers that run after the middleware
 export interface AuthRequest extends Request {
@@ -39,15 +40,14 @@ const ADMIN_ROLE_ALIASES: UserRole[] = ["admin", "management", "branch_admin"];
 
 /**
  * NOTE: Passing "admin" in allowedRoles expands to management + branch_admin + admin.
- * Prefer explicit ["management"] or ["management","branch_admin"] when you need precision.
+ * Call sites using ["admin"] automatically allow all three management roles.
  */
 function roleIsAllowed(userRole: string, allowedRoles: UserRole[]): boolean {
-  const normalizedUserRole =
-    userRole === "admin" ? "management" : userRole;
+  const normalizedUserRole = userRole === "admin" ? "management" : userRole;
   const expandedRoles = new Set<UserRole>();
   for (const role of allowedRoles) {
     if (role === "admin") {
-      ADMIN_ROLE_ALIASES.forEach((alias) => expandedRoles.add(alias));
+      ADMIN_ROLE_ALIASES.forEach((r) => expandedRoles.add(r));
     } else {
       expandedRoles.add(role);
     }
@@ -76,31 +76,96 @@ export const authenticateUser = asyncHandler(
     if (!token)
       throw new AuthFailureError("MISSING_TOKEN", "Authentication required - no token provided");
 
-    let decoded;
+    let decoded: {
+      uid: string;
+      role: string;
+      deviceType?: string;
+      jti?: string;
+      iat?: number;
+      exp?: number;
+    };
+    let jwtExpired = false;
     try {
       const secret = process.env.JWT_SECRET;
       if (!secret)
         throw new InternalError("JWT_ERROR", "JWT_SECRET is not defined in environment variables");
-      decoded = jwt.verify(token, secret) as {
-        uid: string;
-        role: string;
-        deviceType: string;
-        jti: string;
-        iat: number;
-       };
+
+      // For Bearer tokens (mobile client), ignore token expiration so mobile users never expire.
+      // Cryptographic signature is still strictly verified against secret.
+      decoded = jwt.verify(token, secret, {
+        ignoreExpiration: deviceType === "mobile",
+      }) as any;
     } catch (error) {
       if (error instanceof jwt.TokenExpiredError) {
-        throw new TokenExpiredError("TOKEN_EXPIRED", "Token expired");
+        // If deviceType was web (cookie) but the token expired, try decoding without expiration
+        // to check if it's a member/user before rejecting.
+        try {
+          const secret = process.env.JWT_SECRET!;
+          decoded = jwt.verify(token, secret, { ignoreExpiration: true }) as any;
+          jwtExpired = true;
+        } catch {
+          throw new TokenExpiredError("TOKEN_EXPIRED", "Token expired");
+        }
+      } else {
+        throw new BadTokenError("INVALID_TOKEN", "Invalid token!");
       }
-      throw new BadTokenError("INVALID_TOKEN", "Invalid token!");
     }
+
     const user = await User.findOne({
       _id: new Types.ObjectId(decoded.uid),
-      "tokens.token": token,
     });
     if (!user) throw new BadTokenError("INVALID_TOKEN", "Invalid token - user not found or token revoked");
+
+    const isMemberOrMobile =
+      deviceType === "mobile" ||
+      user.role === "member" ||
+      user.role === "user";
+
+    const matchedToken = Array.isArray(user.tokens)
+      ? user.tokens.find((t) => t.token === token)
+      : undefined;
+
+    // For web staff users, strictly require token in DB and enforce token expiration
+    if (!isMemberOrMobile) {
+      if (!matchedToken) {
+        throw new BadTokenError("INVALID_TOKEN", "Invalid token - user not found or token revoked");
+      }
+      if (deviceType === "web") {
+        if (jwtExpired || (matchedToken.expiresIn && new Date(matchedToken.expiresIn) <= new Date())) {
+          throw new TokenExpiredError("TOKEN_EXPIRED", "Token expired");
+        }
+      }
+    }
+
+    // Self-healing for mobile/member users:
+    // 1. If a cryptographically valid token is missing from user.tokens in DB (e.g. wiped by legacy cleanup),
+    //    restore it automatically so the member is never forced to re-login.
+    // 2. If an active member token has an old expiresIn or web device label in DB,
+    //    convert it to a non-expiring mobile token so it is permanently protected.
+    if (isMemberOrMobile && Array.isArray(user.tokens)) {
+      if (!matchedToken) {
+        user.tokens.push({
+          token,
+          device: "mobile",
+        });
+        if (typeof user.save === "function") {
+          user.save().catch((err) =>
+            logger.warn("Failed to persist restored member token", { error: (err as Error).message })
+          );
+        }
+      } else if (matchedToken.expiresIn || matchedToken.device !== "mobile") {
+        matchedToken.expiresIn = undefined;
+        matchedToken.device = "mobile";
+        if (typeof user.save === "function") {
+          user.save().catch((err) =>
+            logger.warn("Failed to persist self-healing member token", { error: (err as Error).message })
+          );
+        }
+      }
+    }
+
     (req as AuthRequest).user = user;
-    (req as AuthRequest).deviceType = deviceType;
+    (req as AuthRequest).deviceType = isMemberOrMobile ? "mobile" : deviceType;
     next();
   }
 );

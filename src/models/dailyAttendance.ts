@@ -6,7 +6,10 @@ export interface IDailyAttendance extends Document {
   date: Date;
   ptAttendance: [
     {
-      uid: mongoose.Types.ObjectId;
+      uid?: mongoose.Types.ObjectId;
+      guestName?: string;
+      guestPhone?: string;
+      coachId?: mongoose.Types.ObjectId;
       time: Date;
       method: string;
       status: "SUCCESS" | "FAILED";
@@ -38,7 +41,20 @@ type DailyAttendanceModel = Model<IDailyAttendance> & {
     status: "SUCCESS" | "FAILED",
     io: Server,
     locationId?: string,
-    pkgId?: string
+    coachId?: string,
+    at?: Date,
+    pkgId?: string,
+  ): Promise<void>;
+  recordPtGuestAttendance(
+    guestName: string,
+    guestPhone: string,
+    method: string,
+    session: ClientSession,
+    status: "SUCCESS" | "FAILED",
+    io: Server,
+    locationId?: string,
+    coachId?: string,
+    at?: Date,
   ): Promise<void>;
   recordOpenGymAttendance(
     uid: string,
@@ -72,6 +88,14 @@ type DailyAttendanceModel = Model<IDailyAttendance> & {
   ): Promise<boolean>;
 };
 
+function utcDayBounds(at: Date): { start: Date; end: Date } {
+  const start = new Date(at);
+  start.setUTCHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setUTCHours(23, 59, 59, 999);
+  return { start, end };
+}
+
 const DailyAttendanceSchema: Schema<IDailyAttendance, DailyAttendanceModel> =
   new Schema({
     date: {
@@ -80,7 +104,10 @@ const DailyAttendanceSchema: Schema<IDailyAttendance, DailyAttendanceModel> =
     },
     ptAttendance: [
       {
-        uid: { type: Schema.Types.ObjectId, required: true, ref: "User" },
+        uid: { type: Schema.Types.ObjectId, ref: "User", required: false },
+        guestName: { type: String, required: false },
+        guestPhone: { type: String, required: false },
+        coachId: { type: Schema.Types.ObjectId, ref: "Coach", default: null },
         time: { type: Date, required: true },
         method: { type: String, required: true },
         status: { type: String, enum: ["SUCCESS", "FAILED"], default: "SUCCESS" },
@@ -111,17 +138,16 @@ DailyAttendanceSchema.static(
     status: "SUCCESS" | "FAILED",
     io: Server,
     locationId?: string,
-    pkgId?: string
+    coachId?: string,
+    at?: Date,
+    pkgId?: string,
   ): Promise<void> {
-    const startOfDay = new Date();
-    startOfDay.setUTCHours(0, 0, 0, 0);
-
-    const endOfDay = new Date();
-    endOfDay.setUTCHours(23, 59, 59, 999);
+    const recordedAt = at ?? new Date();
+    const { start: startOfDay, end: endOfDay } = utcDayBounds(recordedAt);
 
     let day = await this.findOne(
       {
-        date: startOfDay,
+        date: { $gte: startOfDay, $lte: endOfDay },
       },
       null,
       { session }
@@ -140,9 +166,10 @@ DailyAttendanceSchema.static(
           ptAttendance: {
             uid: new mongoose.Types.ObjectId(uid),
             method,
-            time: new Date(),
+            time: recordedAt,
             status,
             locationId: locationId ? new mongoose.Types.ObjectId(locationId) : null,
+            coachId: coachId ? new mongoose.Types.ObjectId(coachId) : null,
             pkgId: pkgId ? new mongoose.Types.ObjectId(pkgId) : null,
           },
         },
@@ -164,6 +191,66 @@ DailyAttendanceSchema.static(
       );
     }
     await attendance.save({ session });
+  }
+);
+
+DailyAttendanceSchema.static(
+  "recordPtGuestAttendance",
+  async function (
+    guestName: string,
+    guestPhone: string,
+    method: string,
+    session: ClientSession,
+    status: "SUCCESS" | "FAILED",
+    io: Server,
+    locationId?: string,
+    coachId?: string,
+    at?: Date,
+  ): Promise<void> {
+    const recordedAt = at ?? new Date();
+    const { start: startOfDay, end: endOfDay } = utcDayBounds(recordedAt);
+
+    let day = await this.findOne(
+      { date: { $gte: startOfDay, $lte: endOfDay } },
+      null,
+      { session }
+    );
+    if (!day) {
+      day = new DailyAttendance({ date: startOfDay });
+      await day.save({ session });
+    }
+
+    const attendance = await this.findOneAndUpdate(
+      { _id: day._id },
+      {
+        $push: {
+          ptAttendance: {
+            guestName,
+            guestPhone,
+            method,
+            time: recordedAt,
+            status,
+            locationId: locationId ? new mongoose.Types.ObjectId(locationId) : null,
+            coachId: coachId ? new mongoose.Types.ObjectId(coachId) : null,
+          },
+        },
+      },
+      {
+        session,
+        new: true,
+      }
+    );
+    if (!attendance) {
+      io.emit("FAILED-SCAN", {
+        code: "ATTENDANCE_FAILED",
+        message: "Failed to record guest attendance",
+        member: guestName,
+      });
+      throw new ConflictError(
+        "ATTENDANCE_FAILED",
+        "Failed to record guest attendance"
+      );
+    }
   }
 );
 
@@ -228,14 +315,6 @@ DailyAttendanceSchema.static(
     return count > 0;
   }
 );
-
-function utcDayBounds(at: Date): { start: Date; end: Date } {
-  const start = new Date(at);
-  start.setUTCHours(0, 0, 0, 0);
-  const end = new Date(start);
-  end.setUTCHours(23, 59, 59, 999);
-  return { start, end };
-}
 
 DailyAttendanceSchema.static(
   "recordOpenGymAttendance",

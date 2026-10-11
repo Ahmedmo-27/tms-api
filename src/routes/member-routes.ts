@@ -32,9 +32,12 @@ import {
   updateFcmToken,
   removeFcmToken,
 } from "../controllers/admin/notifications-controller";
+import { checkMobileAppVersion } from "../middlewares/appVersion.middleware";
 
 const memberRoutes = express.Router();
 const memberOrPending = ["member", "user"] as const;
+
+memberRoutes.use(checkMobileAppVersion);
 
 // Profile Routes
 memberRoutes.get(
@@ -104,7 +107,7 @@ memberRoutes.get(
 memberRoutes.post(
   "/packages",
   authenticateUser,
-  authorizeUser([...memberOrPending]),
+  authorizeUser(["member"]),
   subToPackage
 );
 memberRoutes.delete(
@@ -152,13 +155,11 @@ memberRoutes.get(
 memberRoutes.post(
   "/fcm/update-token/:fcmToken",
   authenticateUser,
-  authorizeUser(["user", "member"]),
   updateFcmToken
 );
 memberRoutes.delete(
   "/fcm/update-token/:fcmToken",
   authenticateUser,
-  authorizeUser(["user", "member"]),
   removeFcmToken
 );
 

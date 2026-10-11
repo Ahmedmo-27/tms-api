@@ -8,6 +8,7 @@ import { cairoDaysUntil, isPackageExpired } from "../utils/timezone";
 
 export interface DeductSessionRequestDto {
   memberId: string;
+  pkgId?: string;
   memberPackageStartDate: string;
   reason: string;
   sessionDate: string;
@@ -72,6 +73,10 @@ export interface ScheduleSessionDto {
   capacity: number;
   bookedCount: number;
   location: string | null;
+  coaches?: { id: string; name: string }[];
+  coachName?: string;
+  coachNames?: string;
+  allCoachNames?: string;
   clients: CalendarClientDto[];
 }
 
@@ -132,6 +137,10 @@ export interface TodaySessionSummaryDto {
   endTime: string;
   capacity: number;
   bookedCount: number;
+  coaches?: { id: string; name: string }[];
+  coachName?: string;
+  coachNames?: string;
+  allCoachNames?: string;
 }
 
 export interface TodayPtAlertDto {

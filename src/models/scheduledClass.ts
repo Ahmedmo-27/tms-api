@@ -37,6 +37,7 @@ export interface IScheduledClass extends Document {
   availableSlots: number;
   bookedMembers: IMemberBooking[];
   coachId: Types.ObjectId[];
+  coachName?: string;
   scans: IMemberScan[];
   waitlistedMembers: IWaitlistedMember[];
   waitingList: string[];
@@ -168,6 +169,10 @@ const ScheduledClassSchema = new Schema<
     type: Schema.Types.ObjectId,
     ref: "Coach",
   }],
+  coachName: {
+    type: String,
+    required: false,
+  },
   scans: [MemberScanSchema],
   waitingList: {
     type: [String],

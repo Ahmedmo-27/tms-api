@@ -2,8 +2,9 @@ import asyncHandler from "../../utils/asyncHandler";
 import { Request, Response } from "express";
 import { SuccessResponse } from "../../core/ApiResponse";
 import { PaymentsService } from "../../services/payments-service";
-import { ForbiddenError, InternalError } from "../../core/ApiError";
+import { BadRequestError, ForbiddenError, InternalError } from "../../core/ApiError";
 import { resolveLocationFilter } from "../../utils/location-scope";
+import { Types } from "mongoose";
 
 export const getPayments = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
@@ -65,5 +66,92 @@ export const exposedGetPayments = asyncHandler(
       year ? Number(year) : undefined
     );
     new SuccessResponse("Fetched Payments!", payments).send(res);
+  }
+);
+
+export const updatePayment = asyncHandler(
+  async (req: Request, res: Response): Promise<void> => {
+    const { id } = req.params;
+    if (!id || !Types.ObjectId.isValid(id)) {
+      throw new BadRequestError("INVALID_PAYMENT_ID", "Please provide a valid payment ID");
+    }
+
+    const {
+      amount,
+      paymentMethod,
+      paymentTime,
+      purpose,
+      note,
+      nonMemberName,
+      nonMemberPhone,
+      locationId,
+    } = req.body;
+
+    if (amount !== undefined) {
+      if (typeof amount !== "number" || isNaN(amount) || amount <= 0) {
+        throw new BadRequestError("INVALID_AMOUNT", "Amount must be a positive number");
+      }
+    }
+
+    const VALID_METHODS = ["APP", "VISA", "CASH", "INSTAPAY", "VALU", "PAYMENT_LINK", "DEDUCTED"];
+    if (paymentMethod !== undefined && !VALID_METHODS.includes(paymentMethod)) {
+      throw new BadRequestError(
+        "INVALID_PAYMENT_METHOD",
+        `Payment method must be one of: ${VALID_METHODS.join(", ")}`
+      );
+    }
+
+    const VALID_PURPOSES = [
+      "DROPIN",
+      "PACKAGE",
+      "WALKIN",
+      "NON_USER_BOOKING",
+      "NON_USER_PACKAGE",
+      "OTHER",
+    ];
+    if (purpose !== undefined && !VALID_PURPOSES.includes(purpose)) {
+      throw new BadRequestError(
+        "INVALID_PURPOSE",
+        `Purpose must be one of: ${VALID_PURPOSES.join(", ")}`
+      );
+    }
+
+    if (paymentTime !== undefined) {
+      const parsed = new Date(paymentTime);
+      if (isNaN(parsed.getTime())) {
+        throw new BadRequestError("INVALID_PAYMENT_TIME", "Invalid payment date/time format");
+      }
+    }
+
+    if (locationId !== undefined && locationId !== null && locationId !== "") {
+      if (!Types.ObjectId.isValid(locationId)) {
+        throw new BadRequestError("INVALID_LOCATION_ID", "Invalid location ID");
+      }
+    }
+
+    const updated = await PaymentsService.updatePayment(id, {
+      amount,
+      paymentMethod,
+      paymentTime,
+      purpose,
+      note,
+      nonMemberName,
+      nonMemberPhone,
+      locationId,
+    });
+
+    new SuccessResponse("Payment Updated!", updated).send(res);
+  }
+);
+
+export const deletePayment = asyncHandler(
+  async (req: Request, res: Response): Promise<void> => {
+    const { id } = req.params;
+    if (!id || !Types.ObjectId.isValid(id)) {
+      throw new BadRequestError("INVALID_PAYMENT_ID", "Please provide a valid payment ID");
+    }
+
+    await PaymentsService.deletePayment(id);
+    new SuccessResponse("Payment Deleted!", { id }).send(res);
   }
 );

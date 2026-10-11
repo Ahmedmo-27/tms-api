@@ -32,7 +32,9 @@
     "normalize-location-ids": "npx ts-node ./src/scripts/normalize-location-object-ids.ts --dry-run",
     "normalize-location-ids:apply": "npx ts-node ./src/scripts/normalize-location-object-ids.ts",
     "verify-location-fix": "npx ts-node ./src/scripts/verify-location-fix-local.ts",
-    "verify-location-fix:tms-test": "npx ts-node ./src/scripts/verify-location-fix-tms-test.ts"
+    "verify-location-fix:tms-test": "npx ts-node ./src/scripts/verify-location-fix-tms-test.ts",
+    "assign-pt-coaches": "npx ts-node ./src/scripts/assign-pt-packages-to-coaches.ts",
+    "assign-pt-coaches:apply": "npx ts-node ./src/scripts/assign-pt-packages-to-coaches.ts --apply"
   },
   "repository": {
     "type": "git",

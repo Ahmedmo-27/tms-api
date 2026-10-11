@@ -8,18 +8,12 @@ import asyncHandler from "../../utils/asyncHandler";
 import logger from "../../config/logger";
 import { SubscriptionsService } from "../../services/subscriptions-service";
 import { PackageStatusService } from "../../services/package-status-service";
-import {
-  buildMatchaPackageFilter,
-  isPendingMember,
-} from "../../utils/matcha-branch";
-import { cleanUpDeprecatedPackages } from "../../services/package-deletion-guard";
 
 // GET all packages to subscribe
 export const getPackage = asyncHandler(async function (
   req: Request,
   res: Response
 ): Promise<void> {
-  await cleanUpDeprecatedPackages();
   const { name, category, coachId } = req.query;
   const query: any = { isDeprecated: { $ne: true } };
   if (name) {
@@ -32,10 +26,6 @@ export const getPackage = asyncHandler(async function (
     query.coachId = coachId;
   }
   query.hidden = {$ne: true}
-
-  if (await isPendingMember((req as AuthRequest).user._id as string)) {
-    Object.assign(query, await buildMatchaPackageFilter());
-  }
 
   // Mobile PT flow expects populated coach objects ({ _id, coachName }), not raw ObjectIds.
   let packages = await Package.find(query).populate({

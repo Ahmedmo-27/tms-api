@@ -3,10 +3,12 @@ import { SubscriptionsService } from "./subscriptions-service";
 import Member from "../models/member";
 import Package from "../models/package";
 import NonUserPackage from "../models/nonUserPackage";
+import User from "../models/user";
 
 jest.mock("../models/member");
 jest.mock("../models/package");
 jest.mock("../models/nonUserPackage");
+jest.mock("../models/user");
 jest.mock("../config/logger", () => ({
   info: jest.fn(),
   error: jest.fn(),
@@ -35,6 +37,7 @@ describe("SubscriptionsService.transferStagedPackagesToMember", () => {
     });
     (Member.addPackageIfAbsent as jest.Mock).mockResolvedValue(true);
     (NonUserPackage.findByIdAndUpdate as jest.Mock).mockResolvedValue({});
+    (User.findByIdAndUpdate as jest.Mock).mockResolvedValue({});
   });
 
   function mockStagedQuery(docs: unknown[]) {

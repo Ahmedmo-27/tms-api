@@ -3,6 +3,8 @@ import Package, { isUnlimitedSpaceAccess } from "../../models/package";
 import Member from "../../models/member";
 import Class from "../../models/class";
 import Coach from "../../models/coach";
+import DailyAttendance from "../../models/dailyAttendance";
+import { format } from "date-fns";
 import { BadRequestError, ConflictError, NotFoundError } from "../../core/ApiError";
 import { SuccessResponse } from "../../core/ApiResponse";
 import asyncHandler from "../../utils/asyncHandler";
@@ -159,7 +161,6 @@ export const getPackage = asyncHandler(async function (
   req: Request,
   res: Response
 ): Promise<void> {
-  await cleanUpDeprecatedPackages();
   const { name, category, coachId, status, isDeprecated, hidden } = req.query;
   const query: any = {};
   if (name) {
@@ -209,6 +210,7 @@ export const addPackage = asyncHandler(
       classRestrictions,
       expiryPeriod,
       numberOfSessions,
+      notes,
     } = req.body;
 
     validatePackagePayload({
@@ -241,6 +243,9 @@ export const addPackage = asyncHandler(
       opensClasses,
     });
 
+    const trimmedNotes =
+      typeof notes === "string" ? notes.trim() : undefined;
+
     const pkg = new Package({
       name: name.trim(),
       numberOfSessions: normalized.numberOfSessions,
@@ -250,6 +255,7 @@ export const addPackage = asyncHandler(
       coachId,
       opensClasses,
       classRestrictions,
+      ...(trimmedNotes !== undefined ? { notes: trimmedNotes } : {}),
       ...(targetLocationId
         ? { locationId: new Types.ObjectId(targetLocationId) }
         : {}),
@@ -280,12 +286,14 @@ export const deletePackage = asyncHandler(
       pkg.isDeprecated = true;
       pkg.hidden = true;
       await pkg.save();
+      await cleanUpDeprecatedPackages();
       new SuccessResponse("Package Deprecated!", {
         deletedPackage: pkg,
         message: "Package has been archived (soft-deleted) because it has subscriber or payment history.",
       }).send(res);
     } else {
       await Package.findByIdAndDelete(id);
+      await cleanUpDeprecatedPackages();
       new SuccessResponse("Package Deleted!", {
         deletedPackage: pkg,
         message: "Package has been completely deleted.",
@@ -309,6 +317,7 @@ export const updatePackage = asyncHandler(
       "classRestrictions",
       "locationId",
       "coachId",
+      "notes",
     ];
     const updates = Object.keys(req.body);
     const isValidUpdate = updates.every((update) =>
@@ -353,6 +362,12 @@ export const updatePackage = asyncHandler(
       expiryPeriod: normalized.expiryPeriod,
       numberOfSessions: normalized.numberOfSessions,
     };
+    if (updatePayload.notes !== undefined) {
+      updatePayload.notes =
+        typeof updatePayload.notes === "string"
+          ? updatePayload.notes.trim()
+          : "";
+    }
     if (updatePayload.locationId !== undefined && updatePayload.locationId !== null) {
       const locationObjectId = toObjectId(updatePayload.locationId as string);
       if (!locationObjectId) {
@@ -456,7 +471,7 @@ export const adjustMemberPackageClasses = asyncHandler(async function (
   req: Request,
   res: Response
 ): Promise<void> {
-  const { uid, pkgId, pkgStartDate, amount, type, reason } = req.body;
+  const { uid, pkgId, pkgStartDate, amount, type, reason, sessionDate } = req.body;
   if (!reason || !reason.toString().trim())
     throw new BadRequestError("MISSING_REASON", "A reason is required");
   if (!amount || Number(amount) < 1)
@@ -482,6 +497,16 @@ export const adjustMemberPackageClasses = asyncHandler(async function (
       "Cannot deduct more classes than remaining"
     );
 
+  const packageDoc = await Package.findById(pkgId);
+  const isPtPackage =
+    packageDoc?.category === "PERSONAL_TRAINING" || Boolean(packageDoc?.coachId);
+  const isCompletedSession =
+    type === "DEDUCT" &&
+    isPtPackage &&
+    reason.toString().trim().toLowerCase().startsWith("completed session");
+
+  const io = req.app.get("io");
+
   const newClasses =
     type === "ADD"
       ? pkg.remainingClasses + Number(amount)
@@ -502,7 +527,50 @@ export const adjustMemberPackageClasses = asyncHandler(async function (
       },
       session
     );
+
+    if (isCompletedSession && packageDoc) {
+      const targetDate = sessionDate && !isNaN(new Date(sessionDate).getTime())
+        ? new Date(sessionDate)
+        : new Date();
+
+      const deductAmount = Number(amount) || 1;
+      for (let i = 0; i < deductAmount; i++) {
+        await DailyAttendance.recordPtAttendance(
+          uid,
+          packageDoc.name,
+          session,
+          "SUCCESS",
+          io,
+          (pkg as any).locationId?.toString() || packageDoc.locationId?.toString(),
+          packageDoc.coachId ? packageDoc.coachId.toString() : undefined,
+          targetDate,
+        );
+      }
+
+      await Member.updateOne(
+        { uid: new Types.ObjectId(uid) },
+        {
+          $addToSet: {
+            ptAttendance: {
+              pkgId: new Types.ObjectId(pkgId),
+              date: format(targetDate, "yyyy-MM-dd"),
+              attendanceTime: targetDate,
+            },
+          },
+        },
+        { session }
+      );
+    }
   });
+
+  if (isCompletedSession && io) {
+    io.emit("SUCCESS-SCAN", {
+      code: "PT_CLASS_ATTENDED",
+      message: "Success",
+      memberId: uid,
+      coach: packageDoc?.name,
+    });
+  }
 
   new SuccessResponse("Package updated!", pkg).send(res);
 });

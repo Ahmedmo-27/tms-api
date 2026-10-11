@@ -179,8 +179,8 @@ async function main() {
   console.log(`[BOOKING] Member ${user.name} booked into session ${scheduledClass._id} (Unattended / Missed).`);
 
   // 8. Trigger MissedSessionService
-  console.log(`\n[TRIGGER] Running MissedSessionService.notifyMissedSessions()...`);
-  const summary = await MissedSessionService.notifyMissedSessions(now);
+  console.log(`\n[TRIGGER] Running MissedSessionService.notifyMissedSessions(now, { force: true })...`);
+  const summary = await MissedSessionService.notifyMissedSessions(now, { force: true });
 
   console.log("\n" + "=".repeat(80));
   console.log("RESULT SUMMARY");

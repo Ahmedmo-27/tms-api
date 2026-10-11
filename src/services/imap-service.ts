@@ -62,12 +62,12 @@ const findRecipientUsers = async (emails: string[]) => {
       { tmsEmail: { $in: escapedRegexes } },
       { email: { $in: escapedRegexes } },
     ],
-    role: { $in: ["management", "managing_coach", "admin", "mailer", "accountant"] },
+    role: { $in: ["management", "managing_coach", "coach", "admin", "mailer", "accountant"] },
   });
 
   if (matchedUsers.length === 0) {
     const staff = await User.find({
-      role: { $in: ["management", "managing_coach", "admin", "mailer", "accountant"] },
+      role: { $in: ["management", "managing_coach", "coach", "admin", "mailer", "accountant"] },
     }).select("name email tmsEmail sendAsName");
 
     const mailDomain = (process.env.MAIL_DOMAIN || "the-mind-space.com")
@@ -209,7 +209,7 @@ export const syncEmails = async () => {
               const emailSubject = parsed.subject || "No Subject";
               const snippet = (parsed.text || "").replace(/\s+/g, " ").trim().slice(0, 150);
 
-              // 1. Determine target users for push notification
+              // 1. Determine target users for push notification (strictly recipients only)
               const targetUsers = await findRecipientUsers(recipientEmails);
               const targetUserIds = targetUsers.map((u) => String(u._id));
 
@@ -223,13 +223,14 @@ export const syncEmails = async () => {
                     emailId: String(newEmail._id),
                     from: fromSender,
                     subject: emailSubject,
+                    targetUserIds: targetUserIds.join(","),
                   }
                 ).catch((notifErr) =>
                   logger.warn("Failed to send push notification for new email", notifErr)
                 );
               }
 
-              // 2. Real-time Socket.IO notification (targeted directly to recipient users)
+              // 2. Real-time Socket.IO notification (strictly to recipient user rooms only)
               const io = getIO();
               if (io && targetUserIds.length > 0) {
                 const socketPayload = {

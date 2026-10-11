@@ -3,7 +3,12 @@ import Package, { getPackageEndDate } from "../models/package";
 import PromoCode from "../models/promoCode";
 import { Types } from "mongoose";
 import { PaymentsService } from "./payments-service";
-import { NotFoundError, BadRequestError, ConflictError } from "../core/ApiError";
+import {
+  NotFoundError,
+  BadRequestError,
+  ConflictError,
+  ForbiddenError,
+} from "../core/ApiError";
 import { runInTransaction } from "../utils/transaction";
 import { ClientSession } from "mongoose";
 import logger from "../config/logger";
@@ -19,7 +24,6 @@ import { normalizePhoneNumber } from "../utils/phone";
 import { cairoDayRange, toStoredPackageDate } from "../utils/timezone";
 import CoachNotification from "../models/coachNotification";
 import {
-  assertMatchaPackageForPendingUser,
   ensureMemberForPendingPurchase,
   isPendingMember,
 } from "../utils/matcha-branch";
@@ -195,6 +199,10 @@ export class SubscriptionsService {
       const user = await User.findOne({ _id: new Types.ObjectId(uid) }).session(
         session,
       );
+      if (user && user.role === "user") {
+        user.role = "member";
+        await user.save(session ? { session } : {});
+      }
       if (user?.phoneNumber) {
         await SubscriptionsService.assertNoDuplicateNonUserPackage(
           user.phoneNumber,
@@ -303,9 +311,11 @@ export class SubscriptionsService {
       );
     }
 
-    const pendingMember = await isPendingMember(uid);
-    if (pendingMember) {
-      await assertMatchaPackageForPendingUser(pkg);
+    if (await isPendingMember(uid)) {
+      throw new ForbiddenError(
+        "MEMBERSHIP_REQUIRED",
+        "Packages require membership",
+      );
     }
 
     let member = await Member.findOne({ uid });
@@ -345,7 +355,7 @@ export class SubscriptionsService {
 
     const packageLocationId = await resolveAppPackageLocationId(
       pkg,
-      pendingMember,
+      false,
     );
 
     // Idempotent APP confirm: payment already saved for this merchant ref
@@ -626,6 +636,14 @@ export class SubscriptionsService {
       await NonUserPackage.findByIdAndUpdate(
         savedPkg._id as Types.ObjectId,
         { added: true },
+        session ? { session } : {}
+      );
+    }
+
+    if (savedPkgs.length > 0) {
+      await User.findByIdAndUpdate(
+        uid,
+        { role: "member" },
         session ? { session } : {}
       );
     }

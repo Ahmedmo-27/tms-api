@@ -10,14 +10,69 @@ import logger from "./config/logger";
 import { syncEmails } from "./services/imap-service";
 import { PackageStatusService } from "./services/package-status-service";
 import { MissedSessionService } from "./services/missed-session-service";
+import { WaitlistService } from "./services/waitlist-service";
 import { CORS_ORIGINS } from "./config/corsOrigins";
 import User from "./models/user";
+import Member from "./models/member";
 import { setIO } from "./config/socket";
 
 const app = require("./app"); // your Express app
 
 const startServer = async () => {
   await connectDB();
+
+  try {
+    // Migration: ensure all existing member and mobile tokens never expire by removing expiresIn
+    await User.updateMany(
+      { role: { $in: ["member", "user"] } },
+      { $unset: { "tokens.$[].expiresIn": 1 }, $set: { "tokens.$[].device": "mobile" } }
+    );
+    await User.updateMany(
+      { "tokens.device": "mobile" },
+      { $unset: { "tokens.$[elem].expiresIn": 1 } },
+      { arrayFilters: [{ "elem.device": "mobile" }] }
+    );
+    logger.info("Migrated member and mobile tokens to non-expiring");
+
+    // Ensure all users with active member packages have role: "member"
+    const membersWithActivePkgs = await Member.find({
+      "packages.status": { $in: ["ACTIVE", "FROZEN"] },
+    }).select("uid");
+    const activeUids = membersWithActivePkgs.map((m) => m.uid).filter(Boolean);
+    if (activeUids.length > 0) {
+      await User.updateMany(
+        { _id: { $in: activeUids }, role: "user" },
+        { $set: { role: "member" } }
+      );
+    }
+
+    // Ensure all users with role: "member" have a Member document
+    const memberUsers = await User.find({ role: "member" }).select("_id");
+    if (memberUsers.length > 0) {
+      const memberUserIds = memberUsers.map((u) => u._id);
+      const existingMemberDocs = await Member.find({
+        uid: { $in: memberUserIds },
+      }).select("uid");
+      const existingUidsSet = new Set(existingMemberDocs.map((m) => m.uid?.toString()));
+      const missingUsers = memberUsers.filter(
+        (u: any) => !existingUidsSet.has(u._id?.toString())
+      );
+      if (missingUsers.length > 0) {
+        await Member.insertMany(
+          missingUsers.map((u: any) => ({
+            uid: u._id,
+            packages: [],
+            bookings: [],
+            attendance: [],
+            isActive: true,
+          }))
+        );
+        logger.info(`Self-healed ${missingUsers.length} missing Member documents`);
+      }
+    }
+  } catch (migErr) {
+    logger.warn("Token migration warning:", migErr);
+  }
 
   const port = Number(process.env.PORT) || 5000;
 
@@ -82,9 +137,6 @@ const startServer = async () => {
 
         socket.join(`coach:${coachId}`);
         socket.join(`user:${coachId}`);
-        if (user.role === "managing_coach") {
-          socket.join("mail:staff");
-        }
         logger.info("Coach joined room", { socketId: socket.id, coachId });
       } catch (err) {
         logger.warn("coach:joinRoom rejected", {
@@ -133,7 +185,6 @@ const startServer = async () => {
         }
 
         socket.join(`user:${user._id}`);
-        socket.join("mail:staff");
         logger.info("User joined mail room", { socketId: socket.id, userId: user._id, role });
       } catch (err) {
         logger.warn("mail:joinRoom rejected", {
@@ -161,14 +212,29 @@ const startServer = async () => {
       );
     }, 10 * 60 * 1000);
 
-    MissedSessionService.notifyMissedSessions().catch((err) =>
-      logger.error("Initial missed session notification run failed", err)
+    if (MissedSessionService.isNotificationEnabled()) {
+      MissedSessionService.notifyMissedSessions().catch((err) =>
+        logger.error("Initial missed session notification run failed", err)
+      );
+      setInterval(() => {
+        MissedSessionService.notifyMissedSessions().catch((err) =>
+          logger.error("Periodic missed session notification run failed", err)
+        );
+      }, 10 * 60 * 1000);
+    } else {
+      logger.info(
+        "Missed session notifications disabled (running in development/testing environment)"
+      );
+    }
+
+    WaitlistService.expireReservations().catch((err) =>
+      logger.error("Initial waitlist reservation expiration failed", err)
     );
     setInterval(() => {
-      MissedSessionService.notifyMissedSessions().catch((err) =>
-        logger.error("Periodic missed session notification run failed", err)
+      WaitlistService.expireReservations().catch((err) =>
+        logger.error("Waitlist reservation expiration failed", err)
       );
-    }, 10 * 60 * 1000);
+    }, 60 * 1000);
   });
 
   process.on("uncaughtException", (err) => {

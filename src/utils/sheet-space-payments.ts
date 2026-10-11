@@ -44,6 +44,9 @@ export function spacePaymentPurpose(
     note.includes("open gym") ||
     /\bdrop\s*-?\s*in\b/.test(note)
   ) {
+    if (note.includes("pt") || note.includes("personal training")) {
+      return "Drop in PT";
+    }
     if (note.includes("open gym") || note.includes("space")) {
       return "Drop in Space";
     }

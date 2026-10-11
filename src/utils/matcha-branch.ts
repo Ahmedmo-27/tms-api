@@ -59,7 +59,24 @@ export async function isMatchaLocationId(
 
 export async function isPendingMember(uid: string): Promise<boolean> {
   const user = await User.findById(uid).select("role");
-  return user?.role === "user";
+  if (!user || user.role === "member") return false;
+
+  const member = await Member.findOne({ uid: new Types.ObjectId(uid) });
+  if (
+    member &&
+    Array.isArray(member.packages) &&
+    member.packages.some(
+      (p: any) =>
+        p.status === "ACTIVE" ||
+        p.status === "FROZEN" ||
+        (typeof p.remainingClasses === "number" && p.remainingClasses > 0)
+    )
+  ) {
+    await User.findByIdAndUpdate(uid, { role: "member" });
+    return false;
+  }
+
+  return user.role === "user";
 }
 
 export async function ensureMemberForPendingPurchase(

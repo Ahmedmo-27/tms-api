@@ -5,6 +5,7 @@ import { IPayment } from "../models/payment";
 import { IPackage } from "../models/package";
 import { ILocation } from "../models/location";
 import { resolveOpenGymPaymentPurposeLabel } from "../utils/open-gym-payment-purpose";
+import { resolvePtPaymentPurposeLabel } from "../utils/pt-payment-purpose";
 
 // ---------------------------------------------------------------------------
 // Request DTOs
@@ -85,6 +86,9 @@ function formatPaymentDate(date: Date): string {
 function getPaymentItemName(payment: IPayment): string {
   const openGymPurpose = resolveOpenGymPaymentPurposeLabel(payment);
   if (openGymPurpose) return openGymPurpose;
+
+  const ptPurpose = resolvePtPaymentPurposeLabel(payment);
+  if (ptPurpose) return ptPurpose;
 
   if (payment.purpose === "PACKAGE" && payment.pkgId) {
     return (payment.pkgId as unknown as IPackage).name;

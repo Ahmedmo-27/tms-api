@@ -145,10 +145,15 @@ export class SchedulerService {
     const doc = typeof cls.toObject === "function" ? cls.toObject() : { ...cls };
     const sessionLocation = this.resolveSessionLocation(cls);
     const locationId = this.shapeLocationId(sessionLocation);
+    const availableSlots =
+      typeof doc.availableSlots === "number"
+        ? Math.max(0, doc.availableSlots)
+        : doc.availableSlots;
 
     if (!sessionLocation) {
       return {
         ...doc,
+        availableSlots,
         locationId,
         locations: doc.cid?.locations ?? [],
       };
@@ -165,6 +170,7 @@ export class SchedulerService {
 
     return {
       ...doc,
+      availableSlots,
       cid,
       locationId,
       locations: sessionLocations,
@@ -251,6 +257,7 @@ export class SchedulerService {
       .populate({ path: "scans.uid" })
       .populate({ path: "bookedMembers.uid", select: "name phoneNumber" })
       .sort({ startTime: -1 })
+      .limit(200)
       .lean();
 
     return scheduledClasses.map((cls) =>
@@ -543,10 +550,12 @@ export class SchedulerService {
     }
 
     const count = Math.max(0, Math.floor(Number(data.confirmedCount) || 0));
+    // Compare against actual scanned-in members (SUCCESS scans), not bookings
+    const successScanCount = scheduledClass.scans.filter((s: any) => s.status === true).length;
     const hasMissingPlace =
       typeof data.hasMissingPlace === "boolean"
         ? data.hasMissingPlace
-        : count < scheduledClass.bookedMembers.length;
+        : count < successScanCount;
 
     scheduledClass.attendanceConfirmation = {
       confirmed: true,

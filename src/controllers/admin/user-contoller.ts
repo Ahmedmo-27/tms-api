@@ -33,7 +33,12 @@ export const getUser = asyncHandler(
     if (email) {
       query.email = email;
     }
-    const users = await User.find(query).select(USER_SAFE_SELECT);
+    const hasSearchParam = Boolean(name || phoneNumber || email);
+    let usersQuery = User.find(query).select(USER_SAFE_SELECT);
+    if (!hasSearchParam) {
+      usersQuery = usersQuery.limit(50);
+    }
+    const users = await usersQuery;
     if (!users || users.length === 0) {
       new SuccessResponse("No users found", []).send(res);
       return;
@@ -79,17 +84,22 @@ export const getPendingMembers = asyncHandler(
       added: { $ne: true },
     }).populate({ path: "pkgId" });
 
+    const pendingPackagesByPhone = new Map<string, Array<{ pkgName: string; remainingClasses: number }>>();
+    for (const pkg of pendingPackages) {
+      if (!pkg.phoneNumber) continue;
+      const list = pendingPackagesByPhone.get(pkg.phoneNumber) || [];
+      list.push({
+        pkgName: (pkg.pkgId as { name?: string })?.name ?? "Unknown",
+        remainingClasses: pkg.remainingClasses,
+      });
+      pendingPackagesByPhone.set(pkg.phoneNumber, list);
+    }
+
     const usersWithPackages = users.map((user) => {
       const userObj = user.toObject();
-      const packagesForUser = pendingPackages.filter(
-        (pkg) => pkg.phoneNumber === user.phoneNumber
-      );
       return {
         ...userObj,
-        pendingPackages: packagesForUser.map((pkg) => ({
-          pkgName: (pkg.pkgId as { name?: string })?.name ?? "Unknown",
-          remainingClasses: pkg.remainingClasses,
-        })),
+        pendingPackages: pendingPackagesByPhone.get(user.phoneNumber) || [],
       };
     });
 

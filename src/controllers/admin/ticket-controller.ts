@@ -12,7 +12,10 @@ import {
 import { AuthRequest } from "../../middlewares/auth.middleware";
 import { CoachAuthRequest } from "../../middlewares/coach.middleware";
 import User from "../../models/user";
-import { sendTicketConfirmationEmail } from "../../services/email-service";
+import {
+  sendTicketConfirmationEmail,
+  sendNewTicketManagementNotificationEmail,
+} from "../../services/email-service";
 import logger from "../../config/logger";
 
 const asTrimmed = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
@@ -74,6 +77,13 @@ async function createTicketForUser(userId: Types.ObjectId, body: TicketBody) {
 
   void sendTicketConfirmationEmail(userDoc.email, userDoc.name, body.category).catch((e) =>
     logger.error("Ticket confirmation email failed", {
+      error: (e as Error).message,
+    })
+  );
+
+  void sendNewTicketManagementNotificationEmail(ticket).catch((e) =>
+    logger.error("Ticket management notification email failed", {
+      ticketId: ticket._id,
       error: (e as Error).message,
     })
   );

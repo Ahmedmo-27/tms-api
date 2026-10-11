@@ -322,6 +322,141 @@ export const recordOpenGymGuestDropIn = asyncHandler(async function (
   new SuccessResponse("Guest open gym drop-in recorded").send(res);
 });
 
+export const getPtDropInPrice = asyncHandler(async function (
+  req: Request,
+  res: Response
+): Promise<void> {
+  const coachId = (req.query.coachId as string) || req.body?.coachId;
+  let locationId: string | undefined;
+  try {
+    locationId = resolveLocationIdForWrite(req);
+  } catch {
+    locationId = undefined;
+  }
+  const price = await BookingsService.resolvePtDropInPrice(locationId, coachId);
+  new SuccessResponse("Personal training drop-in price", {
+    locationId,
+    coachId,
+    price,
+  }).send(res);
+});
+
+export const listPtDropInPrices = asyncHandler(async function (
+  _req: Request,
+  res: Response
+): Promise<void> {
+  const prices = await BookingsService.listPtDropInPrices();
+  new SuccessResponse("Personal training drop-in prices", prices).send(res);
+});
+
+export const setPtDropInPrice = asyncHandler(async function (
+  req: Request,
+  res: Response
+): Promise<void> {
+  const { price } = req.body;
+  const locationId = resolveLocationIdForWrite(req);
+  if (price === undefined || price === null || Number.isNaN(Number(price))) {
+    throw new BadRequestError("INVALID_PRICE", "price is required");
+  }
+  const result = await BookingsService.setPtDropInPrice(
+    locationId,
+    Number(price),
+  );
+  new SuccessResponse("Personal training drop-in price updated", result).send(res);
+});
+
+export const listPtCoachDropInPrices = asyncHandler(async function (
+  _req: Request,
+  res: Response
+): Promise<void> {
+  const prices = await BookingsService.listPtCoachDropInPrices();
+  new SuccessResponse("Personal training coach drop-in prices", prices).send(res);
+});
+
+export const setPtCoachDropInPrice = asyncHandler(async function (
+  req: Request,
+  res: Response
+): Promise<void> {
+  const { coachId, price } = req.body;
+  if (!coachId) {
+    throw new BadRequestError("COACH_ID_REQUIRED", "coachId is required");
+  }
+  const parsedPrice =
+    price === null || price === undefined || price === ""
+      ? null
+      : Number(price);
+  const result = await BookingsService.setPtCoachDropInPrice(
+    coachId,
+    parsedPrice,
+  );
+  new SuccessResponse("Personal training coach drop-in price updated", result).send(res);
+});
+
+export const recordPtMemberDropIn = asyncHandler(async function (
+  req: Request,
+  res: Response
+): Promise<void> {
+  const { uid, paymentMethod, coachId, amount, paymentDate, note } = req.body;
+  if (!uid || !paymentMethod) {
+    throw new BadRequestError(
+      "INVALID_REQUEST",
+      "uid and paymentMethod are required",
+    );
+  }
+  if (!coachId) {
+    throw new BadRequestError(
+      "COACH_REQUIRED",
+      "Trainer is required for Personal Training drop-in",
+    );
+  }
+  const locationId = resolveLocationIdForWrite(req);
+  const io = req.app.get("io");
+  await BookingsService.recordAdminPtMemberDropIn(
+    uid,
+    paymentMethod,
+    io,
+    locationId,
+    coachId,
+    amount !== undefined ? Number(amount) : undefined,
+    paymentDate,
+    note,
+  );
+  new SuccessResponse("Personal training drop-in recorded").send(res);
+});
+
+export const recordPtGuestDropIn = asyncHandler(async function (
+  req: Request,
+  res: Response
+): Promise<void> {
+  const { name, phoneNumber, paymentMethod, coachId, amount, paymentDate, note } = req.body;
+  if (!name || !phoneNumber || !paymentMethod) {
+    throw new BadRequestError(
+      "INVALID_REQUEST",
+      "name, phoneNumber, and paymentMethod are required",
+    );
+  }
+  if (!coachId) {
+    throw new BadRequestError(
+      "COACH_REQUIRED",
+      "Trainer is required for Personal Training drop-in",
+    );
+  }
+  const locationId = resolveLocationIdForWrite(req);
+  const io = req.app.get("io");
+  await BookingsService.recordAdminPtGuestDropIn(
+    name,
+    phoneNumber,
+    paymentMethod,
+    io,
+    locationId,
+    coachId,
+    amount !== undefined ? Number(amount) : undefined,
+    paymentDate,
+    note,
+  );
+  new SuccessResponse("Guest personal training drop-in recorded").send(res);
+});
+
 export const cancelBooking = asyncHandler(async function (
   req: Request,
   res: Response
