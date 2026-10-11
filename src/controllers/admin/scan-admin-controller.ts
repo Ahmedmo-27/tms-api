@@ -66,6 +66,10 @@ export const updateScanRow = asyncHandler(async function (
       pkgId,
       time,
       status,
+      guestName,
+      guestPhone,
+      name,
+      phoneNumber,
     });
     const io = req.app.get("io");
     if (io) {

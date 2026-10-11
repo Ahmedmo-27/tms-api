@@ -585,6 +585,10 @@ export class ScanAdminService {
         pkgId: changes.pkgId,
         time: changes.time,
         status: changes.status,
+        guestName: changes.guestName,
+        guestPhone: changes.guestPhone,
+        name: changes.name,
+        phoneNumber: changes.phoneNumber,
       });
     }
 
@@ -909,6 +913,10 @@ export class ScanAdminService {
       pkgId?: string;
       time?: string | Date;
       status?: "SUCCESS" | "FAILED" | "WILL_PAY";
+      guestName?: string;
+      guestPhone?: string;
+      name?: string;
+      phoneNumber?: string;
     } = {},
   ): Promise<ScanRowView> {
     const targetObjectId = toObjectId(targetScid, "targetScid");
@@ -941,6 +949,24 @@ export class ScanAdminService {
             await ScheduledClass.bookNonUser(targetScid, session, true);
           }
           row.scid = targetObjectId;
+          const effectiveName = options.guestName ?? options.name;
+          const effectivePhone = options.guestPhone ?? options.phoneNumber;
+          if (effectiveName !== undefined) {
+            row.name = effectiveName;
+            if (row.paymentId) {
+              await Payment.findByIdAndUpdate(row.paymentId, {
+                nonMemberName: effectiveName,
+              }).session(session);
+            }
+          }
+          if (effectivePhone !== undefined) {
+            row.phoneNumber = effectivePhone;
+            if (row.paymentId) {
+              await Payment.findByIdAndUpdate(row.paymentId, {
+                nonMemberPhone: effectivePhone,
+              }).session(session);
+            }
+          }
           if (options.time) row.attendanceTime = new Date(options.time);
           if (options.status) {
             row.status =
