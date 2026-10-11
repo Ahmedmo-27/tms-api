@@ -164,29 +164,29 @@ adminRoutes.get(
   getPendingMembers
 );
 
-// User & Account Management Routes (Management Only)
+// User & Account Management Routes (Management & Branch Admin)
 adminRoutes.get(
   "/users",
   authenticateUser,
-  authorizeUser(["management"]),
+  authorizeUser(["management", "branch_admin"]),
   listUsers
 );
 adminRoutes.post(
   "/users",
   authenticateUser,
-  authorizeUser(["management"]),
+  authorizeUser(["management", "branch_admin"]),
   createUser
 );
 adminRoutes.patch(
   "/users/:id",
   authenticateUser,
-  authorizeUser(["management"]),
+  authorizeUser(["management", "branch_admin"]),
   updateUser
 );
 adminRoutes.delete(
   "/users/:id",
   authenticateUser,
-  authorizeUser(["management"]),
+  authorizeUser(["management", "branch_admin"]),
   deleteUser
 );
 
@@ -654,7 +654,7 @@ adminRoutes.get(
 adminRoutes.patch(
   "/payments/:id",
   authenticateUser,
-  authorizeUser(["management"]),
+  authorizeUser(["management", "branch_admin"]),
   updatePayment
 );
 adminRoutes.delete(
