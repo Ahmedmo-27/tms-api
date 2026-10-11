@@ -10,14 +10,46 @@ import { SchedulerService } from "../../services/scheduler-service";
 import ScheduledClass from "../../models/scheduledClass";
 import { parseScanPayload } from "../../utils/scan-payload";
 import { getInvalidQrCodeMessage } from "../../utils/error-messages";
+import {
+  AppVersionRequest,
+  buildScheduleUpdateBannerItem,
+  UPDATE_REMINDER_MESSAGE,
+  withUpdateReminder,
+} from "../../middlewares/appVersion.middleware";
+
+function sendAttendanceSuccess(req: Request, res: Response): void {
+  const versionReq = req as AppVersionRequest;
+  if (versionReq.isOutdatedMobileApp) {
+    res.status(200).json({
+      statusCode: 200,
+      message: withUpdateReminder(req, "Class Attended!"),
+      media_type: "application/json",
+      data: {
+        status: true,
+        title: "Class Attended Successfully",
+        desc: UPDATE_REMINDER_MESSAGE,
+      },
+    });
+    return;
+  }
+  new SuccessResponse("Class Attended!").send(res);
+}
+
 export const getSchedule = asyncHandler(async function (
   req: Request,
   res: Response
 ): Promise<void> {
   const date = req.query.date;
   const scheduleData = await SchedulerService.getSchedule(date as string);
+  const versionReq = req as AppVersionRequest;
+  const responseSchedule = versionReq.isOutdatedMobileApp
+    ? [
+        buildScheduleUpdateBannerItem(date as string, false, scheduleData),
+        ...scheduleData,
+      ]
+    : scheduleData;
 
-  new SuccessResponse("Scheduled Classes Found!", scheduleData).send(res);
+  new SuccessResponse("Scheduled Classes Found!", responseSchedule).send(res);
 });
 
 export const getBookings = asyncHandler(async function (
@@ -60,8 +92,12 @@ export const bookClass = asyncHandler(async function (
   const authReq = req as AuthRequest;
   const uid = authReq.user._id as string;
   const scid = req.params.scid;
+  if (scid === "app_update_reminder" || scid === "app_update_required") {
+    new SuccessResponse(UPDATE_REMINDER_MESSAGE).send(res);
+    return;
+  }
   const result = await BookingsService.addBooking(uid, scid, false, "member");
-  new SuccessResponse("Class Booked!", {
+  new SuccessResponse(withUpdateReminder(req, "Class Booked!"), {
     usesPackageSession: result.usesPackageSession,
     cancellationDeadline: result.cancellationDeadline.toISOString(),
   }).send(res);
@@ -75,7 +111,7 @@ export const bookDropIn = asyncHandler(async function (
   const uid = authReq.user._id as string;
   const { scid, merchantReferenceId, promoCode } = req.body;
   await BookingsService.bookDropIn(uid, scid, merchantReferenceId, promoCode);
-  new SuccessResponse("Class Booked!").send(res);
+  new SuccessResponse(withUpdateReminder(req, "Class Booked!")).send(res);
 });
 
 export const subToWaitingList = asyncHandler(async function (
@@ -85,8 +121,12 @@ export const subToWaitingList = asyncHandler(async function (
   const authReq = req as AuthRequest;
   const uid = authReq.user._id as string;
   const { fcmToken, scid } = req.body;
+  if (scid === "app_update_reminder" || scid === "app_update_required") {
+    new SuccessResponse(UPDATE_REMINDER_MESSAGE).send(res);
+    return;
+  }
   await BookingsService.addMemberToWaitingList(uid, fcmToken, scid);
-  new SuccessResponse("Subscribed To Waiting List!").send(res);
+  new SuccessResponse(withUpdateReminder(req, "Subscribed To Waiting List!")).send(res);
 });
 
 export const cancelDropIn = asyncHandler(async function (
@@ -97,7 +137,7 @@ export const cancelDropIn = asyncHandler(async function (
   const uid = authReq.user._id as string;
   const scid = req.params.scid;
   await BookingsService.cancelDropIn(uid, scid);
-  new SuccessResponse("Class Canceled!").send(res);
+  new SuccessResponse(withUpdateReminder(req, "Class Canceled!")).send(res);
 });
 
 export const attendClass = asyncHandler(async function (
@@ -112,19 +152,19 @@ export const attendClass = asyncHandler(async function (
 
   if (payload.type === "pt") {
     await BookingsService.recordPtAttendance(_id, io);
-    new SuccessResponse("Class Attended!").send(res);
+    sendAttendanceSuccess(req, res);
     return;
   }
 
   if (payload.type === "branch_pt") {
     await BookingsService.recordPtAttendance(_id, io, payload.locationId);
-    new SuccessResponse("Class Attended!").send(res);
+    sendAttendanceSuccess(req, res);
     return;
   }
 
   if (payload.type === "legacy_open_gym") {
     await BookingsService.recordLegacyOpenGymAttendance(_id, io);
-    new SuccessResponse("Class Attended!").send(res);
+    sendAttendanceSuccess(req, res);
     return;
   }
 
@@ -134,7 +174,7 @@ export const attendClass = asyncHandler(async function (
       io,
       payload.locationId,
     );
-    new SuccessResponse("Class Attended!").send(res);
+    sendAttendanceSuccess(req, res);
     return;
   }
 
@@ -148,7 +188,7 @@ export const attendClass = asyncHandler(async function (
         payload.scheduledClassId,
         io,
       );
-      new SuccessResponse("Class Attended!").send(res);
+      sendAttendanceSuccess(req, res);
       return;
     }
 
@@ -178,5 +218,5 @@ export const cancelClass = asyncHandler(async function (
   const message = result.lateCancellation
     ? "Booking cancelled. Since it was within 3 hours of the class, the session was still deducted from your package."
     : "Class Canceled!";
-  new SuccessResponse(message, result).send(res);
+  new SuccessResponse(withUpdateReminder(req, message), result).send(res);
 });

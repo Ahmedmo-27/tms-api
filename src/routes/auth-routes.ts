@@ -10,6 +10,7 @@ import {
   confirmPasswordReset,
   verifyToken,
   registerUserManually,
+  getAppVersionInfo,
 } from "../controllers/auth/auth-controller";
 import {
   authorizeUser,
@@ -23,6 +24,7 @@ import {
 
 const authRoutes = express.Router();
 
+authRoutes.get("/app-version", getAppVersionInfo);
 authRoutes.get("/", authenticateUser, authorizeUser(["management", "branch_admin"]), getUser);
 authRoutes.delete(
   "/",
