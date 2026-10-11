@@ -11,6 +11,8 @@ export interface IDailyAttendance extends Document {
       method: string;
       status: "SUCCESS" | "FAILED";
       locationId?: mongoose.Types.ObjectId;
+      /** Catalog package the visit was charged to; absent on rows predating this field. */
+      pkgId?: mongoose.Types.ObjectId;
     }
   ];
   openGymAttendance: [
@@ -22,6 +24,8 @@ export interface IDailyAttendance extends Document {
       method: string;
       status: "SUCCESS" | "FAILED";
       locationId?: mongoose.Types.ObjectId;
+      /** Catalog package the visit was charged to; absent on rows predating this field. */
+      pkgId?: mongoose.Types.ObjectId;
     }
   ];
 }
@@ -33,7 +37,8 @@ type DailyAttendanceModel = Model<IDailyAttendance> & {
     session: ClientSession,
     status: "SUCCESS" | "FAILED",
     io: Server,
-    locationId?: string
+    locationId?: string,
+    pkgId?: string
   ): Promise<void>;
   recordOpenGymAttendance(
     uid: string,
@@ -43,6 +48,7 @@ type DailyAttendanceModel = Model<IDailyAttendance> & {
     io: Server,
     locationId?: string,
     at?: Date,
+    pkgId?: string,
   ): Promise<void>;
   recordOpenGymGuestAttendance(
     guestName: string,
@@ -79,6 +85,7 @@ const DailyAttendanceSchema: Schema<IDailyAttendance, DailyAttendanceModel> =
         method: { type: String, required: true },
         status: { type: String, enum: ["SUCCESS", "FAILED"], default: "SUCCESS" },
         locationId: { type: Schema.Types.ObjectId, ref: "Location", default: null },
+        pkgId: { type: Schema.Types.ObjectId, ref: "Package", default: null },
       },
     ],
     openGymAttendance: [
@@ -90,6 +97,7 @@ const DailyAttendanceSchema: Schema<IDailyAttendance, DailyAttendanceModel> =
         method: { type: String, required: true },
         status: { type: String, enum: ["SUCCESS", "FAILED"], default: "SUCCESS" },
         locationId: { type: Schema.Types.ObjectId, ref: "Location", default: null },
+        pkgId: { type: Schema.Types.ObjectId, ref: "Package", default: null },
       },
     ],
   });
@@ -102,7 +110,8 @@ DailyAttendanceSchema.static(
     session: ClientSession,
     status: "SUCCESS" | "FAILED",
     io: Server,
-    locationId?: string
+    locationId?: string,
+    pkgId?: string
   ): Promise<void> {
     const startOfDay = new Date();
     startOfDay.setUTCHours(0, 0, 0, 0);
@@ -134,6 +143,7 @@ DailyAttendanceSchema.static(
             time: new Date(),
             status,
             locationId: locationId ? new mongoose.Types.ObjectId(locationId) : null,
+            pkgId: pkgId ? new mongoose.Types.ObjectId(pkgId) : null,
           },
         },
       },
@@ -237,6 +247,7 @@ DailyAttendanceSchema.static(
     io: Server,
     locationId?: string,
     at?: Date,
+    pkgId?: string,
   ): Promise<void> {
     const recordedAt = at ?? new Date();
     const { start: startOfDay, end: endOfDay } = utcDayBounds(recordedAt);
@@ -281,6 +292,7 @@ DailyAttendanceSchema.static(
             time: recordedAt,
             status,
             locationId: locationId ? new mongoose.Types.ObjectId(locationId) : null,
+            pkgId: pkgId ? new mongoose.Types.ObjectId(pkgId) : null,
           },
         },
       },

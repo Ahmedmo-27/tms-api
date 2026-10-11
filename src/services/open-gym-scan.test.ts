@@ -69,6 +69,8 @@ describe("BookingsService branch open gym scans", () => {
       "SUCCESS",
       io,
       branchA,
+      undefined, // no explicit timestamp
+      expect.any(String), // package charged, recorded for later corrections
     );
     expect(io.emit).toHaveBeenCalledWith(
       "SUCCESS-SCAN",
@@ -237,6 +239,8 @@ describe("BookingsService branch open gym scans", () => {
       "SUCCESS",
       io,
       branchA,
+      undefined, // no explicit timestamp
+      expect.any(String), // package charged, recorded for later corrections
     );
   });
 });

@@ -689,6 +689,7 @@ export class BookingsService {
         "SUCCESS",
         io,
         locationId,
+        pid,
       );
       io.emit("SUCCESS-SCAN", {
         code: "PT_CLASS_ATTENDED",
@@ -915,6 +916,8 @@ export class BookingsService {
         "SUCCESS",
         io,
         locationId,
+        undefined,
+        pid,
       );
       io.emit("SUCCESS-SCAN", {
         code: "OPEN_GYM_CLASS_ATTENDED",

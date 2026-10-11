@@ -1,0 +1,348 @@
+import { Types } from "mongoose";
+import { ScanAdminService } from "./scan-admin-service";
+import Member from "../models/member";
+import DailyAttendance from "../models/dailyAttendance";
+import ScheduledClass from "../models/scheduledClass";
+import Package from "../models/package";
+import User from "../models/user";
+
+jest.mock("../models/member");
+jest.mock("../models/dailyAttendance");
+jest.mock("../models/scheduledClass");
+// Keep the real category helpers — the service asks them what a visit costs —
+// while still stubbing the model itself.
+jest.mock("../models/package", () => {
+  const actual = jest.requireActual("../models/package");
+  return {
+    __esModule: true,
+    ...actual,
+    default: { findById: jest.fn(), findOne: jest.fn() },
+  };
+});
+jest.mock("../models/user");
+jest.mock("../utils/transaction", () => ({
+  runInTransaction: jest.fn(async (fn: (s: unknown) => Promise<unknown>) =>
+    fn({} as unknown),
+  ),
+}));
+jest.mock("../config/logger", () => ({
+  info: jest.fn(),
+  error: jest.fn(),
+  warn: jest.fn(),
+}));
+
+const uidA = new Types.ObjectId().toString();
+const uidB = new Types.ObjectId().toString();
+const ptPkgId = new Types.ObjectId().toString();
+const otherPkgId = new Types.ObjectId().toString();
+const dayId = new Types.ObjectId().toString();
+const scid = new Types.ObjectId().toString();
+const rowId = new Types.ObjectId().toString();
+
+/** Minimal stand-in for a member package subdocument. */
+function makePackage(pkgId: string, remaining: number, name = "20 PT") {
+  return {
+    pkgId: new Types.ObjectId(pkgId),
+    name,
+    pkgStartDate: new Date("2026-09-01T12:00:00Z"),
+    pkgEndDate: new Date("2026-12-01T12:00:00Z"),
+    status: "ACTIVE",
+    remainingClasses: remaining,
+    adjustmentHistory: [] as any[],
+  };
+}
+
+function makeMember(uid: string, packages: any[]) {
+  return { uid, packages, save: jest.fn().mockResolvedValue(undefined) };
+}
+
+/** Parent document whose subdocument array behaves like a Mongoose DocumentArray. */
+function makeDay(arrayPath: "ptAttendance" | "openGymAttendance", row: any) {
+  const arr: any = [row];
+  arr.id = (id: string) => (row._id.toString() === id ? row : null);
+  arr.pull = jest.fn();
+  return { _id: new Types.ObjectId(dayId), [arrayPath]: arr, save: jest.fn() };
+}
+
+function ptRow(overrides: Record<string, unknown> = {}) {
+  return {
+    _id: new Types.ObjectId(rowId),
+    uid: new Types.ObjectId(uidA),
+    pkgId: new Types.ObjectId(ptPkgId),
+    method: "20 PT",
+    time: new Date("2026-10-10T16:00:00Z"),
+    status: "SUCCESS",
+    ...overrides,
+  };
+}
+
+/** Both call sites read the catalog as findById(id).select(...).session(...). */
+function mockCatalog(category: string, name = "20 PT") {
+  (Package.findById as jest.Mock).mockReturnValue({
+    select: jest.fn().mockReturnValue({
+      session: jest
+        .fn()
+        .mockResolvedValue({ _id: new Types.ObjectId(ptPkgId), category, name }),
+    }),
+  });
+}
+
+function mockLegacyLookup(found: string | null) {
+  (Package.findOne as jest.Mock).mockReturnValue({
+    select: jest.fn().mockReturnValue({
+      session: jest
+        .fn()
+        .mockResolvedValue(found ? { _id: new Types.ObjectId(found) } : null),
+    }),
+  });
+}
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  (Member.updateOne as jest.Mock).mockResolvedValue({ matchedCount: 1 });
+  mockCatalog("PERSONAL_TRAINING");
+  mockLegacyLookup(null);
+});
+
+describe("ScanAdminService.deleteScanRow", () => {
+  it("returns the session and clears the attendance mark for a SUCCESS PT row", async () => {
+    const row = ptRow();
+    const day = makeDay("ptAttendance", row);
+    (DailyAttendance.findById as jest.Mock).mockReturnValue({
+      session: jest.fn().mockResolvedValue(day),
+    });
+    const pkg = makePackage(ptPkgId, 4);
+    const member = makeMember(uidA, [pkg]);
+    (Member.findOne as jest.Mock).mockReturnValue({
+      session: jest.fn().mockResolvedValue(member),
+    });
+
+    await ScanAdminService.deleteScanRow({
+      source: "pt",
+      parentId: dayId,
+      rowId,
+    });
+
+    expect(pkg.remainingClasses).toBe(5);
+    expect(pkg.adjustmentHistory).toHaveLength(1);
+    expect(pkg.adjustmentHistory[0]).toMatchObject({
+      type: "ADD",
+      amount: 1,
+      source: "ADMIN",
+    });
+    // The member's own PT attendance entry goes too, so they can re-scan today.
+    expect(Member.updateOne).toHaveBeenCalledWith(
+      { uid: uidA },
+      expect.objectContaining({ $pull: expect.objectContaining({ ptAttendance: expect.anything() }) }),
+      expect.anything(),
+    );
+    expect(day.ptAttendance.pull).toHaveBeenCalled();
+    expect(day.save).toHaveBeenCalled();
+  });
+
+  it("leaves balances alone when the row was a FAILED scan", async () => {
+    const row = ptRow({ status: "FAILED" });
+    const day = makeDay("ptAttendance", row);
+    (DailyAttendance.findById as jest.Mock).mockReturnValue({
+      session: jest.fn().mockResolvedValue(day),
+    });
+
+    await ScanAdminService.deleteScanRow({ source: "pt", parentId: dayId, rowId });
+
+    expect(Member.findOne).not.toHaveBeenCalled();
+    expect(day.ptAttendance.pull).toHaveBeenCalled();
+  });
+
+  it("skips the refund when restoreSession is false", async () => {
+    const row = ptRow();
+    const day = makeDay("ptAttendance", row);
+    (DailyAttendance.findById as jest.Mock).mockReturnValue({
+      session: jest.fn().mockResolvedValue(day),
+    });
+
+    await ScanAdminService.deleteScanRow(
+      { source: "pt", parentId: dayId, rowId },
+      { restoreSession: false },
+    );
+
+    expect(Member.findOne).not.toHaveBeenCalled();
+    expect(day.ptAttendance.pull).toHaveBeenCalled();
+  });
+
+  it("does not refund an unlimited space-access package", async () => {
+    mockCatalog("OPEN_GYM", "Ultimate Mindspacer");
+    const row = ptRow({ method: "Ultimate Mindspacer" });
+    const day = makeDay("openGymAttendance", row);
+    (DailyAttendance.findById as jest.Mock).mockReturnValue({
+      session: jest.fn().mockResolvedValue(day),
+    });
+
+    await ScanAdminService.deleteScanRow({
+      source: "open-gym",
+      parentId: dayId,
+      rowId,
+    });
+
+    // Unlimited visits cost nothing, so there is no credit to give back.
+    expect(Member.findOne).not.toHaveBeenCalled();
+    expect(day.openGymAttendance.pull).toHaveBeenCalled();
+  });
+
+  it("drops a class attendance mark without touching the booking's credit", async () => {
+    const scanRow = {
+      _id: new Types.ObjectId(rowId),
+      uid: new Types.ObjectId(uidA),
+      method: "20 Functional Training",
+      scanTime: new Date("2026-10-10T16:00:00Z"),
+      status: true,
+    };
+    const arr: any = [scanRow];
+    arr.id = (id: string) => (scanRow._id.toString() === id ? scanRow : null);
+    arr.pull = jest.fn();
+    const cls = { _id: new Types.ObjectId(scid), scans: arr, save: jest.fn() };
+    (ScheduledClass.findById as jest.Mock).mockReturnValue({
+      session: jest.fn().mockResolvedValue(cls),
+    });
+
+    await ScanAdminService.deleteScanRow({
+      source: "class",
+      parentId: scid,
+      rowId,
+    });
+
+    expect(Member.updateOne).toHaveBeenCalledWith(
+      { uid: uidA },
+      { $pull: { attendance: { scid: new Types.ObjectId(scid) } } },
+      expect.anything(),
+    );
+    // No package lookup: the class credit was spent at booking time.
+    expect(Member.findOne).not.toHaveBeenCalled();
+    expect(arr.pull).toHaveBeenCalled();
+  });
+});
+
+describe("ScanAdminService.updateScanRow", () => {
+  it("moves the session when the row is reassigned to another member", async () => {
+    const row = ptRow();
+    const day = makeDay("ptAttendance", row);
+    (DailyAttendance.findById as jest.Mock).mockReturnValue({
+      session: jest.fn().mockResolvedValue(day),
+    });
+
+    const pkgA = makePackage(ptPkgId, 4);
+    const pkgB = makePackage(otherPkgId, 9, "10 PT with Zeina Tarek");
+    const memberA = makeMember(uidA, [pkgA]);
+    const memberB = makeMember(uidB, [pkgB]);
+    (Member.findOne as jest.Mock).mockImplementation(({ uid }: { uid: string }) => ({
+      session: jest.fn().mockResolvedValue(uid === uidA ? memberA : memberB),
+    }));
+    (User.findById as jest.Mock).mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        session: jest.fn().mockResolvedValue({ _id: new Types.ObjectId(uidB) }),
+      }),
+    });
+
+    await ScanAdminService.updateScanRow(
+      { source: "pt", parentId: dayId, rowId },
+      { uid: uidB, pkgId: otherPkgId },
+    );
+
+    expect(pkgA.remainingClasses).toBe(5); // wrong member made whole
+    expect(pkgB.remainingClasses).toBe(8); // right member charged
+    expect(day.save).toHaveBeenCalled();
+  });
+
+  it("refuses a reassignment that does not say which package to charge", async () => {
+    const row = ptRow();
+    const day = makeDay("ptAttendance", row);
+    (DailyAttendance.findById as jest.Mock).mockReturnValue({
+      session: jest.fn().mockResolvedValue(day),
+    });
+
+    await expect(
+      ScanAdminService.updateScanRow(
+        { source: "pt", parentId: dayId, rowId },
+        { uid: uidB },
+      ),
+    ).rejects.toThrow(/which of the new member's packages/i);
+  });
+
+  it("returns the session when a row is flipped from SUCCESS to FAILED", async () => {
+    const row = ptRow();
+    const day = makeDay("ptAttendance", row);
+    (DailyAttendance.findById as jest.Mock).mockReturnValue({
+      session: jest.fn().mockResolvedValue(day),
+    });
+    const pkg = makePackage(ptPkgId, 4);
+    (Member.findOne as jest.Mock).mockReturnValue({
+      session: jest.fn().mockResolvedValue(makeMember(uidA, [pkg])),
+    });
+
+    await ScanAdminService.updateScanRow(
+      { source: "pt", parentId: dayId, rowId },
+      { status: "FAILED" },
+    );
+
+    expect(pkg.remainingClasses).toBe(5);
+    expect(row.status).toBe("FAILED");
+  });
+
+  it("changes only the timestamp without moving any credit", async () => {
+    const row = ptRow();
+    const day = makeDay("ptAttendance", row);
+    (DailyAttendance.findById as jest.Mock).mockReturnValue({
+      session: jest.fn().mockResolvedValue(day),
+    });
+
+    await ScanAdminService.updateScanRow(
+      { source: "pt", parentId: dayId, rowId },
+      { time: "2026-10-10T18:30:00Z" },
+    );
+
+    expect(row.time).toEqual(new Date("2026-10-10T18:30:00Z"));
+    expect(Member.findOne).not.toHaveBeenCalled();
+  });
+
+  it("rejects guest fields on a non-open-gym row", async () => {
+    await expect(
+      ScanAdminService.updateScanRow(
+        { source: "pt", parentId: dayId, rowId },
+        { guestName: "Walk In" },
+      ),
+    ).rejects.toThrow(/open gym/i);
+  });
+});
+
+describe("ScanAdminService legacy rows", () => {
+  it("resolves the package by name so an old row still refunds", async () => {
+    // Rows recorded before pkgId was stored carry only the package name.
+    mockLegacyLookup(ptPkgId);
+    const row = ptRow({ pkgId: undefined });
+    const day = makeDay("ptAttendance", row);
+    (DailyAttendance.findById as jest.Mock).mockReturnValue({
+      session: jest.fn().mockResolvedValue(day),
+    });
+    const pkg = makePackage(ptPkgId, 4);
+    (Member.findOne as jest.Mock).mockReturnValue({
+      session: jest.fn().mockResolvedValue(makeMember(uidA, [pkg])),
+    });
+
+    await ScanAdminService.deleteScanRow({ source: "pt", parentId: dayId, rowId });
+
+    expect(Package.findOne).toHaveBeenCalledWith({ name: "20 PT" });
+    expect(pkg.remainingClasses).toBe(5);
+  });
+
+  it("still removes the row when the package name matches nothing", async () => {
+    const row = ptRow({ pkgId: undefined, method: "Deleted Package" });
+    const day = makeDay("ptAttendance", row);
+    (DailyAttendance.findById as jest.Mock).mockReturnValue({
+      session: jest.fn().mockResolvedValue(day),
+    });
+
+    await ScanAdminService.deleteScanRow({ source: "pt", parentId: dayId, rowId });
+
+    expect(day.ptAttendance.pull).toHaveBeenCalled();
+    expect(Member.findOne).not.toHaveBeenCalled();
+  });
+});

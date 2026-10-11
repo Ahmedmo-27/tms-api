@@ -71,6 +71,11 @@ import {
 import { addMember, getMember } from "../controllers/admin/member-controller";
 import { getAttendanceHistory } from "../controllers/admin/attendance-controller";
 import {
+  deleteScanRow,
+  getScanRow,
+  updateScanRow,
+} from "../controllers/admin/scan-admin-controller";
+import {
   getPendingMembers,
   listUsers,
   createUser,
@@ -313,6 +318,29 @@ adminRoutes.delete(
   authenticateUser,
   authorizeUser(["management", "branch_admin"]),
   removeFailedScan
+);
+
+// Scans Monitor row corrections. :source is class | pt | open-gym, :parentId is
+// the scheduled class (class) or the daily attendance document (pt, open-gym).
+adminRoutes.get(
+  "/scans/:source/:parentId/:rowId",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  getScanRow
+);
+
+adminRoutes.patch(
+  "/scans/:source/:parentId/:rowId",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  updateScanRow
+);
+
+adminRoutes.delete(
+  "/scans/:source/:parentId/:rowId",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  deleteScanRow
 );
 
 adminRoutes.post(
