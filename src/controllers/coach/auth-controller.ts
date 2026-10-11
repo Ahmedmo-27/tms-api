@@ -41,8 +41,7 @@ export const coachLogin = asyncHandler(
     if (coachDoc) {
       const coachDocId = coachDoc._id as Types.ObjectId;
       const coachUserId = user._id as Types.ObjectId;
-      const ptPackagesCount = await Package.countDocuments({ coachId: coachDocId });
-      hasPtSessions = ptPackagesCount > 0;
+      hasPtSessions = await CoachService.hasCoachPtCapability(coachDocId, coachUserId);
 
       const { objectIds, stringIds } = await CoachService.getCoachLookupIds(coachDocId, coachUserId);
       const scheduledClassesCount = await ScheduledClass.countDocuments({

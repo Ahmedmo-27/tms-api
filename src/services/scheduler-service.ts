@@ -9,6 +9,7 @@ import Class from "../models/class";
 import Location from "../models/location";
 import Schedule from "../models/schedule";
 import ScheduledClass from "../models/scheduledClass";
+import NonUserBooking from "../models/nonUserBookings";
 import DailyAttendance from "../models/dailyAttendance";
 import { IScheduledClass } from "../models/scheduledClass";
 import { ClientSession, Types } from "mongoose";
@@ -550,8 +551,13 @@ export class SchedulerService {
     }
 
     const count = Math.max(0, Math.floor(Number(data.confirmedCount) || 0));
-    // Compare against actual scanned-in members (SUCCESS scans), not bookings
-    const successScanCount = scheduledClass.scans.filter((s: any) => s.status === true).length;
+    // Compare against actual scanned-in attendees (member SUCCESS scans + attended/paid Walk-Ins)
+    const memberSuccessScanCount = scheduledClass.scans.filter((s: any) => s.status === true).length;
+    const walkInAttendedCount = await NonUserBooking.countDocuments({
+      scid: scheduledClass._id,
+      status: { $in: ["ATTENDED", "PAID"] },
+    });
+    const successScanCount = memberSuccessScanCount + walkInAttendedCount;
     const hasMissingPlace =
       typeof data.hasMissingPlace === "boolean"
         ? data.hasMissingPlace

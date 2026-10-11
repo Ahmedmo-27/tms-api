@@ -4,6 +4,7 @@ import { SuccessResponse } from "../../core/ApiResponse";
 import {
   BadRequestError,
   ConflictError,
+  ForbiddenError,
   NotFoundError,
 } from "../../core/ApiError";
 import User from "../../models/user";
@@ -17,6 +18,7 @@ import { assertPasswordStrength } from "../auth/auth-controller";
 import { SubscriptionsService } from "../../services/subscriptions-service";
 import { runInTransaction } from "../../utils/transaction";
 import { AuthRequest } from "../../middlewares/auth.middleware";
+import { isBranchScopedRole, normalizeRole } from "../../utils/location-scope";
 
 const USER_SAFE_SELECT = "-password -tokens -resetCode -fcmTokens";
 
@@ -214,6 +216,15 @@ export const createUser = asyncHandler(
       throw new BadRequestError("INVALID_ROLE", `Role '${role}' is not valid`);
     }
 
+    const authReq = req as AuthRequest;
+    const callerRole = normalizeRole(authReq.user?.role);
+    if (isBranchScopedRole(callerRole) && (role === "management" || role === "admin")) {
+      throw new ForbiddenError(
+        "INSUFFICIENT_PERMISSIONS",
+        "Branch admins cannot create management accounts"
+      );
+    }
+
     const cleanPhone = normalizePhoneNumber(phoneNumber);
     if (!/^\d{11}$/.test(cleanPhone)) {
       throw new BadRequestError(
@@ -337,6 +348,23 @@ export const updateUser = asyncHandler(
     const user = await User.findById(id);
     if (!user) {
       throw new NotFoundError("USER_NOT_FOUND", "User account not found");
+    }
+
+    const authReq = req as AuthRequest;
+    const callerRole = normalizeRole(authReq.user?.role);
+    if (isBranchScopedRole(callerRole)) {
+      if (user.role === "management" || user.role === "admin") {
+        throw new ForbiddenError(
+          "INSUFFICIENT_PERMISSIONS",
+          "Branch admins cannot modify management accounts"
+        );
+      }
+      if (req.body?.role !== undefined && (req.body.role === "management" || req.body.role === "admin")) {
+        throw new ForbiddenError(
+          "INSUFFICIENT_PERMISSIONS",
+          "Branch admins cannot update an account's status to management"
+        );
+      }
     }
 
     const {
@@ -473,7 +501,8 @@ export const deleteUser = asyncHandler(
     }
 
     const authReq = req as AuthRequest;
-    if (authReq.user && (authReq.user._id as Types.ObjectId).toString() === id) {
+    const callerRole = normalizeRole(authReq.user?.role);
+    if (authReq.user?._id && authReq.user._id.toString() === id) {
       throw new BadRequestError(
         "CANNOT_DELETE_SELF",
         "You cannot delete your own account"
@@ -483,6 +512,15 @@ export const deleteUser = asyncHandler(
     const user = await User.findById(id);
     if (!user) {
       throw new NotFoundError("USER_NOT_FOUND", "User account not found");
+    }
+
+    if (isBranchScopedRole(callerRole)) {
+      if (user.role === "management" || user.role === "admin") {
+        throw new ForbiddenError(
+          "INSUFFICIENT_PERMISSIONS",
+          "Branch admins cannot delete management accounts"
+        );
+      }
     }
 
     await Coach.updateMany({ userId: user._id }, { $unset: { userId: 1 } });

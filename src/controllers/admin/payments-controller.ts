@@ -2,9 +2,10 @@ import asyncHandler from "../../utils/asyncHandler";
 import { Request, Response } from "express";
 import { SuccessResponse } from "../../core/ApiResponse";
 import { PaymentsService } from "../../services/payments-service";
-import { BadRequestError, ForbiddenError, InternalError } from "../../core/ApiError";
-import { resolveLocationFilter } from "../../utils/location-scope";
+import { BadRequestError, ForbiddenError, InternalError, NotFoundError } from "../../core/ApiError";
+import { resolveLocationFilter, normalizeRole, isBranchScopedRole } from "../../utils/location-scope";
 import { Types } from "mongoose";
+import Payment from "../../models/payment";
 
 export const getPayments = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
@@ -74,6 +75,37 @@ export const updatePayment = asyncHandler(
     const { id } = req.params;
     if (!id || !Types.ObjectId.isValid(id)) {
       throw new BadRequestError("INVALID_PAYMENT_ID", "Please provide a valid payment ID");
+    }
+
+    const user = (req as any).user;
+    const callerRole = normalizeRole(user?.role);
+    const userLocationId = user?.locationId?.toString() ?? null;
+
+    if (isBranchScopedRole(callerRole)) {
+      if (!userLocationId) {
+        throw new ForbiddenError("FORBIDDEN", "No branch assigned to this account");
+      }
+      const existingPayment = await Payment.findById(id).select("locationId");
+      if (!existingPayment) {
+        throw new NotFoundError("PAYMENT_NOT_FOUND", "Payment not found");
+      }
+      if (existingPayment.locationId?.toString() !== userLocationId) {
+        throw new ForbiddenError(
+          "INSUFFICIENT_PERMISSIONS",
+          "You can only edit payments belonging to your assigned branch"
+        );
+      }
+      if (
+        req.body?.locationId !== undefined &&
+        req.body?.locationId !== null &&
+        req.body?.locationId !== "" &&
+        req.body?.locationId.toString() !== userLocationId
+      ) {
+        throw new ForbiddenError(
+          "INSUFFICIENT_PERMISSIONS",
+          "You cannot reassign payments to another branch"
+        );
+      }
     }
 
     const {
