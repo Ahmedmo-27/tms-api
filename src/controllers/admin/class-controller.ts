@@ -19,6 +19,7 @@ import { Types } from "mongoose";
 import { runInTransaction } from "../../utils/transaction";
 import { ClientSession } from "mongoose";
 import logger from "../../config/logger";
+import { clearFinanceCache } from "../../services/finance-service";
 import {
   locationIdsArrayQuery,
   resolveLocationFilter,
@@ -87,6 +88,7 @@ export const addClass = asyncHandler(
       );
     const cls = new Class({ title, category, price, locations: finalLocations, points, allowDropIn });
     await cls.save();
+    clearFinanceCache();
     new SuccessResponse("Class Added!", cls).send(res);
   }
 );
@@ -147,18 +149,25 @@ export const updateClass = asyncHandler(async function (
   );
   if (!isValidUpdate)
     throw new BadRequestError("INVALID_UPDATES", "Invalid updates");
-  const scheduledClasses = await ScheduledClass.find({ cid });
-  if (scheduledClasses.length > 0) {
-    throw new ConflictError(
-      "HAS_SCHEDULED_CLASSES",
-      "Class has scheduled classes"
-    );
-  }
-  
+
   const finalLocationsRaw = locations !== undefined ? locations : location;
   const finalLocations = await processLocations(finalLocationsRaw);
 
-  const updateData: any = { title, category, price, points, allowDropIn };
+  const parsedPrice =
+    price !== undefined && price !== null && price !== ""
+      ? Number(price)
+      : undefined;
+  if (parsedPrice !== undefined && isNaN(parsedPrice)) {
+    throw new BadRequestError("INVALID_PRICE", "Price must be a valid number");
+  }
+
+  const updateData: any = {
+    title,
+    category,
+    price: parsedPrice,
+    points: points !== undefined && points !== null && points !== "" ? Number(points) : undefined,
+    allowDropIn: allowDropIn !== undefined ? Boolean(allowDropIn) : undefined,
+  };
   if (finalLocations !== undefined) {
     updateData.locations = finalLocations;
   }
@@ -173,6 +182,8 @@ export const updateClass = asyncHandler(async function (
   if (!cls)
     throw new NotFoundError("CLASS_NOT_FOUND", "Class not found", { cid });
 
+  clearFinanceCache();
+
   const clsObj = cls.toObject() as any;
   if (clsObj.locations && clsObj.locations.length > 0) {
     clsObj.location = clsObj.locations[0].branchName || clsObj.locations[0].location;
@@ -186,7 +197,6 @@ export const deleteClass = asyncHandler(async function (
   res: Response
 ): Promise<void> {
   const cid = req.params.cid;
-  const cls = await Class.findByIdAndDelete(cid);
   const scheduledClasses = await ScheduledClass.find({ cid });
   if (scheduledClasses.length > 0) {
     throw new ConflictError(
@@ -194,9 +204,11 @@ export const deleteClass = asyncHandler(async function (
       "Class has scheduled classes"
     );
   }
+  const cls = await Class.findByIdAndDelete(cid);
   if (!cls) {
     throw new NotFoundError("CLASS_NOT_FOUND", "Class not found", { cid });
   }
+  clearFinanceCache();
   new SuccessResponse("Class Deleted!", cls).send(res);
 });
 
