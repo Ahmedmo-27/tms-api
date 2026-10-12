@@ -29,6 +29,7 @@ import { buildCairoDateRangeQuery } from "../utils/date-range-query";
 import { resolveOpenGymPaymentPurposeLabel } from "../utils/open-gym-payment-purpose";
 import { resolvePtPaymentPurposeLabel } from "../utils/pt-payment-purpose";
 import { locationIdScalarQuery, locationIdsArrayQuery, toObjectId } from "../utils/location-scope";
+import { getMainBranchLocationId } from "../utils/app-package-location";
 
 export type PaymentListEntry = IPayment & {
   entryType?: "REFUND" | "CASHOUT";
@@ -105,8 +106,25 @@ export class PaymentsService {
     };
 
     if (locationId) {
-      Object.assign(paymentQuery, locationIdScalarQuery(locationId));
-      Object.assign(refundQuery, locationIdScalarQuery(locationId));
+      const mainBranchId = await getMainBranchLocationId();
+      const isMainBranch =
+        Boolean(mainBranchId) &&
+        locationId.toString() === mainBranchId?.toString();
+
+      if (isMainBranch) {
+        const cairoBranchFilter = {
+          $or: [
+            locationIdScalarQuery(locationId),
+            { locationId: { $exists: false } },
+            { locationId: null },
+          ],
+        };
+        Object.assign(paymentQuery, cairoBranchFilter);
+        Object.assign(refundQuery, cairoBranchFilter);
+      } else {
+        Object.assign(paymentQuery, locationIdScalarQuery(locationId));
+        Object.assign(refundQuery, locationIdScalarQuery(locationId));
+      }
     }
 
     const [payments, refunds] = await Promise.all([
@@ -379,6 +397,11 @@ export class PaymentsService {
     nonMemberPhone?: string,
     locationId?: string
   ): Promise<IPayment> {
+    let resolvedLocationId = locationId;
+    if (!resolvedLocationId && (purpose === "PACKAGE" || pkgId)) {
+      resolvedLocationId = (await getMainBranchLocationId()) ?? undefined;
+    }
+
     const payment = new Payment({
       uid,
       amount,
@@ -393,7 +416,7 @@ export class PaymentsService {
       isRefunded: false,
       nonMemberName,
       nonMemberPhone,
-      locationId: locationId ? (toObjectId(locationId) ?? undefined) : undefined,
+      locationId: resolvedLocationId ? (toObjectId(resolvedLocationId) ?? undefined) : undefined,
     });
     await payment.save(session ? { session } : {});
     return payment;
