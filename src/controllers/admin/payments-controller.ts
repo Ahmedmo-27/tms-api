@@ -4,6 +4,7 @@ import { SuccessResponse } from "../../core/ApiResponse";
 import { PaymentsService } from "../../services/payments-service";
 import { BadRequestError, ForbiddenError, InternalError, NotFoundError } from "../../core/ApiError";
 import { resolveLocationFilter, normalizeRole, isBranchScopedRole } from "../../utils/location-scope";
+import { getMainBranchLocationId } from "../../utils/app-package-location";
 import { Types } from "mongoose";
 import Payment from "../../models/payment";
 
@@ -89,7 +90,15 @@ export const updatePayment = asyncHandler(
       if (!existingPayment) {
         throw new NotFoundError("PAYMENT_NOT_FOUND", "Payment not found");
       }
-      if (existingPayment.locationId?.toString() !== userLocationId) {
+      const mainBranchId = await getMainBranchLocationId();
+      const isMainBranchUser =
+        Boolean(mainBranchId) && userLocationId === mainBranchId?.toString();
+      const paymentLoc = existingPayment.locationId?.toString() ?? null;
+      const isAllowed =
+        paymentLoc === userLocationId ||
+        (paymentLoc === null && isMainBranchUser);
+
+      if (!isAllowed) {
         throw new ForbiddenError(
           "INSUFFICIENT_PERMISSIONS",
           "You can only edit payments belonging to your assigned branch"
@@ -162,6 +171,13 @@ export const updatePayment = asyncHandler(
       }
     }
 
+    const effectiveLocationId =
+      locationId !== undefined
+        ? locationId
+        : isBranchScopedRole(callerRole)
+        ? userLocationId
+        : undefined;
+
     const updated = await PaymentsService.updatePayment(id, {
       amount,
       paymentMethod,
@@ -170,7 +186,7 @@ export const updatePayment = asyncHandler(
       note,
       nonMemberName,
       nonMemberPhone,
-      locationId,
+      locationId: effectiveLocationId,
     });
 
     new SuccessResponse("Payment Updated!", updated).send(res);
@@ -182,6 +198,34 @@ export const deletePayment = asyncHandler(
     const { id } = req.params;
     if (!id || !Types.ObjectId.isValid(id)) {
       throw new BadRequestError("INVALID_PAYMENT_ID", "Please provide a valid payment ID");
+    }
+
+    const user = (req as any).user;
+    const callerRole = normalizeRole(user?.role);
+    const userLocationId = user?.locationId?.toString() ?? null;
+
+    if (isBranchScopedRole(callerRole)) {
+      if (!userLocationId) {
+        throw new ForbiddenError("FORBIDDEN", "No branch assigned to this account");
+      }
+      const existingPayment = await Payment.findById(id).select("locationId");
+      if (!existingPayment) {
+        throw new NotFoundError("PAYMENT_NOT_FOUND", "Payment not found");
+      }
+      const mainBranchId = await getMainBranchLocationId();
+      const isMainBranchUser =
+        Boolean(mainBranchId) && userLocationId === mainBranchId?.toString();
+      const paymentLoc = existingPayment.locationId?.toString() ?? null;
+      const isAllowed =
+        paymentLoc === userLocationId ||
+        (paymentLoc === null && isMainBranchUser);
+
+      if (!isAllowed) {
+        throw new ForbiddenError(
+          "INSUFFICIENT_PERMISSIONS",
+          "You can only delete payments belonging to your assigned branch"
+        );
+      }
     }
 
     await PaymentsService.deletePayment(id);
