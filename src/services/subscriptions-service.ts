@@ -210,10 +210,13 @@ export class SubscriptionsService {
           startDate,
           session,
         );
-      }
+      const resolvedAmount =
+        amount !== undefined && amount !== null && String(amount) !== ""
+          ? Number(amount)
+          : pkg.price;
       const payment = await PaymentsService.savePayment(
         uid,
-        amount || pkg.price,
+        resolvedAmount,
         paymentMethod,
         "PACKAGE",
         session,
@@ -719,10 +722,13 @@ export class SubscriptionsService {
           pkgStartDate,
           session,
         );
-      }
+      const resolvedAmount =
+        amount !== undefined && amount !== null && String(amount) !== ""
+          ? Number(amount)
+          : (pkg as any).price;
       const payment = await PaymentsService.savePayment(
         undefined,
-        amount || (pkg as any).price,
+        resolvedAmount,
         paymentMethod,
         "NON_USER_PACKAGE",
         session,

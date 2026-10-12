@@ -368,6 +368,9 @@ export const updatePackage = asyncHandler(
           ? updatePayload.notes.trim()
           : "";
     }
+    if (updatePayload.price !== undefined) {
+      updatePayload.price = Number(updatePayload.price);
+    }
     if (updatePayload.locationId !== undefined && updatePayload.locationId !== null) {
       const locationObjectId = toObjectId(updatePayload.locationId as string);
       if (!locationObjectId) {
