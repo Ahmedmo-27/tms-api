@@ -196,7 +196,11 @@ export function mapOpenGymMethodToSheetLabel(
 }
 
 export function isDropInText(raw: string): boolean {
-  return /drop\s*-?\s*in/i.test(raw || "");
+  return (
+    /drop\s*-?\s*in/i.test(raw || "") ||
+    /walk\s*-?\s*in/i.test(raw || "") ||
+    /waitlist\s+confirmed/i.test(raw || "")
+  );
 }
 
 export function isFocText(raw: string): boolean {

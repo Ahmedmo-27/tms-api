@@ -995,7 +995,7 @@ describe("ScanAdminService walk-in NonUserBooking", () => {
     expect(walkIn.save).toHaveBeenCalled();
   });
 
-  it("reads an FOC walk-in row with Invitation method and FOC status", async () => {
+  it("reads an FOC walk-in row with FOC method and FOC status", async () => {
     mockClassWithoutRow();
     const walkIn = makeWalkIn({ status: "FOC" });
     (NonUserBooking.findById as jest.Mock).mockReturnValue({
@@ -1009,7 +1009,7 @@ describe("ScanAdminService walk-in NonUserBooking", () => {
     });
 
     expect(row.guestName).toBe("Guest Jane");
-    expect(row.method).toBe("Invitation");
+    expect(row.method).toBe("FOC");
     expect(row.status).toBe("FOC");
   });
 

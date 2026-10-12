@@ -533,7 +533,11 @@ export const getMember = asyncHandler(async function (
       const methodLower = methodStr.toLowerCase();
       const isDropInOrFree =
         methodLower === "drop in" ||
+        methodLower === "drop-in" ||
         methodLower === "walk in" ||
+        methodLower === "walk-in" ||
+        methodLower === "walkin" ||
+        methodLower === "waitlist confirmed" ||
         cls?.price === 0 ||
         cls?.category === "WORKSPACE";
 

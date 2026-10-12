@@ -1000,7 +1000,7 @@ export class CoachService {
           memberId: "",
           name: walkIn.name ?? "Walk-In Guest",
           phoneNumber: walkIn.phoneNumber ?? "",
-          bookingMethod: "Walk In",
+          bookingMethod: walkIn.status === "FOC" ? "FOC" : "Walk In",
           activePackage: null,
         });
       }
@@ -1136,8 +1136,15 @@ export class CoachService {
           member: user?.name ?? "Unknown",
           phone:  user?.phoneNumber ?? "",
           time:   scan.scanTime.toISOString(),
-          method: scan.method ?? "",
-          status: scan.status ? "SUCCESS" : "FAILED",
+          method: scan.method === "Waitlist Confirmed" ? "Walk In" : (scan.method ?? ""),
+          status:
+            scan.status === "WILL_PAY" ||
+            scan.status === "FOC" ||
+            scan.status === "SUCCESS"
+              ? scan.status
+              : scan.status
+              ? "SUCCESS"
+              : "FAILED",
         };
       });
 
@@ -1155,7 +1162,7 @@ export class CoachService {
             member: entry.name || "Walk-In Guest",
             phone: entry.phoneNumber || "",
             time: scanTime.toISOString(),
-            method: entry.status === "FOC" ? "Invitation" : "Walk In",
+            method: entry.status === "FOC" ? "FOC" : "Walk In",
             status: entry.status === "FOC" ? "FOC" : entry.status === "PAID" ? "SUCCESS" : "WILL_PAY",
             bookingId: (entry._id as Types.ObjectId).toString(),
           });

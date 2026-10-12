@@ -541,7 +541,9 @@ export const saveNonUserPayment = asyncHandler(async function (
   if (!bookingId || bookingId === "")
     throw new BadRequestError("INVALID_BOOKING_ID", "Booking Id is invalid");
   let booking;
-  if (paymentMethod === "FOC") {
+  const isFoc =
+    typeof paymentMethod === "string" && paymentMethod.trim().toUpperCase() === "FOC";
+  if (isFoc) {
     booking = await BookingsService.recordNonUserFoc(bookingId);
   } else if (paymentMethod === "DEDUCTED") {
     const nonUser = await NonUserBooking.findById(bookingId);
@@ -594,7 +596,11 @@ export const addWalkIn = asyncHandler(async function (
       throw new NotFoundError("INVALID_BOOKING", "Booking was not found");
     logger.info("BookingId: ", booking._id);
 
-    if (paymentMethod === "FOC" || status === "FOC") {
+    const isFoc =
+      (typeof paymentMethod === "string" && paymentMethod.trim().toUpperCase() === "FOC") ||
+      (typeof status === "string" && status.trim().toUpperCase() === "FOC");
+
+    if (isFoc) {
       finalBooking = await BookingsService.recordNonUserFoc(
         (booking._id as string),
         session
@@ -769,6 +775,7 @@ export const promoteFromWaitlist = asyncHandler(async function (
     throw new BadRequestError("INVALID_REQUEST", "uid and scid are required");
   await assertSessionAccess(req, scid);
   await BookingsService.adminPromoteFromWaitlist(uid, scid);
+  req.app.get("io")?.emit("SUCCESS-SCAN");
   new SuccessResponse("Member promoted from waitlist to booking").send(res);
 });
 

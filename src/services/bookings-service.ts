@@ -1909,31 +1909,154 @@ export class BookingsService {
 
     try {
       await BookingsService.addBooking(uid, scid, true, "admin");
-    } catch (bookingErr: any) {
-      await runInTransaction(async (session: ClientSession) => {
-        await ScheduledClass.bookMember(
-          scid,
-          uid,
-          "Waitlist Confirmed",
-          session,
-          true,
-        );
-        await Member.updateOne(
-          {
-            uid: new Types.ObjectId(uid),
-            "bookings.scid": { $ne: new Types.ObjectId(scid) },
+
+      // Package was successfully used. Update or record scan entry with package name.
+      const updatedClass = await ScheduledClass.findById(scid);
+      const memberBooking = updatedClass?.bookedMembers?.find(
+        (m: any) =>
+          (m.uid?._id ? m.uid._id.toString() : m.uid?.toString()) === uid,
+      );
+      const usedPackageName = memberBooking?.method || "Package";
+      let usedPkgId: Types.ObjectId | undefined;
+      try {
+        const pkgDoc = await Package.findOne({ name: usedPackageName });
+        if (pkgDoc) usedPkgId = pkgDoc._id as Types.ObjectId;
+      } catch {
+        // ignore package lookup error
+      }
+
+      const updateResult = await ScheduledClass.updateOne(
+        {
+          _id: new Types.ObjectId(scid),
+          "scans.uid": new Types.ObjectId(uid),
+        },
+        {
+          $set: {
+            "scans.$.method": usedPackageName,
+            "scans.$.status": true,
+            "scans.$.scanTime": new Date(),
+            ...(usedPkgId ? { "scans.$.pkgId": usedPkgId } : {}),
           },
+        },
+      );
+
+      if (updateResult.matchedCount === 0) {
+        await ScheduledClass.updateOne(
+          { _id: new Types.ObjectId(scid) },
           {
             $push: {
-              bookings: {
-                scid: new Types.ObjectId(scid),
-                bookingTime: new Date(),
-                isDropIn: false,
+              scans: {
+                uid: new Types.ObjectId(uid),
+                scanTime: new Date(),
+                method: usedPackageName,
+                status: true,
+                ...(usedPkgId ? { pkgId: usedPkgId } : {}),
               },
+            },
+          },
+        );
+      }
+    } catch (bookingErr: any) {
+      if (
+        bookingErr?.code === "ALREADY_BOOKED" ||
+        bookingErr?.code === "CLASS_ALREADY_BOOKED"
+      ) {
+        throw bookingErr;
+      }
+
+      // Member has no available package for this class.
+      // Check if there is an existing payment entry for this member and class.
+      const existingPayment = await Payment.findOne({
+        uid: new Types.ObjectId(uid),
+        scid: new Types.ObjectId(scid),
+        isRefunded: false,
+      });
+
+      await runInTransaction(async (session: ClientSession) => {
+        if (existingPayment) {
+          await Member.saveDropIn(
+            uid,
+            scid,
+            String(existingPayment._id),
+            session,
+          );
+          await ScheduledClass.bookMember(
+            scid,
+            uid,
+            "Drop In",
+            session,
+            true,
+          );
+        } else {
+          await ScheduledClass.bookMember(
+            scid,
+            uid,
+            "Walk In",
+            session,
+            true,
+          );
+          await Member.updateOne(
+            {
+              uid: new Types.ObjectId(uid),
+              "bookings.scid": { $ne: new Types.ObjectId(scid) },
+            },
+            {
+              $push: {
+                bookings: {
+                  scid: new Types.ObjectId(scid),
+                  bookingTime: new Date(),
+                  isDropIn: true,
+                },
+              },
+            },
+            { session },
+          );
+        }
+
+        await Reservation.updateOne(
+          {
+            sessionId: new Types.ObjectId(scid),
+            userId: new Types.ObjectId(uid),
+            status: "ACTIVE",
+          },
+          { status: "COMPLETED" },
+          { session },
+        );
+
+        const scanMethod = existingPayment ? "Drop In" : "Walk In";
+        const scanStatus = existingPayment ? true : "WILL_PAY";
+
+        const updateResult = await ScheduledClass.updateOne(
+          {
+            _id: new Types.ObjectId(scid),
+            "scans.uid": new Types.ObjectId(uid),
+          },
+          {
+            $set: {
+              "scans.$.method": scanMethod,
+              "scans.$.status": scanStatus,
+              "scans.$.scanTime": new Date(),
             },
           },
           { session },
         );
+
+        if (updateResult.matchedCount === 0) {
+          await ScheduledClass.updateOne(
+            { _id: new Types.ObjectId(scid) },
+            {
+              $push: {
+                scans: {
+                  uid: new Types.ObjectId(uid),
+                  scanTime: new Date(),
+                  method: scanMethod,
+                  status: scanStatus,
+                },
+              },
+            },
+            { session },
+          );
+        }
       });
     }
 
@@ -1943,6 +2066,15 @@ export class BookingsService {
     if (waitlistEntry) {
       waitlistEntry.status = "BOOKED";
       await waitlistEntry.save();
+    } else {
+      await WaitlistEntry.updateOne(
+        {
+          sessionId: new Types.ObjectId(scid),
+          userId: new Types.ObjectId(uid),
+          status: { $in: ["WAITING", "NOTIFIED"] },
+        },
+        { status: "BOOKED" },
+      );
     }
   }
 
@@ -2190,6 +2322,12 @@ export class BookingsService {
       logger.info("Using bookingId: ", bookingId);
       if (!booking)
         throw new NotFoundError("BOOKING_NOT_FOUND", "Booking is not found");
+      if (typeof paymentMethod === "string" && paymentMethod.trim().toUpperCase() === "FOC") {
+        throw new BadRequestError(
+          "INVALID_PAYMENT_METHOD",
+          "FOC entries cannot record a payment",
+        );
+      }
       if (booking.status !== "ATTENDED")
         throw new BadRequestError(
           "USER_NOT_ATTENDED",

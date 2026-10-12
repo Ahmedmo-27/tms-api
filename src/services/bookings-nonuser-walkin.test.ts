@@ -210,6 +210,25 @@ describe("BookingsService Non-User Walkin and Bookings", () => {
       );
       expect(result.status).toBe("PAID");
     });
+
+    it("throws BadRequestError if paymentMethod is FOC", async () => {
+      const bookingId = new Types.ObjectId().toString();
+      const mockBooking = {
+        _id: new Types.ObjectId(bookingId),
+        name: "WalkIn User",
+        phoneNumber: "01000000000",
+        status: "ATTENDED",
+        scid: scid1,
+      };
+
+      (NonUserBooking.findById as jest.Mock).mockReturnValue({
+        session: jest.fn().mockResolvedValue(mockBooking),
+      });
+
+      await expect(
+        BookingsService.recordNonUserPayment(bookingId, "FOC")
+      ).rejects.toThrow("FOC entries cannot record a payment");
+    });
   });
 
   describe("recordNonUserFoc", () => {

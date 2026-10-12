@@ -1217,7 +1217,7 @@ export class ScanAdminService {
       guestName,
       guestPhone,
       pkgId: row.pkgId?.toString(),
-      method: isNonUserBooking ? (row.status === "FOC" ? "Invitation" : "Walk In") : row.method,
+      method: isNonUserBooking ? (row.status === "FOC" ? "FOC" : "Walk In") : row.method,
       time: readTime(ref.source, row, isNonUserBooking),
       status: readStatus(ref.source, row, isNonUserBooking),
     };
