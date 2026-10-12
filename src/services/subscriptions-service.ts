@@ -210,6 +210,7 @@ export class SubscriptionsService {
           startDate,
           session,
         );
+      }
       const resolvedAmount =
         amount !== undefined && amount !== null && String(amount) !== ""
           ? Number(amount)
@@ -722,6 +723,7 @@ export class SubscriptionsService {
           pkgStartDate,
           session,
         );
+      }
       const resolvedAmount =
         amount !== undefined && amount !== null && String(amount) !== ""
           ? Number(amount)
