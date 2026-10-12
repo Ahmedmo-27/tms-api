@@ -192,6 +192,7 @@ export const createUser = asyncHandler(
       tmsEmail,
       sendAsName,
       coachId,
+      nationalId,
     } = req.body;
 
     if (!name || !email || !phoneNumber || !password || !role) {
@@ -256,6 +257,19 @@ export const createUser = asyncHandler(
       );
     }
 
+    const cleanNationalId = nationalId
+      ? String(nationalId).trim().replace(/[\s\-]/g, "")
+      : undefined;
+    if (cleanNationalId) {
+      if (await User.findOne({ nationalId: cleanNationalId })) {
+        throw new ConflictError(
+          "NATIONAL_ID_ALREADY_EXISTS",
+          "National ID already registered",
+          { nationalId: cleanNationalId }
+        );
+      }
+    }
+
     if (role === "branch_admin") {
       if (!locationId || !Types.ObjectId.isValid(locationId)) {
         throw new BadRequestError(
@@ -274,6 +288,8 @@ export const createUser = asyncHandler(
         phoneNumber: cleanPhone,
         role,
       };
+
+      if (cleanNationalId) userData.nationalId = cleanNationalId;
 
       if (locationId && Types.ObjectId.isValid(locationId)) {
         userData.locationId = new Types.ObjectId(locationId);
@@ -377,6 +393,7 @@ export const updateUser = asyncHandler(
       tmsEmail,
       sendAsName,
       coachId,
+      nationalId,
     } = req.body;
 
     if (phoneNumber !== undefined) {
@@ -412,6 +429,29 @@ export const updateUser = asyncHandler(
 
     if (name !== undefined && name.trim()) {
       user.name = name.trim();
+    }
+
+    if (nationalId !== undefined) {
+      const cleanNationalId = nationalId
+        ? String(nationalId).trim().replace(/[\s\-]/g, "")
+        : "";
+      if (cleanNationalId) {
+        if (cleanNationalId !== user.nationalId) {
+          const existing = await User.findOne({
+            nationalId: cleanNationalId,
+            _id: { $ne: id },
+          });
+          if (existing) {
+            throw new ConflictError(
+              "NATIONAL_ID_ALREADY_EXISTS",
+              "National ID already registered"
+            );
+          }
+          user.nationalId = cleanNationalId;
+        }
+      } else {
+        user.nationalId = undefined;
+      }
     }
 
     if (password) {

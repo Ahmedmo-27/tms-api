@@ -37,7 +37,7 @@ type DailyAttendanceModel = Model<IDailyAttendance> & {
   recordPtAttendance(
     uid: string,
     method: string,
-    session: ClientSession,
+    session: ClientSession | null | undefined,
     status: "SUCCESS" | "FAILED",
     io: Server,
     locationId?: string,
@@ -49,7 +49,7 @@ type DailyAttendanceModel = Model<IDailyAttendance> & {
     guestName: string,
     guestPhone: string,
     method: string,
-    session: ClientSession,
+    session: ClientSession | null | undefined,
     status: "SUCCESS" | "FAILED",
     io: Server,
     locationId?: string,
@@ -59,7 +59,7 @@ type DailyAttendanceModel = Model<IDailyAttendance> & {
   recordOpenGymAttendance(
     uid: string,
     method: string,
-    session: ClientSession,
+    session: ClientSession | null | undefined,
     status: "SUCCESS" | "FAILED",
     io: Server,
     locationId?: string,
@@ -70,7 +70,7 @@ type DailyAttendanceModel = Model<IDailyAttendance> & {
     guestName: string,
     guestPhone: string,
     method: string,
-    session: ClientSession,
+    session: ClientSession | null | undefined,
     status: "SUCCESS" | "FAILED",
     io: Server,
     locationId?: string,
@@ -134,7 +134,7 @@ DailyAttendanceSchema.static(
   async function (
     uid: string,
     method: string,
-    session: ClientSession,
+    session: ClientSession | null | undefined,
     status: "SUCCESS" | "FAILED",
     io: Server,
     locationId?: string,
@@ -144,17 +144,18 @@ DailyAttendanceSchema.static(
   ): Promise<void> {
     const recordedAt = at ?? new Date();
     const { start: startOfDay, end: endOfDay } = utcDayBounds(recordedAt);
+    const sessionOpts = session ? { session } : {};
 
     let day = await this.findOne(
       {
         date: { $gte: startOfDay, $lte: endOfDay },
       },
       null,
-      { session }
+      sessionOpts
     );
     if (!day) {
       day = new DailyAttendance({ date: startOfDay });
-      await day.save({ session });
+      await day.save(sessionOpts);
     }
     // add status and save attendance
     const attendance = await this.findOneAndUpdate(
@@ -175,7 +176,7 @@ DailyAttendanceSchema.static(
         },
       },
       {
-        session,
+        ...sessionOpts,
         new: true,
       }
     );
@@ -190,7 +191,6 @@ DailyAttendanceSchema.static(
         "Class already in attendance record"
       );
     }
-    await attendance.save({ session });
   }
 );
 
@@ -200,7 +200,7 @@ DailyAttendanceSchema.static(
     guestName: string,
     guestPhone: string,
     method: string,
-    session: ClientSession,
+    session: ClientSession | null | undefined,
     status: "SUCCESS" | "FAILED",
     io: Server,
     locationId?: string,
@@ -209,15 +209,16 @@ DailyAttendanceSchema.static(
   ): Promise<void> {
     const recordedAt = at ?? new Date();
     const { start: startOfDay, end: endOfDay } = utcDayBounds(recordedAt);
+    const sessionOpts = session ? { session } : {};
 
     let day = await this.findOne(
       { date: { $gte: startOfDay, $lte: endOfDay } },
       null,
-      { session }
+      sessionOpts
     );
     if (!day) {
       day = new DailyAttendance({ date: startOfDay });
-      await day.save({ session });
+      await day.save(sessionOpts);
     }
 
     const attendance = await this.findOneAndUpdate(
@@ -236,7 +237,7 @@ DailyAttendanceSchema.static(
         },
       },
       {
-        session,
+        ...sessionOpts,
         new: true,
       }
     );
@@ -321,7 +322,7 @@ DailyAttendanceSchema.static(
   async function (
     uid: string,
     method: string,
-    session: ClientSession,
+    session: ClientSession | null | undefined,
     status: "SUCCESS" | "FAILED",
     io: Server,
     locationId?: string,
@@ -330,15 +331,16 @@ DailyAttendanceSchema.static(
   ): Promise<void> {
     const recordedAt = at ?? new Date();
     const { start: startOfDay, end: endOfDay } = utcDayBounds(recordedAt);
+    const sessionOpts = session ? { session } : {};
 
     let day = await this.findOne(
       { date: { $gte: startOfDay, $lte: endOfDay } },
       null,
-      { session },
+      sessionOpts,
     );
     if (!day) {
       day = new DailyAttendance({ date: startOfDay });
-      await day.save({ session });
+      await day.save(sessionOpts);
     }
 
     if (status === "SUCCESS") {
@@ -376,7 +378,7 @@ DailyAttendanceSchema.static(
         },
       },
       {
-        session,
+        ...sessionOpts,
         new: true,
       }
     );
@@ -400,7 +402,7 @@ DailyAttendanceSchema.static(
     guestName: string,
     guestPhone: string,
     method: string,
-    session: ClientSession,
+    session: ClientSession | null | undefined,
     status: "SUCCESS" | "FAILED",
     io: Server,
     locationId?: string,
@@ -408,15 +410,16 @@ DailyAttendanceSchema.static(
   ): Promise<void> {
     const recordedAt = at ?? new Date();
     const { start: startOfDay, end: endOfDay } = utcDayBounds(recordedAt);
+    const sessionOpts = session ? { session } : {};
 
     let day = await this.findOne(
       { date: { $gte: startOfDay, $lte: endOfDay } },
       null,
-      { session },
+      sessionOpts,
     );
     if (!day) {
       day = new DailyAttendance({ date: startOfDay });
-      await day.save({ session });
+      await day.save(sessionOpts);
     }
 
     if (status === "SUCCESS") {
@@ -453,7 +456,7 @@ DailyAttendanceSchema.static(
           },
         },
       },
-      { session, new: true },
+      { ...sessionOpts, new: true },
     );
   }
 );

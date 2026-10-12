@@ -6,6 +6,8 @@ import {
   submitTicket,
   getActiveTicketCategories,
 } from "../controllers/admin/ticket-controller";
+import { handleCoacheraIntake } from "../controllers/external/coachera-controller";
+import { verifyCoacheraSignature } from "../middlewares/coachera-auth.middleware";
 
 import { authenticateUser } from "../middlewares/auth.middleware";
 
@@ -25,5 +27,19 @@ exposedRoutes.post(
 // Support tickets (public get, authenticated post)
 exposedRoutes.get("/ticket-categories", getActiveTicketCategories);
 exposedRoutes.post("/tickets", defaultLimiter, authenticateUser, submitTicket);
+
+// Coachera online class payments intake
+exposedRoutes.post(
+  "/coachera-intake",
+  defaultLimiter,
+  verifyCoacheraSignature,
+  handleCoacheraIntake
+);
+exposedRoutes.post(
+  "/mindspace-intake",
+  defaultLimiter,
+  verifyCoacheraSignature,
+  handleCoacheraIntake
+);
 
 export default exposedRoutes;

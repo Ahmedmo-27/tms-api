@@ -297,18 +297,28 @@ describe("Attendance Confirmation & Missing Place", () => {
           attendanceTime: startTime,
           bookingTime: startTime,
         },
+        {
+          _id: new Types.ObjectId(),
+          scid: scidObj,
+          name: "WalkIn FOC",
+          phoneNumber: "01200000003",
+          status: "FOC",
+          attendanceTime: startTime,
+          bookingTime: startTime,
+        },
       ]);
 
       const result = await CoachService.getScans(mockCoachDocId, startTime);
       expect(result).toHaveLength(1);
       const session = result[0];
-      expect(session.bookedCount).toBe(7); // 5 members + 2 walk-ins
-      expect(session.capacity).toBe(10); // 3 available + 7 booked
+      expect(session.bookedCount).toBe(8); // 5 members + 3 walk-ins
+      expect(session.capacity).toBe(11); // 3 available + 8 booked
       expect(session.coachNames).toBe("Coach A, Coach B");
-      expect(session.scans).toHaveLength(3);
-      expect(session.scans.map((s: any) => s.status)).toEqual(["SUCCESS", "WILL_PAY", "SUCCESS"]);
+      expect(session.scans).toHaveLength(4);
+      expect(session.scans.map((s: any) => s.status)).toEqual(["SUCCESS", "WILL_PAY", "SUCCESS", "FOC"]);
       expect(session.scans[1].method).toBe("Walk In");
       expect(session.scans[2].method).toBe("Walk In");
+      expect(session.scans[3].method).toBe("Invitation");
     });
   });
 });

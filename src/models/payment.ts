@@ -5,7 +5,7 @@ export interface IPayment extends Document {
   nonMemberName: string;
   nonMemberPhone: string;
   amount: number;
-  paymentMethod: "APP" | "VISA" | "CASH" | "INSTAPAY" | "VALU" | "PAYMENT_LINK" | "DEDUCTED";
+  paymentMethod: "APP" | "VISA" | "CASH" | "INSTAPAY" | "VALU" | "PAYMENT_LINK" | "DEDUCTED" | "COACHERA";
   paymentTime: Date;
   orderId?: string;
   merchantReferenceId?: string;
@@ -15,13 +15,19 @@ export interface IPayment extends Document {
     | "WALKIN"
     | "NON_USER_BOOKING"
     | "NON_USER_PACKAGE"
+    | "ONLINE_CLASS"
     | "OTHER";
   scid?: Types.ObjectId; // ref to ScheduledClass
   pkgId?: Types.ObjectId; // ref to Package
   note?: string;
   isRefunded: boolean;
   refundReason?: string;
-  locationId: Types.ObjectId;
+  locationId?: Types.ObjectId;
+  coachId?: Types.ObjectId;
+  coachEmail?: string;
+  coachName?: string;
+  durationMonths?: number;
+  platform?: string;
 }
 
 const PaymentSchema = new Schema({
@@ -43,7 +49,7 @@ const PaymentSchema = new Schema({
   },
   paymentMethod: {
     type: String,
-    enum: ["APP", "VISA", "CASH", "INSTAPAY", "VALU", "PAYMENT_LINK", "DEDUCTED"],
+    enum: ["APP", "VISA", "CASH", "INSTAPAY", "VALU", "PAYMENT_LINK", "DEDUCTED", "COACHERA"],
     required: true,
   },
   paymentTime: {
@@ -65,6 +71,7 @@ const PaymentSchema = new Schema({
       "WALKIN",
       "NON_USER_BOOKING",
       "NON_USER_PACKAGE",
+      "ONLINE_CLASS",
       "OTHER",
     ],
   },
@@ -93,13 +100,37 @@ const PaymentSchema = new Schema({
   locationId: {
     type: Schema.Types.ObjectId,
     ref: "Location",
-    required: true,
+    required: false,
+  },
+  coachId: {
+    type: Schema.Types.ObjectId,
+    ref: "Coach",
+    required: false,
+  },
+  coachEmail: {
+    type: String,
+    required: false,
+  },
+  coachName: {
+    type: String,
+    required: false,
+  },
+  durationMonths: {
+    type: Number,
+    required: false,
+  },
+  platform: {
+    type: String,
+    required: false,
+    default: "COACHERA",
   },
 });
 
 PaymentSchema.index({ paymentTime: -1 });
 PaymentSchema.index({ locationId: 1, paymentTime: -1 });
 PaymentSchema.index({ uid: 1 });
+PaymentSchema.index({ orderId: 1 }, { sparse: true });
+PaymentSchema.index({ coachEmail: 1 }, { sparse: true });
 
 const Payment = mongoose.model<IPayment>("Payment", PaymentSchema);
 

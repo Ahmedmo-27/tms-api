@@ -8,6 +8,10 @@ import feedRoutes from "./feed-routes"
 import coachRoutes from "./coach-routes"
 import financeRoutes from "./finance-routes";
 
+import { handleCoacheraIntake } from "../controllers/external/coachera-controller";
+import { verifyCoacheraSignature } from "../middlewares/coachera-auth.middleware";
+import { defaultLimiter } from "../config/rateLimiter";
+
 const router = Router();
 
 router.use("/admin", adminRoutes);
@@ -18,6 +22,13 @@ router.use("/feed", feedRoutes)
 router.use("/external", exposedRoutes);
 router.use("/coach", coachRoutes);
 router.use("/finance", financeRoutes);
+// Direct root alias for Coachera intake webhook: POST /mindspace-intake
+router.post(
+  "/mindspace-intake",
+  defaultLimiter,
+  verifyCoacheraSignature,
+  handleCoacheraIntake
+);
 // /api/coach is available via app.use("/api", router) → /api/coach (no double mount)
 
 export default router;

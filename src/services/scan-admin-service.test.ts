@@ -994,4 +994,38 @@ describe("ScanAdminService walk-in NonUserBooking", () => {
     expect(walkIn.scid.toString()).toBe(targetScid);
     expect(walkIn.save).toHaveBeenCalled();
   });
+
+  it("reads an FOC walk-in row with Invitation method and FOC status", async () => {
+    mockClassWithoutRow();
+    const walkIn = makeWalkIn({ status: "FOC" });
+    (NonUserBooking.findById as jest.Mock).mockReturnValue({
+      session: jest.fn().mockResolvedValue(walkIn),
+    });
+
+    const row = await ScanAdminService.getScanRow({
+      source: "class",
+      parentId: scid,
+      rowId: walkInId,
+    });
+
+    expect(row.guestName).toBe("Guest Jane");
+    expect(row.method).toBe("Invitation");
+    expect(row.status).toBe("FOC");
+  });
+
+  it("updates walk-in status to FOC without creating a payment record", async () => {
+    mockClassWithoutRow();
+    const walkIn = makeWalkIn({ status: "ATTENDED" });
+    (NonUserBooking.findById as jest.Mock).mockReturnValue({
+      session: jest.fn().mockResolvedValue(walkIn),
+    });
+
+    await ScanAdminService.updateScanRow(
+      { source: "class", parentId: scid, rowId: walkInId },
+      { status: "FOC" },
+    );
+
+    expect(walkIn.status).toBe("FOC");
+    expect(walkIn.save).toHaveBeenCalled();
+  });
 });

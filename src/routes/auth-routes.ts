@@ -36,7 +36,7 @@ authRoutes.post("/register", loginLimiter, registerUser);
 authRoutes.post(
   "/register-manually",
   authenticateUser,
-  authorizeUser(["management"]),
+  authorizeUser(["management", "branch_admin"]),
   registerUserManually
 );
 authRoutes.post("/login", loginLimiter, loginUser);

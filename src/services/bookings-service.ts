@@ -667,57 +667,86 @@ export class BookingsService {
     }
     const pkgById = new Map(pkgs.map((p) => [p._id.toString(), p]));
     const pkgName = "Personal Training";
-    await runInTransaction(async (session: ClientSession) => {
-      const pid = await Member.recordPtAttendance(uid, pkgIds, session, io, pkgName);
-      // check if failed record failed
-      if (!pid) {
-        let fallbackCoachId: string | undefined;
-        const memberDoc = await Member.findOne({ uid }, null, { session });
-        if (memberDoc?.packages?.length) {
-          for (let i = memberDoc.packages.length - 1; i >= 0; i--) {
-            const mp = memberDoc.packages[i];
-            const catalogPkg = mp?.pkgId ? pkgById.get(mp.pkgId.toString()) : undefined;
-            if (catalogPkg?.coachId) {
-              fallbackCoachId = catalogPkg.coachId.toString();
-              break;
-            }
-          }
+    let fallbackCoachId: string | undefined;
+    if (member.packages?.length) {
+      for (let i = member.packages.length - 1; i >= 0; i--) {
+        const mp = member.packages[i];
+        const catalogPkg = mp?.pkgId ? pkgById.get(mp.pkgId.toString()) : undefined;
+        if (catalogPkg?.coachId) {
+          fallbackCoachId = catalogPkg.coachId.toString();
+          break;
         }
-        await DailyAttendance.recordPtAttendance(
-          uid,
-          "No Active Package",
-          session,
-          "FAILED",
-          io,
-          locationId,
-          fallbackCoachId,
-        );
-        throw new ForbiddenError(
-          "NO_ACTIVE_PACKAGE_FOUND",
-          SCAN_ERROR_MESSAGES.NO_ACTIVE_PT_PACKAGE,
-        );
       }
-      const pkg = await Package.findById(pid);
-      if (!pkg)
-        throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found");
+    }
+
+    let pid: string | null = null;
+    let pkg: any = null;
+    let scanError: any = null;
+
+    try {
+      await runInTransaction(async (session: ClientSession) => {
+        pid = await Member.recordPtAttendance(uid, pkgIds, session, io, pkgName);
+        if (pid) {
+          pkg = await Package.findById(pid);
+          if (!pkg)
+            throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found");
+          await DailyAttendance.recordPtAttendance(
+            uid,
+            pkg.name,
+            session,
+            "SUCCESS",
+            io,
+            locationId,
+            pkg.coachId ? pkg.coachId.toString() : undefined,
+            undefined,
+            pid,
+          );
+        }
+      });
+    } catch (err) {
+      scanError = err;
+    }
+
+    if (scanError) {
+      let failureMethod = "No Active Package";
+      if (scanError instanceof ForbiddenError) {
+        if (scanError.code === "PACKAGE_FROZEN") failureMethod = "Package Frozen";
+        else if (scanError.code === "PACKAGE_EXPIRED") failureMethod = "Package Expired";
+      }
       await DailyAttendance.recordPtAttendance(
         uid,
-        pkg.name,
-        session,
-        "SUCCESS",
+        failureMethod,
+        undefined,
+        "FAILED",
         io,
         locationId,
-        pkg.coachId ? pkg.coachId.toString() : undefined,
-        undefined,
-        pid,
+        fallbackCoachId,
       );
-      io.emit("SUCCESS-SCAN", {
-        code: "PT_CLASS_ATTENDED",
-        message: "Success",
-        member: memberName,
-        coach: pkg.name,
-        ...(locationId ? { locationId } : {}),
-      });
+      throw scanError;
+    }
+
+    if (!pid) {
+      await DailyAttendance.recordPtAttendance(
+        uid,
+        "No Active Package",
+        undefined,
+        "FAILED",
+        io,
+        locationId,
+        fallbackCoachId,
+      );
+      throw new ForbiddenError(
+        "NO_ACTIVE_PACKAGE_FOUND",
+        SCAN_ERROR_MESSAGES.NO_ACTIVE_PT_PACKAGE,
+      );
+    }
+
+    io.emit("SUCCESS-SCAN", {
+      code: "PT_CLASS_ATTENDED",
+      message: "Success",
+      member: memberName,
+      coach: pkg.name,
+      ...(locationId ? { locationId } : {}),
     });
   }
 
@@ -869,85 +898,113 @@ export class BookingsService {
       ? await BookingsService.findOpenGymDropInBooking(uid, locationId)
       : false;
 
-    await runInTransaction(async (session: ClientSession) => {
-      if (hasDropIn) {
-        await DailyAttendance.recordOpenGymAttendance(
+    let pid: "NO_ACCESS_AT_LOCATION" | string | null = null;
+    let pkg: any = null;
+    let scanError: any = null;
+
+    try {
+      await runInTransaction(async (session: ClientSession) => {
+        if (hasDropIn) {
+          await DailyAttendance.recordOpenGymAttendance(
+            uid,
+            "Drop In",
+            session,
+            "SUCCESS",
+            io,
+            locationId,
+          );
+          io.emit("SUCCESS-SCAN", {
+            code: "OPEN_GYM_CLASS_ATTENDED",
+            message: "Success",
+            member: memberName,
+          });
+          return;
+        }
+
+        pid = await Member.recordSpaceWalkAttendance(
           uid,
-          "Drop In",
+          pkgIds,
           session,
-          "SUCCESS",
           io,
           locationId,
         );
-        io.emit("SUCCESS-SCAN", {
-          code: "OPEN_GYM_CLASS_ATTENDED",
-          message: "Success",
-          member: memberName,
-        });
-        return;
-      }
 
-      const pid = await Member.recordSpaceWalkAttendance(
-        uid,
-        pkgIds,
-        session,
-        io,
-        locationId,
-      );
+        if (pid && pid !== "NO_ACCESS_AT_LOCATION") {
+          pkg = await Package.findById(pid);
+          if (!pkg)
+            throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found");
+          await DailyAttendance.recordOpenGymAttendance(
+            uid,
+            pkg.name,
+            session,
+            "SUCCESS",
+            io,
+            locationId,
+            undefined,
+            pid,
+          );
+        }
+      });
+    } catch (err) {
+      scanError = err;
+    }
 
-      if (pid === "NO_ACCESS_AT_LOCATION") {
-        await DailyAttendance.recordOpenGymAttendance(
-          uid,
-          "No Access At Location",
-          session,
-          "FAILED",
-          io,
-          locationId,
-        );
-        throw new ForbiddenError(
-          "NO_ACCESS_AT_LOCATION",
-          SCAN_ERROR_MESSAGES.NO_ACCESS_AT_LOCATION,
-          { locationId },
-        );
-      }
+    if (hasDropIn) {
+      if (scanError) throw scanError;
+      return;
+    }
 
-      if (!pid) {
-        await DailyAttendance.recordOpenGymAttendance(
-          uid,
-          "No Active Package",
-          session,
-          "FAILED",
-          io,
-          locationId,
-        );
-        throw new ForbiddenError(
-          "NO_ACTIVE_PACKAGE_FOUND",
-          SCAN_ERROR_MESSAGES.NO_ACTIVE_PACKAGE,
-        );
-      }
-
-      const pkg = await Package.findById(pid);
-      if (!pkg)
-        throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found");
+    if (scanError) {
       await DailyAttendance.recordOpenGymAttendance(
         uid,
-        pkg.name,
-        session,
-        "SUCCESS",
+        "No Active Package",
+        undefined,
+        "FAILED",
         io,
         locationId,
-        undefined,
-        pid,
       );
-      io.emit("SUCCESS-SCAN", {
-        code: "OPEN_GYM_CLASS_ATTENDED",
-        message: "Success",
-        member: memberName,
-        ...(options?.legacyPayload
-          ? { legacyOpenGymPayload: options.legacyPayload }
-          : {}),
-        ...(locationId ? { locationId } : {}),
-      });
+      throw scanError;
+    }
+
+    if (pid === "NO_ACCESS_AT_LOCATION") {
+      await DailyAttendance.recordOpenGymAttendance(
+        uid,
+        "No Access At Location",
+        undefined,
+        "FAILED",
+        io,
+        locationId,
+      );
+      throw new ForbiddenError(
+        "NO_ACCESS_AT_LOCATION",
+        SCAN_ERROR_MESSAGES.NO_ACCESS_AT_LOCATION,
+        { locationId },
+      );
+    }
+
+    if (!pid) {
+      await DailyAttendance.recordOpenGymAttendance(
+        uid,
+        "No Active Package",
+        undefined,
+        "FAILED",
+        io,
+        locationId,
+      );
+      throw new ForbiddenError(
+        "NO_ACTIVE_PACKAGE_FOUND",
+        SCAN_ERROR_MESSAGES.NO_ACTIVE_PACKAGE,
+      );
+    }
+
+    io.emit("SUCCESS-SCAN", {
+      code: "OPEN_GYM_CLASS_ATTENDED",
+      message: "Success",
+      member: memberName,
+      ...(options?.legacyPayload
+        ? { legacyOpenGymPayload: options.legacyPayload }
+        : {}),
+      ...(locationId ? { locationId } : {}),
     });
   }
 
@@ -1826,21 +1883,132 @@ export class BookingsService {
   static async adminPromoteFromWaitlist(uid: string, scid: string) {
     if (!scid || !Types.ObjectId.isValid(scid))
       throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
-    await ScheduledClass.assertOnWaitlist(scid, uid);
-    await BookingsService.addBooking(uid, scid, true);
-    await ScheduledClass.removeMemberFromWaitlist(scid, uid);
+    const scheduledClass = await ScheduledClass.findById(scid);
+    if (!scheduledClass)
+      throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
+
+    const onEmbedded =
+      Array.isArray(scheduledClass.waitlistedMembers) &&
+      scheduledClass.waitlistedMembers.some(
+        (m) => (m.uid?._id ? m.uid._id.toString() : m.uid?.toString()) === uid,
+      );
+    let waitlistEntry = null;
+    try {
+      waitlistEntry = await WaitlistEntry.findOne({
+        sessionId: new Types.ObjectId(scid),
+        userId: new Types.ObjectId(uid),
+        status: { $in: ["WAITING", "NOTIFIED"] },
+      });
+    } catch {
+      waitlistEntry = null;
+    }
+
+    if (!onEmbedded && !waitlistEntry) {
+      throw new NotFoundError("NOT_ON_WAITLIST", "Member is not on the waitlist");
+    }
+
+    try {
+      await BookingsService.addBooking(uid, scid, true, "admin");
+    } catch (bookingErr: any) {
+      await runInTransaction(async (session: ClientSession) => {
+        await ScheduledClass.bookMember(
+          scid,
+          uid,
+          "Waitlist Confirmed",
+          session,
+          true,
+        );
+        await Member.updateOne(
+          {
+            uid: new Types.ObjectId(uid),
+            "bookings.scid": { $ne: new Types.ObjectId(scid) },
+          },
+          {
+            $push: {
+              bookings: {
+                scid: new Types.ObjectId(scid),
+                bookingTime: new Date(),
+                isDropIn: false,
+              },
+            },
+          },
+          { session },
+        );
+      });
+    }
+
+    if (onEmbedded) {
+      await ScheduledClass.removeMemberFromWaitlist(scid, uid);
+    }
+    if (waitlistEntry) {
+      waitlistEntry.status = "BOOKED";
+      await waitlistEntry.save();
+    }
   }
 
   static async adminAddToWaitlist(uid: string, scid: string) {
     if (!scid || !Types.ObjectId.isValid(scid))
       throw new NotFoundError("CLASS_NOT_FOUND", "Scheduled class not found");
-    const member = await Member.findOne({ uid });
-    if (!member)
+    const userDoc = await User.findById(uid);
+    const memberDoc = await Member.findOne({
+      $or: [
+        { uid: new Types.ObjectId(uid) },
+        ...(Types.ObjectId.isValid(uid) ? [{ _id: new Types.ObjectId(uid) }] : []),
+      ],
+    });
+    if (!userDoc && !memberDoc)
       throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
+
+    const resolvedUserId = userDoc
+      ? String(userDoc._id)
+      : String(memberDoc!.uid);
+
     const scheduledClass = await ScheduledClass.findById(scid);
     if (!scheduledClass)
       throw new NotFoundError("CLASS_NOT_FOUND", "Scheduled class not found");
-    await ScheduledClass.addMemberToWaitlistOverride(scid, uid);
+
+    const alreadyBooked = scheduledClass.bookedMembers.some(
+      (m) =>
+        (m.uid?._id ? m.uid._id.toString() : m.uid?.toString()) ===
+        resolvedUserId,
+    );
+    if (alreadyBooked)
+      throw new ConflictError(
+        "ALREADY_BOOKED",
+        "Member is already booked into this session",
+      );
+
+    const onEmbedded = scheduledClass.waitlistedMembers.some(
+      (m) =>
+        (m.uid?._id ? m.uid._id.toString() : m.uid?.toString()) ===
+        resolvedUserId,
+    );
+    const existingEntry = await WaitlistEntry.findOne({
+      sessionId: new Types.ObjectId(scid),
+      userId: new Types.ObjectId(resolvedUserId),
+      status: { $in: ["WAITING", "NOTIFIED"] },
+    });
+    if (onEmbedded || existingEntry) {
+      throw new ConflictError(
+        "ALREADY_WAITLISTED",
+        "Member is already on the waitlist",
+      );
+    }
+
+    await ScheduledClass.addMemberToWaitlistOverride(scid, resolvedUserId);
+
+    const count = await WaitlistEntry.countDocuments({
+      sessionId: new Types.ObjectId(scid),
+      status: { $in: ["WAITING", "NOTIFIED"] },
+    });
+    const entry = new WaitlistEntry({
+      sessionId: new Types.ObjectId(scid),
+      userId: new Types.ObjectId(resolvedUserId),
+      position: count + 1,
+      status: "WAITING",
+      isManual: true,
+    });
+    await entry.save();
   }
 
   static async adminRemoveFromWaitlist(uid: string, scid: string) {
@@ -1849,7 +2017,34 @@ export class BookingsService {
     const scheduledClass = await ScheduledClass.findById(scid);
     if (!scheduledClass)
       throw new NotFoundError("CLASS_NOT_FOUND", "Scheduled class not found");
-    await ScheduledClass.removeMemberFromWaitlist(scid, uid);
+
+    const onEmbedded =
+      Array.isArray(scheduledClass.waitlistedMembers) &&
+      scheduledClass.waitlistedMembers.some(
+        (m) => (m.uid?._id ? m.uid._id.toString() : m.uid?.toString()) === uid,
+      );
+    let waitlistEntry = null;
+    try {
+      waitlistEntry = await WaitlistEntry.findOne({
+        sessionId: new Types.ObjectId(scid),
+        userId: new Types.ObjectId(uid),
+        status: { $in: ["WAITING", "NOTIFIED"] },
+      });
+    } catch {
+      waitlistEntry = null;
+    }
+
+    if (!onEmbedded && !waitlistEntry) {
+      throw new NotFoundError("NOT_ON_WAITLIST", "Member is not on the waitlist");
+    }
+
+    if (onEmbedded) {
+      await ScheduledClass.removeMemberFromWaitlist(scid, uid);
+    }
+    if (waitlistEntry) {
+      waitlistEntry.status = "CANCELLED";
+      await waitlistEntry.save();
+    }
   }
 
   static async getWaitlistedMembers(scid: string) {
@@ -1858,11 +2053,68 @@ export class BookingsService {
     const scheduledClass = await ScheduledClass.findById(scid).populate({
       path: "waitlistedMembers.uid",
       model: "User",
-      select: "name phone",
+      select: "name phoneNumber phone",
     });
     if (!scheduledClass)
       throw new NotFoundError("CLASS_NOT_FOUND", "Scheduled class not found");
-    return scheduledClass.waitlistedMembers;
+
+    let waitlistEntries: any[] = [];
+    try {
+      waitlistEntries = await WaitlistEntry.find({
+        sessionId: new Types.ObjectId(scid),
+        status: { $in: ["WAITING", "NOTIFIED"] },
+      })
+        .populate({ path: "userId", select: "name phoneNumber phone" })
+        .sort({ position: 1, joinedAt: 1 })
+        .lean();
+    } catch {
+      waitlistEntries = [];
+    }
+
+    const seenUids = new Set<string>();
+    const result: any[] = [];
+
+    if (Array.isArray(waitlistEntries)) {
+      for (const entry of waitlistEntries) {
+        const u = entry.userId as any;
+        const uidStr = u?._id ? u._id.toString() : (entry.userId ? entry.userId.toString() : "");
+        if (uidStr) seenUids.add(uidStr);
+        result.push({
+          _id: entry._id ? entry._id.toString() : uidStr,
+          uid: uidStr,
+          name: u?.name || "Unknown Member",
+          phone: u?.phoneNumber || u?.phone || "",
+          phoneNumber: u?.phoneNumber || u?.phone || "",
+          status: entry.status || "WAITING",
+          position: entry.position ?? result.length + 1,
+          addedAt: entry.joinedAt,
+          isManual: Boolean(entry.isManual),
+        });
+      }
+    }
+
+    if (Array.isArray(scheduledClass.waitlistedMembers)) {
+      for (const m of scheduledClass.waitlistedMembers) {
+        const u = m.uid as any;
+        const uidStr = u?._id ? u._id.toString() : (typeof m.uid === "string" ? m.uid : m.uid?.toString?.() || "");
+        if (uidStr && !seenUids.has(uidStr)) {
+          seenUids.add(uidStr);
+          result.push({
+            _id: (m as any)._id ? (m as any)._id.toString() : uidStr,
+            uid: uidStr,
+            name: u?.name || "Unknown Member",
+            phone: u?.phoneNumber || u?.phone || "",
+            phoneNumber: u?.phoneNumber || u?.phone || "",
+            status: "WAITING",
+            position: result.length + 1,
+            addedAt: m.addedAt,
+            isManual: Boolean((m as any).isManual ?? true),
+          });
+        }
+      }
+    }
+
+    return result;
   }
 
   static async addMemberToWaitingList(
@@ -1968,10 +2220,12 @@ export class BookingsService {
         booking.phoneNumber,
         resolvedLocationId
       );
+      const bookingStatus = "PAID";
       const paidBooking = await NonUserBooking.recordPayment(
         bookingId,
         (payment._id as Types.ObjectId).toString(),
         s,
+        bookingStatus,
       );
       sendPaymentToRentalSystem(payment);
       return paidBooking;
@@ -1982,6 +2236,34 @@ export class BookingsService {
       return result;
     }
     logger.info("Created independent session for payment");
+    const result = await runInTransaction(run);
+    return result;
+  }
+
+  static async recordNonUserFoc(
+    bookingId: string,
+    session?: ClientSession,
+  ): Promise<INonUserBooking> {
+    const run = async (s: ClientSession) => {
+      if (session) logger.info(`In session - ${session?.id?.toString()}`);
+      const booking = await NonUserBooking.findById(bookingId).session(s);
+      logger.info("Using bookingId for FOC: ", bookingId);
+      if (!booking)
+        throw new NotFoundError("BOOKING_NOT_FOUND", "Booking is not found");
+      const scheduledClass = await ScheduledClass.findById(booking.scid)
+        .populate({ path: "cid" })
+        .session(s);
+      if (!scheduledClass)
+        throw new NotFoundError("CLASS_NOT_FOUND", "Class not found");
+
+      const focBooking = await NonUserBooking.recordFoc(bookingId, s);
+      return focBooking;
+    };
+
+    if (session) {
+      const result = await run(session);
+      return result;
+    }
     const result = await runInTransaction(run);
     return result;
   }

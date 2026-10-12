@@ -15,3 +15,5 @@ dev.env
 prod.env
 tmp-*
 /docs
+missing_from_db.csv
+firebase-users.json

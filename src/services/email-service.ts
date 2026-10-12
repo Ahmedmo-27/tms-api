@@ -1,6 +1,7 @@
 import { InternalError } from "../core/ApiError";
 import logger from "../config/logger";
 import { Resend } from "resend";
+import nodemailer from "nodemailer";
 import User from "../models/user";
 import Location from "../models/location";
 import { Types } from "mongoose";
@@ -347,5 +348,179 @@ export const sendNewTicketManagementNotificationEmail = async (
       error: (err as Error).message,
     });
   }
+};
+
+export interface PtPackageRenewalNotificationData {
+  coachEmail: string;
+  coachName: string;
+  memberName: string;
+  memberPhone?: string;
+  packageName: string;
+  sessionCount: number;
+  startDate: string | Date;
+}
+
+function renderPtPackageRenewalEmailHtml(
+  data: PtPackageRenewalNotificationData,
+  formattedDate: string
+): string {
+  const displayPhone = data.memberPhone?.trim() || "N/A";
+
+  return `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; color: #1f2937;">
+      <div style="background-color: #32500A; padding: 24px; text-align: center;">
+        <h1 style="color: #ffffff; margin: 0; font-size: 20px; font-weight: 600; letter-spacing: 0.5px;">The Mind Space</h1>
+        <p style="color: #d1fae5; margin: 6px 0 0 0; font-size: 14px;">Personal Training Package Renewal</p>
+      </div>
+      <div style="padding: 24px;">
+        <p style="font-size: 16px; margin: 0 0 16px 0;">Hi <strong>${escapeHtml(data.coachName)}</strong>,</p>
+        <p style="font-size: 15px; line-height: 1.5; margin: 0 0 20px 0; color: #374151;">
+          Great news! Your client <strong>${escapeHtml(data.memberName)}</strong> has renewed their Personal Training package:
+        </p>
+
+        <div style="background-color: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 16px; margin-bottom: 20px;">
+          <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+            <tr>
+              <td style="padding: 6px 0; color: #6b7280; width: 140px; font-weight: 500;">Client Name:</td>
+              <td style="padding: 6px 0; color: #111827; font-weight: 600;">${escapeHtml(data.memberName)}</td>
+            </tr>
+            <tr>
+              <td style="padding: 6px 0; color: #6b7280; font-weight: 500;">Phone Number:</td>
+              <td style="padding: 6px 0; color: #111827;">${data.memberPhone ? `<a href="tel:${escapeHtml(data.memberPhone)}" style="color: #32500A; text-decoration: none;">${escapeHtml(displayPhone)}</a>` : "N/A"}</td>
+            </tr>
+            <tr>
+              <td style="padding: 6px 0; color: #6b7280; font-weight: 500;">Package:</td>
+              <td style="padding: 6px 0; color: #111827; font-weight: 600;">${escapeHtml(data.packageName)}</td>
+            </tr>
+            <tr>
+              <td style="padding: 6px 0; color: #6b7280; font-weight: 500;">Sessions:</td>
+              <td style="padding: 6px 0; color: #111827; font-weight: 600;">${data.sessionCount} sessions</td>
+            </tr>
+            <tr>
+              <td style="padding: 6px 0; color: #6b7280; font-weight: 500;">Start Date:</td>
+              <td style="padding: 6px 0; color: #111827;">${escapeHtml(formattedDate)}</td>
+            </tr>
+          </table>
+        </div>
+
+        <p style="font-size: 14px; color: #4b5563; line-height: 1.5; margin: 0 0 16px 0;">
+          You can now coordinate their upcoming training sessions and view their updated schedule in the coach portal.
+        </p>
+      </div>
+      <div style="background-color: #f9fafb; padding: 16px; text-align: center; border-top: 1px solid #e5e7eb; font-size: 12px; color: #9ca3af;">
+        &copy; The Mind Space. All rights reserved.
+      </div>
+    </div>
+  `;
+}
+
+// Sends an email notification to the coach when a member renews their PT package.
+// Supports Resend (prod) and Nodemailer Gmail SMTP fallback (dev).
+// Skips silently if email service is unconfigured and catches errors gracefully.
+export const sendPtPackageRenewalCoachEmail = async (
+  data: PtPackageRenewalNotificationData
+): Promise<boolean> => {
+  const normalizedEmail = (data.coachEmail || "").trim().toLowerCase();
+  const emailRegex = /^[\w-]+(\.[\w-]+)*@([\w-]+\.)+[a-zA-Z]{2,}$/;
+  if (!normalizedEmail || !emailRegex.test(normalizedEmail)) {
+    logger.warn("Skipping PT package renewal coach email - invalid email address", {
+      coachEmail: data.coachEmail,
+      coachName: data.coachName,
+    });
+    return false;
+  }
+
+  let formattedDate: string;
+  try {
+    const d =
+      data.startDate instanceof Date
+        ? data.startDate
+        : new Date(data.startDate);
+    formattedDate = d.toLocaleDateString("en-US", {
+      timeZone: "Africa/Cairo",
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  } catch {
+    formattedDate = String(data.startDate);
+  }
+
+  const fromSender = getTicketEmailSender();
+  const subject = `[TMS] PT Package Renewal: ${data.memberName} has renewed ${data.packageName}`;
+  const html = renderPtPackageRenewalEmailHtml(data, formattedDate);
+
+  const resendApiKey = process.env.RESEND_API_KEY;
+  if (resendApiKey && resendApiKey !== "FILL_IN") {
+    try {
+      const resend = new Resend(resendApiKey);
+      const { error } = await resend.emails.send({
+        from: fromSender,
+        to: normalizedEmail,
+        subject,
+        html,
+      });
+
+      if (error) {
+        logger.error("Error sending PT package renewal coach email via Resend", {
+          error,
+          coachEmail: normalizedEmail,
+          memberName: data.memberName,
+        });
+        return false;
+      }
+
+      logger.info(`PT package renewal email sent to coach via Resend: ${normalizedEmail}`, {
+        coachName: data.coachName,
+        memberName: data.memberName,
+        packageName: data.packageName,
+      });
+      return true;
+    } catch (err) {
+      logger.error("Resend exception (PT package renewal coach email)", {
+        coachEmail: normalizedEmail,
+        error: (err as Error).message,
+      });
+      return false;
+    }
+  }
+
+  // Fallback to Nodemailer SMTP (e.g. in dev environment)
+  const mailUser = process.env.MAIL_USER;
+  const mailPass = process.env.MAIL_APP_PASSWORD;
+  if (mailUser && mailPass) {
+    try {
+      const transporter = nodemailer.createTransport({
+        service: "gmail",
+        auth: {
+          user: mailUser,
+          pass: mailPass,
+        },
+      });
+
+      await transporter.sendMail({
+        from: `"${process.env.MAIL_FROM_NAME || "The Mind Space"}" <${mailUser}>`,
+        to: normalizedEmail,
+        subject,
+        html,
+      });
+
+      logger.info(`PT package renewal email sent to coach via Gmail SMTP: ${normalizedEmail}`, {
+        coachName: data.coachName,
+        memberName: data.memberName,
+        packageName: data.packageName,
+      });
+      return true;
+    } catch (err) {
+      logger.error("Nodemailer SMTP exception (PT package renewal coach email)", {
+        coachEmail: normalizedEmail,
+        error: (err as Error).message,
+      });
+      return false;
+    }
+  }
+
+  logger.info("Skipping PT package renewal coach email - email not configured");
+  return false;
 };
 

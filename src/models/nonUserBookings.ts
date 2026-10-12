@@ -14,7 +14,7 @@ export interface INonUserBooking extends Document {
   phoneNumber: string;
   bookingTime: Date;
   attendanceTime?: Date;
-  status: "BOOKED" | "ATTENDED" | "PAID" | "CANCELLED";
+  status: "BOOKED" | "ATTENDED" | "PAID" | "CANCELLED" | "FOC";
   paymentId?: Types.ObjectId;
 }
 
@@ -32,7 +32,12 @@ type NonUserBookingModel = Model<INonUserBooking> & {
   recordPayment(
     bookingId: string,
     paymentId: string,
-    session: ClientSession
+    session: ClientSession,
+    status?: "PAID"
+  ): Promise<INonUserBooking>;
+  recordFoc(
+    bookingId: string,
+    session?: ClientSession
   ): Promise<INonUserBooking>;
   cancelBooking(
     bookingId: string,
@@ -58,7 +63,7 @@ const NonUserBookingSchema: Schema<INonUserBooking, NonUserBookingModel> =
     },
     status: {
       type: String,
-      enum: ["BOOKED", "ATTENDED", "PAID", "CANCELLED"],
+      enum: ["BOOKED", "ATTENDED", "PAID", "CANCELLED", "FOC"],
       default: "BOOKED",
     },
     attendanceTime: {
@@ -119,12 +124,30 @@ NonUserBookingSchema.static(
   async function (
     bookingId: string,
     paymentId: string,
-    session: ClientSession
+    session: ClientSession,
+    status: "PAID" = "PAID"
   ) {
     const booking = await this.findByIdAndUpdate(
       bookingId,
-      { status: "PAID", paymentId },
+      { status, paymentId },
       { new: true, session }
+    );
+    if (!booking)
+      throw new NotFoundError(
+        "BOOKING_NOT_FOUND",
+        "Booking could not be found"
+      );
+    return booking;
+  }
+);
+
+NonUserBookingSchema.static(
+  "recordFoc",
+  async function (bookingId: string, session?: ClientSession) {
+    const booking = await this.findByIdAndUpdate(
+      bookingId,
+      { status: "FOC", attendanceTime: new Date() },
+      { new: true, ...(session ? { session } : {}) }
     );
     if (!booking)
       throw new NotFoundError(

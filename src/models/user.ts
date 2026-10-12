@@ -18,6 +18,7 @@ export interface IUser extends Document {
   name: string;
   phoneNumber: string;
   role: string;
+  nationalId?: string;
   locationId?: mongoose.Types.ObjectId;
   tokens: Itoken[];
   resetCode: string;
@@ -99,6 +100,11 @@ const UserSchema: Schema<IUser, UserModel, IUserMethods> = new Schema({
       values: ["member", "user", "admin", "management", "branch_admin", "coach", "managing_coach", "mailer", "accountant"],
       message: "{VALUE} is not a valid role",
     },
+  },
+  nationalId: {
+    type: String,
+    required: false,
+    trim: true,
   },
   locationId: {
     type: Schema.Types.ObjectId,
@@ -296,6 +302,8 @@ UserSchema.method("removeExpiredTokens", async function () {
   });
   await user.save();
 });
+
+UserSchema.index({ nationalId: 1 }, { sparse: true });
 
 const User = mongoose.model<IUser, UserModel>("User", UserSchema);
 

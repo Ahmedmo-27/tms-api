@@ -109,4 +109,147 @@ describe("BookingsService Non-User Walkin and Bookings", () => {
       expect(result).toEqual(mockBooking);
     });
   });
+
+  describe("recordNonUserPayment", () => {
+    it("updates booking with PAID status when paymentMethod is DEDUCTED", async () => {
+      const bookingId = new Types.ObjectId().toString();
+      const mockBooking = {
+        _id: new Types.ObjectId(bookingId),
+        name: "WalkIn User",
+        phoneNumber: "01000000000",
+        status: "ATTENDED",
+        scid: scid1,
+      };
+
+      (NonUserBooking.findById as jest.Mock).mockReturnValue({
+        session: jest.fn().mockResolvedValue(mockBooking),
+      });
+
+      const mockClass = {
+        _id: scid1,
+        cid: { price: 300 },
+        locationId: new Types.ObjectId(),
+      };
+      (ScheduledClass.findById as jest.Mock).mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          session: jest.fn().mockResolvedValue(mockClass),
+        }),
+      });
+
+      const paymentId = new Types.ObjectId();
+      const mockPayment = { _id: paymentId, paymentMethod: "DEDUCTED", paymentTime: new Date() };
+      const { PaymentsService } = require("./payments-service");
+      jest.spyOn(PaymentsService, "savePayment").mockResolvedValue(mockPayment as any);
+
+      (NonUserBooking.recordPayment as jest.Mock).mockResolvedValue({
+        ...mockBooking,
+        status: "PAID",
+        paymentId,
+      });
+
+      const result = await BookingsService.recordNonUserPayment(
+        bookingId,
+        "DEDUCTED",
+      );
+
+      expect(NonUserBooking.recordPayment).toHaveBeenCalledWith(
+        bookingId,
+        paymentId.toString(),
+        expect.anything(),
+        "PAID"
+      );
+      expect(result.status).toBe("PAID");
+    });
+
+    it("updates booking with PAID status when paymentMethod is VISA, CASH, or VALU", async () => {
+      const bookingId = new Types.ObjectId().toString();
+      const mockBooking = {
+        _id: new Types.ObjectId(bookingId),
+        name: "WalkIn User",
+        phoneNumber: "01000000000",
+        status: "ATTENDED",
+        scid: scid1,
+      };
+
+      (NonUserBooking.findById as jest.Mock).mockReturnValue({
+        session: jest.fn().mockResolvedValue(mockBooking),
+      });
+
+      const mockClass = {
+        _id: scid1,
+        cid: { price: 300 },
+        locationId: new Types.ObjectId(),
+      };
+      (ScheduledClass.findById as jest.Mock).mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          session: jest.fn().mockResolvedValue(mockClass),
+        }),
+      });
+
+      const paymentId = new Types.ObjectId();
+      const mockPayment = { _id: paymentId, paymentMethod: "VISA", paymentTime: new Date() };
+      const { PaymentsService } = require("./payments-service");
+      jest.spyOn(PaymentsService, "savePayment").mockResolvedValue(mockPayment as any);
+
+      (NonUserBooking.recordPayment as jest.Mock).mockResolvedValue({
+        ...mockBooking,
+        status: "PAID",
+        paymentId,
+      });
+
+      const result = await BookingsService.recordNonUserPayment(
+        bookingId,
+        "VISA",
+      );
+
+      expect(NonUserBooking.recordPayment).toHaveBeenCalledWith(
+        bookingId,
+        paymentId.toString(),
+        expect.anything(),
+        "PAID"
+      );
+      expect(result.status).toBe("PAID");
+    });
+  });
+
+  describe("recordNonUserFoc", () => {
+    it("records FOC status without creating a payment record", async () => {
+      const bookingId = new Types.ObjectId().toString();
+      const mockBooking = {
+        _id: new Types.ObjectId(bookingId),
+        name: "FOC Walk-in Guest",
+        status: "BOOKED",
+        scid: scid1,
+      };
+
+      (NonUserBooking.findById as jest.Mock).mockReturnValue({
+        session: jest.fn().mockResolvedValue(mockBooking),
+      });
+
+      const mockClass = {
+        _id: scid1,
+        cid: { price: 300 },
+      };
+      (ScheduledClass.findById as jest.Mock).mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          session: jest.fn().mockResolvedValue(mockClass),
+        }),
+      });
+
+      (NonUserBooking.recordFoc as jest.Mock).mockResolvedValue({
+        ...mockBooking,
+        status: "FOC",
+        attendanceTime: new Date(),
+      });
+
+      const result = await BookingsService.recordNonUserFoc(bookingId);
+
+      expect(NonUserBooking.recordFoc).toHaveBeenCalledWith(
+        bookingId,
+        expect.anything()
+      );
+      expect(result.status).toBe("FOC");
+      expect((result as any).paymentId).toBeUndefined();
+    });
+  });
 });

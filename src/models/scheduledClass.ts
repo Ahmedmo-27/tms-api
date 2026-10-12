@@ -18,6 +18,7 @@ interface IMemberBooking {
 interface IWaitlistedMember {
   uid: Types.ObjectId;
   addedAt: Date;
+  isManual?: boolean;
 }
 
 export interface IAttendanceConfirmation {
@@ -200,6 +201,7 @@ const ScheduledClassSchema = new Schema<
       {
         uid: { type: Schema.Types.ObjectId, ref: "User", required: true },
         addedAt: { type: Date, default: Date.now },
+        isManual: { type: Boolean, default: false },
       },
     ],
     default: [],
@@ -492,7 +494,11 @@ ScheduledClassSchema.static(
       { _id: new Types.ObjectId(scid) },
       {
         $push: {
-          waitlistedMembers: { uid: new Types.ObjectId(uid), addedAt: new Date() },
+          waitlistedMembers: {
+            uid: new Types.ObjectId(uid),
+            addedAt: new Date(),
+            isManual: true,
+          },
         },
       },
     );

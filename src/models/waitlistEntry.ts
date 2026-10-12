@@ -8,6 +8,7 @@ export interface IWaitlistEntry extends Document {
   status: "WAITING" | "NOTIFIED" | "BOOKED" | "EXPIRED" | "SKIPPED" | "CANCELLED";
   notifiedAt?: Date;
   reservationExpiresAt?: Date;
+  isManual?: boolean;
 }
 
 const WaitlistEntrySchema = new Schema<IWaitlistEntry>(
@@ -45,6 +46,10 @@ const WaitlistEntrySchema = new Schema<IWaitlistEntry>(
     },
     reservationExpiresAt: {
       type: Date,
+    },
+    isManual: {
+      type: Boolean,
+      default: false,
     },
   },
   {

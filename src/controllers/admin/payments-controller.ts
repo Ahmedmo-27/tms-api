@@ -125,7 +125,7 @@ export const updatePayment = asyncHandler(
       }
     }
 
-    const VALID_METHODS = ["APP", "VISA", "CASH", "INSTAPAY", "VALU", "PAYMENT_LINK", "DEDUCTED"];
+    const VALID_METHODS = ["APP", "VISA", "CASH", "INSTAPAY", "VALU", "PAYMENT_LINK", "DEDUCTED", "COACHERA"];
     if (paymentMethod !== undefined && !VALID_METHODS.includes(paymentMethod)) {
       throw new BadRequestError(
         "INVALID_PAYMENT_METHOD",
@@ -139,6 +139,7 @@ export const updatePayment = asyncHandler(
       "WALKIN",
       "NON_USER_BOOKING",
       "NON_USER_PACKAGE",
+      "ONLINE_CLASS",
       "OTHER",
     ];
     if (purpose !== undefined && !VALID_PURPOSES.includes(purpose)) {
