@@ -122,7 +122,6 @@ const PaymentSchema = new Schema({
   platform: {
     type: String,
     required: false,
-    default: "COACHERA",
   },
 });
 
