@@ -389,12 +389,18 @@ export class SchedulerService {
         },
       );
 
+    const isReformer = /reformer/i.test(cls.title || "");
+    const defaultDurationMs = (isReformer ? 50 : 60) * 60 * 1000;
+    const resolvedEndTime =
+      endTime ||
+      new Date(new Date(startTime).getTime() + defaultDurationMs).toISOString();
+
     const scheduledClass = new ScheduledClass({
       cid,
       locationId,
       className: cls.title,
       startTime,
-      endTime,
+      endTime: resolvedEndTime,
       availableSlots,
       coachId: normalizeCoachIds(coachId).map((id) => new Types.ObjectId(id)),
     });

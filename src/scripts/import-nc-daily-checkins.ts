@@ -536,11 +536,13 @@ async function findOrCreateScheduledClass(opts: {
   dryRun: boolean;
   stats: ImportStats;
   scCache: Map<string, string>;
+  title?: string;
 }): Promise<string> {
   const cacheKey = `${opts.cid}|${opts.locationId}|${opts.startTime.toISOString()}`;
   if (opts.scCache.has(cacheKey)) return opts.scCache.get(cacheKey)!;
 
-  const endTime = new Date(opts.startTime.getTime() + 60 * 60 * 1000);
+  const durationMinutes = /reformer/i.test(opts.title || "") ? 50 : 60;
+  const endTime = new Date(opts.startTime.getTime() + durationMinutes * 60 * 1000);
 
   if (!opts.dryRun) {
     const existing = await ScheduledClass.findOne({
@@ -862,6 +864,7 @@ async function processPerson(
       dryRun: ctx.dryRun,
       stats: ctx.stats,
       scCache: ctx.scCache,
+      title,
     });
     await bookAndScan({
       scid,
