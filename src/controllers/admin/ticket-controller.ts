@@ -75,11 +75,13 @@ async function createTicketForUser(userId: Types.ObjectId, body: TicketBody) {
     creatorName: userDoc.name,
   });
 
-  void sendTicketConfirmationEmail(userDoc.email, userDoc.name, body.category).catch((e) =>
-    logger.error("Ticket confirmation email failed", {
-      error: (e as Error).message,
-    })
-  );
+  if (userDoc.email) {
+    void sendTicketConfirmationEmail(userDoc.email, userDoc.name, body.category).catch((e) =>
+      logger.error("Ticket confirmation email failed", {
+        error: (e as Error).message,
+      })
+    );
+  }
 
   void sendNewTicketManagementNotificationEmail(ticket).catch((e) =>
     logger.error("Ticket management notification email failed", {

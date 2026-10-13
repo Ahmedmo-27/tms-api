@@ -30,8 +30,8 @@ app.use(
 );
 app.use(
   express.json({
-    verify: (req: any, _res, buf) => {
-      req.rawBody = buf.toString("utf8");
+    verify: (req: Request, _res: Response, buf: Buffer) => {
+      (req as any).rawBody = buf.toString("utf8");
     },
   })
 );

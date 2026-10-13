@@ -177,6 +177,6 @@ export function mapMemberSearchResultDto(
     _id: (user._id as Types.ObjectId).toString(),
     name: user.name,
     phoneNumber: user.phoneNumber,
-    email: user.email,
+    email: user.email || "",
   };
 }

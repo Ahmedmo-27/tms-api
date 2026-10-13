@@ -2,8 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import crypto from "crypto";
 import { AuthFailureError, InternalError } from "../core/ApiError";
 
-/** Allowed clock drift / replay window in seconds (5 minutes) */
-const MAX_TIMESTAMP_AGE_SECONDS = 300;
+const MAX_TIMESTAMP_AGE_SECONDS = 300; // 5 minutes
 
 export function verifyCoacheraSignature(
   req: Request,
@@ -18,8 +17,12 @@ export function verifyCoacheraSignature(
     );
   }
 
-  const ts = req.headers["x-mindspace-timestamp"];
-  const sig = req.headers["x-mindspace-signature"];
+  const ts = (req.headers["x-mindspace-timestamp"] ?? req.headers["x-coachera-timestamp"]) as
+    | string
+    | undefined;
+  const sig = (req.headers["x-mindspace-signature"] ?? req.headers["x-coachera-signature"]) as
+    | string
+    | undefined;
 
   if (!ts || typeof ts !== "string" || !sig || typeof sig !== "string") {
     throw new AuthFailureError(
@@ -29,7 +32,7 @@ export function verifyCoacheraSignature(
   }
 
   const timestampNum = parseInt(ts, 10);
-  if (isNaN(timestampNum)) {
+  if (isNaN(timestampNum) || timestampNum <= 0) {
     throw new AuthFailureError(
       "INVALID_TIMESTAMP_FORMAT",
       "Invalid timestamp format in x-mindspace-timestamp header"
@@ -45,15 +48,18 @@ export function verifyCoacheraSignature(
   }
 
   // Obtain raw body string
-  const rawBody = (req as any).rawBody ?? JSON.stringify(req.body ?? {});
+  const rawBody: string =
+    typeof (req as any).rawBody === "string"
+      ? (req as any).rawBody
+      : JSON.stringify(req.body ?? {});
 
   const expectedSig = crypto
     .createHmac("sha256", secret)
     .update(`${ts}.${rawBody}`)
     .digest("hex");
 
-  const providedBuf = Buffer.from(sig, "hex");
-  const expectedBuf = Buffer.from(expectedSig, "hex");
+  const providedBuf = Buffer.from(sig.trim(), "utf8");
+  const expectedBuf = Buffer.from(expectedSig, "utf8");
 
   if (
     providedBuf.length !== expectedBuf.length ||

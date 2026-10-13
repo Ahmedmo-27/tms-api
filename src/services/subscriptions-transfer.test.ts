@@ -9,6 +9,12 @@ jest.mock("../models/member");
 jest.mock("../models/package");
 jest.mock("../models/nonUserPackage");
 jest.mock("../models/user");
+jest.mock("../models/dailyAttendance", () => ({
+  __esModule: true,
+  default: {
+    updateMany: jest.fn().mockResolvedValue({}),
+  },
+}));
 jest.mock("../config/logger", () => ({
   info: jest.fn(),
   error: jest.fn(),

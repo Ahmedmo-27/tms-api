@@ -6,9 +6,11 @@ import {
   submitTicket,
   getActiveTicketCategories,
 } from "../controllers/admin/ticket-controller";
-import { handleCoacheraIntake } from "../controllers/external/coachera-controller";
+import {
+  handleCoacheraIntake,
+  receiveCoacheraIntake,
+} from "../controllers/external/coachera-controller";
 import { verifyCoacheraSignature } from "../middlewares/coachera-auth.middleware";
-
 import { authenticateUser } from "../middlewares/auth.middleware";
 
 const exposedRoutes = express.Router();
@@ -28,7 +30,7 @@ exposedRoutes.post(
 exposedRoutes.get("/ticket-categories", getActiveTicketCategories);
 exposedRoutes.post("/tickets", defaultLimiter, authenticateUser, submitTicket);
 
-// Coachera online class payments intake
+// Coachera online class payments intake webhooks
 exposedRoutes.post(
   "/coachera-intake",
   defaultLimiter,
@@ -40,6 +42,12 @@ exposedRoutes.post(
   defaultLimiter,
   verifyCoacheraSignature,
   handleCoacheraIntake
+);
+exposedRoutes.post(
+  "/coachera/intake",
+  defaultLimiter,
+  verifyCoacheraSignature,
+  receiveCoacheraIntake
 );
 
 export default exposedRoutes;

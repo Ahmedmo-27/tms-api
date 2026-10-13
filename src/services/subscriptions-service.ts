@@ -31,6 +31,10 @@ import {
 } from "../utils/matcha-branch";
 import { resolveAppPackageLocationId } from "../utils/app-package-location";
 import Payment from "../models/payment";
+import {
+  isCoacheraOnlinePackage,
+  notifyCoacheraOfPurchase,
+} from "./coachera-service";
 
 export class SubscriptionsService {
   /** Same catalog package + Cairo start day already on the member. */
@@ -299,6 +303,9 @@ export class SubscriptionsService {
         pkg.expiryPeriod,
       );
 
+    let createdPayment: any = null;
+    let subscriberUser: any = null;
+
     await runInTransaction(async (session: ClientSession) => {
       await SubscriptionsService.assertNoDuplicateMemberPackage(
         uid,
@@ -316,6 +323,7 @@ export class SubscriptionsService {
         user.role = "member";
         await user.save(session ? { session } : {});
       }
+      subscriberUser = user;
       if (user?.phoneNumber) {
         await SubscriptionsService.assertNoDuplicateNonUserPackage(
           user.phoneNumber,
@@ -344,6 +352,7 @@ export class SubscriptionsService {
         undefined,
         locationId
       );
+      createdPayment = payment;
       const remainingClasses = pendingDeduction
         ? pkg.numberOfSessions - 1
         : pkg.numberOfSessions;
@@ -403,7 +412,15 @@ export class SubscriptionsService {
       if (pkg.category !== "PERSONAL_TRAINING") {
         await sendPaymentToRentalSystem(payment);
       }
+    });
+
+    if (isCoacheraOnlinePackage(pkg) && createdPayment) {
+      await notifyCoacheraOfPurchase({
+        payment: createdPayment,
+        pkg,
+        user: subscriberUser,
       });
+    }
 
     if (isRenewal && pkg.coachId) {
       SubscriptionsService.notifyCoachOfPtRenewal({
@@ -672,6 +689,9 @@ export class SubscriptionsService {
       }
     }
 
+    let createdPayment: any = null;
+    let subscriberUser: any = null;
+
     await runInTransaction(async (session: ClientSession) => {
       await SubscriptionsService.assertNoDuplicateMemberPackage(
         uid,
@@ -680,6 +700,7 @@ export class SubscriptionsService {
         session,
       );
       const user = await User.findById(uid).session(session);
+      subscriberUser = user;
       if (user) {
         memberUser = { name: user.name, phoneNumber: user.phoneNumber };
       }
@@ -756,6 +777,7 @@ export class SubscriptionsService {
         undefined,
         packageLocationId,
       );
+      createdPayment = payment;
       await Member.addPackage(
         uid,
         pkg._id.toString(),
@@ -796,6 +818,14 @@ export class SubscriptionsService {
         await sendPaymentToRentalSystem(payment);
       }
     });
+
+    if (isCoacheraOnlinePackage(pkg) && createdPayment) {
+      await notifyCoacheraOfPurchase({
+        payment: createdPayment,
+        pkg,
+        user: subscriberUser,
+      });
+    }
 
     if (isRenewal && pkg.coachId) {
       SubscriptionsService.notifyCoachOfPtRenewal({
@@ -929,6 +959,31 @@ export class SubscriptionsService {
           savedPkg.pkgEndDate.toISOString(),
           session
         );
+
+        const catalogPkg = await Package.findById(savedPkg.pkgId).session(session || null);
+        if (catalogPkg && savedPkg.remainingClasses < catalogPkg.numberOfSessions) {
+          const usedClasses = catalogPkg.numberOfSessions - savedPkg.remainingClasses;
+          const pushAdjustment = async (s: ClientSession) => {
+            await Member.pushAdjustmentRecord(
+              uid,
+              savedPkg.pkgId.toString(),
+              new Date(savedPkg.pkgStartDate),
+              {
+                date: (savedPkg as any).createdAt || new Date(),
+                source: "ADMIN",
+                type: "DEDUCT",
+                amount: usedClasses,
+                reason: "Attended a class using this package",
+              },
+              s
+            );
+          };
+          if (session) {
+            await pushAdjustment(session);
+          } else {
+            await runInTransaction(pushAdjustment);
+          }
+        }
       } else {
         logger.info("Skipping duplicate staged NonUserPackage", {
           uid,
@@ -951,6 +1006,21 @@ export class SubscriptionsService {
         { role: "member" },
         session ? { session } : {}
       );
+      try {
+        const DailyAttendance = (await import("../models/dailyAttendance")).default;
+        await DailyAttendance.updateMany(
+          { "openGymAttendance.guestPhone": cleanPhone },
+          { $set: { "openGymAttendance.$[elem].uid": new Types.ObjectId(uid) } },
+          { arrayFilters: [{ "elem.guestPhone": cleanPhone }], ...(session ? { session } : {}) }
+        );
+        await DailyAttendance.updateMany(
+          { "ptAttendance.guestPhone": cleanPhone },
+          { $set: { "ptAttendance.$[elem].uid": new Types.ObjectId(uid) } },
+          { arrayFilters: [{ "elem.guestPhone": cleanPhone }], ...(session ? { session } : {}) }
+        );
+      } catch (attendanceErr) {
+        logger.warn("Failed to link guest attendance to member:", attendanceErr);
+      }
     }
   }
 
@@ -965,6 +1035,7 @@ export class SubscriptionsService {
     amount?: string,
     locationId?: string,
     note?: string,
+    nationalId?: string,
   ) {
     if (!name || !name.trim()) {
       throw new BadRequestError("NAME_REQUIRED", "Name is required");
@@ -1007,6 +1078,9 @@ export class SubscriptionsService {
       paymentDate = toStoredPackageDate(paymentDate).toISOString();
     }
     const endDate = getPackageEndDate(pkgStartDate, pkg).toISOString();
+    let createdPayment: any = null;
+    let matchedUser: any = null;
+
     await runInTransaction(async (session: ClientSession) => {
       await SubscriptionsService.assertNoDuplicateNonUserPackage(
         phoneNumber,
@@ -1017,6 +1091,7 @@ export class SubscriptionsService {
       const existingUser = await User.findOne({ phoneNumber }).session(
         session ?? null,
       );
+      matchedUser = existingUser;
       if (existingUser) {
         await SubscriptionsService.assertNoDuplicateMemberPackage(
           String(existingUser._id),
@@ -1024,6 +1099,20 @@ export class SubscriptionsService {
           pkgStartDate,
           session,
         );
+        if (nationalId && !existingUser.nationalId) {
+          existingUser.nationalId = nationalId;
+          await existingUser.save(session ? { session } : {});
+        }
+      } else {
+        const pendingUser = new User({
+          name,
+          phoneNumber,
+          email: "",
+          role: "user",
+          ...(nationalId ? { nationalId } : {}),
+        });
+        await pendingUser.save(session ? { session } : {});
+        matchedUser = pendingUser;
       }
       const resolvedAmount =
         amount !== undefined && amount !== null && String(amount) !== ""
@@ -1045,6 +1134,7 @@ export class SubscriptionsService {
         phoneNumber,
         locationId
       );
+      createdPayment = payment;
       logger.info("Payment Created: ", {
         paymentId: payment._id,
         amount: payment.amount,
@@ -1060,11 +1150,21 @@ export class SubscriptionsService {
           : (pkg as any).numberOfSessions,
         paymentId: payment._id,
         createdAt: new Date(),
+        ...(nationalId ? { nationalId } : {}),
       });
       await nonUserPackage.save(session ? { session } : {});
       if (pkg.category !== "PERSONAL_TRAINING") {
         await sendPaymentToRentalSystem(payment);
       }
     });
+
+    if (isCoacheraOnlinePackage(pkg) && createdPayment) {
+      await notifyCoacheraOfPurchase({
+        payment: createdPayment,
+        pkg,
+        user: matchedUser,
+        fallbackClient: { name, phone: phoneNumber },
+      });
+    }
   }
 }

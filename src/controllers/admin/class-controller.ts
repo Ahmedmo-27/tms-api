@@ -15,7 +15,9 @@ import asyncHandler from "../../utils/asyncHandler";
 import { BookingsService } from "../../services/bookings-service";
 import { SchedulerService } from "../../services/scheduler-service";
 import NonUserBooking, { INonUserBooking } from "../../models/nonUserBookings";
+import NonUserPackage from "../../models/nonUserPackage";
 import Payment from "../../models/payment";
+import { normalizePhoneNumber } from "../../utils/phone";
 import { Types } from "mongoose";
 import DailyAttendance from "../../models/dailyAttendance";
 import { ScanAdminService } from "../../services/scan-admin-service";
@@ -550,6 +552,7 @@ export const saveNonUserPayment = asyncHandler(async function (
   const paymentMethod = req.body.paymentMethod;
   const amount = req.body.amount;
   const paymentDate = req.body.paymentDate;
+  const { uid, pkgId, phoneNumber } = req.body;
   if (!bookingId || bookingId === "")
     throw new BadRequestError("INVALID_BOOKING_ID", "Booking Id is invalid");
   let booking;
@@ -558,20 +561,61 @@ export const saveNonUserPayment = asyncHandler(async function (
   if (isFoc) {
     booking = await BookingsService.recordNonUserFoc(bookingId);
   } else if (paymentMethod === "DEDUCTED") {
-    const nonUser = await NonUserBooking.findById(bookingId);
-    if (!nonUser) throw new NotFoundError("BOOKING_NOT_FOUND", "Booking is not found");
-    let uid = req.body.uid;
-    if (!uid && req.body.phoneNumber) {
-      const user = await User.findOne({ phoneNumber: req.body.phoneNumber.trim() });
-      if (user) uid = (user._id as Types.ObjectId).toString();
+    let deducted = false;
+    if (pkgId && Types.ObjectId.isValid(pkgId)) {
+      const nonUserPkg = await NonUserPackage.findOne({
+        _id: pkgId,
+        added: { $ne: true },
+        remainingClasses: { $gt: 0 },
+      });
+      if (nonUserPkg) {
+        nonUserPkg.remainingClasses -= 1;
+        await nonUserPkg.save();
+        deducted = true;
+      }
     }
-    if (!uid) {
-      throw new BadRequestError("MEMBER_REQUIRED", "Member could not be found for package deduction");
+    if (!deducted && phoneNumber) {
+      const cleanPhone = normalizePhoneNumber(phoneNumber);
+      const nonUserPkg = await NonUserPackage.findOne({
+        phoneNumber: cleanPhone,
+        added: { $ne: true },
+        remainingClasses: { $gt: 0 },
+        ...(pkgId && Types.ObjectId.isValid(pkgId) ? { $or: [{ _id: pkgId }, { pkgId }] } : {}),
+      });
+      if (nonUserPkg) {
+        nonUserPkg.remainingClasses -= 1;
+        await nonUserPkg.save();
+        deducted = true;
+      }
     }
-    booking = await ScanAdminService.updateScanRow(
-      { source: "class", parentId: nonUser.scid.toString(), rowId: bookingId },
-      { uid, pkgId: req.body.pkgId, status: "SUCCESS" }
-    );
+
+    if (deducted) {
+      const branchLocationId = resolveLocationIdForWrite(req);
+      booking = await BookingsService.recordNonUserPayment(
+        bookingId,
+        paymentMethod,
+        amount,
+        paymentDate,
+        undefined,
+        branchLocationId
+      );
+    } else {
+      const nonUser = await NonUserBooking.findById(bookingId);
+      if (!nonUser) throw new NotFoundError("BOOKING_NOT_FOUND", "Booking is not found");
+      let targetUid = uid;
+      if (!targetUid && phoneNumber) {
+        const cleanPhone = normalizePhoneNumber(phoneNumber);
+        const user = await User.findOne({ phoneNumber: cleanPhone });
+        if (user) targetUid = (user._id as Types.ObjectId).toString();
+      }
+      if (!targetUid) {
+        throw new BadRequestError("MEMBER_REQUIRED", "Member could not be found for package deduction");
+      }
+      booking = await ScanAdminService.updateScanRow(
+        { source: "class", parentId: nonUser.scid.toString(), rowId: bookingId },
+        { uid: targetUid, pkgId, status: "SUCCESS" }
+      );
+    }
   } else {
     const branchLocationId = resolveLocationIdForWrite(req);
     booking = await BookingsService.recordNonUserPayment(

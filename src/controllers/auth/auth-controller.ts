@@ -161,14 +161,76 @@ export const registerUser = asyncHandler(
     logger.info("Started user registeration", {
       data: { name, email, phoneNumber },
     });
-    const cleanPhoneNumber = phoneNumber.replace(/\s/g, "");
+    const cleanPhoneNumber = normalizePhoneNumber(phoneNumber);
 
-    if (await User.findOne({ phoneNumber: cleanPhoneNumber }))
-      throw new ConflictError("PHONE_ALREADY_EXISTS", "Phone number already exists", {
-        phoneNumber,
+    const existingUser = await User.findOne({ phoneNumber: cleanPhoneNumber });
+    if (existingUser) {
+      // Check if this is an uncompleted/pre-registered non-member account created by admin
+      const isUnclaimedAccount =
+        !existingUser.email ||
+        existingUser.email === "" ||
+        !existingUser.password;
+
+      if (!isUnclaimedAccount) {
+        throw new ConflictError(
+          "PHONE_ALREADY_EXISTS",
+          "Phone number already exists",
+          { phoneNumber },
+        );
+      }
+
+      // Check if the requested email is taken by another account
+      const normalizedEmail = email.toLowerCase().trim();
+      const emailConflict = await User.findOne({
+        email: normalizedEmail,
+        _id: { $ne: existingUser._id },
+      });
+      if (emailConflict) {
+        throw new ConflictError(
+          "EMAIL_ALREADY_EXISTS",
+          "Email already exists",
+          { email },
+        );
+      }
+
+      // Member registration overrides admin-entered name if different, binds email & password, and activates member account
+      await runInTransaction(async (session) => {
+        existingUser.name = name ? name.trim() : existingUser.name;
+        existingUser.email = normalizedEmail;
+        existingUser.password = password;
+        existingUser.role = "member";
+        await existingUser.save(session ? { session } : {});
+
+        let member = await Member.findOne({ uid: existingUser._id }).session(
+          session ?? null,
+        );
+        if (!member) {
+          member = new Member({
+            uid: existingUser._id,
+            packages: [],
+            bookings: [],
+            attendance: [],
+            isActive: true,
+          });
+          await member.save(session ? { session } : {});
+        }
+
+        await SubscriptionsService.transferStagedPackagesToMember(
+          (existingUser._id as Types.ObjectId).toString(),
+          cleanPhoneNumber,
+          session,
+        );
       });
 
-    if (await User.findOne({ email: email.toLowerCase() }))
+      const token = await existingUser.generateAuthToken("mobile", fcmToken);
+      new SuccessResponse("Mobile User Registered!", {
+        user: existingUser,
+        token,
+      }).send(res);
+      return;
+    }
+
+    if (await User.findOne({ email: email.toLowerCase().trim() }))
       throw new ConflictError("EMAIL_ALREADY_EXISTS", "Email already exists", {
         email,
       });
@@ -186,8 +248,8 @@ export const registerUser = asyncHandler(
 
     // Never accept role from the client — public registration is always pending "user"
     const user = new User({
-      name,
-      email: email.toLowerCase(),
+      name: name ? name.trim() : "",
+      email: email.toLowerCase().trim(),
       password,
       phoneNumber: cleanPhoneNumber,
       role: "user",
@@ -320,7 +382,7 @@ export const sendResetCode = asyncHandler(
       "If an account exists for that email, a reset code has been sent.";
 
     const user = await User.findOne({ email: email.toLowerCase() });
-    if (user) {
+    if (user && user.email) {
       const resetCode = crypto.randomInt(0, 1_000_000).toString().padStart(6, "0");
       user.resetCode = resetCode;
       await user.save();
