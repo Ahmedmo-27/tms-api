@@ -199,7 +199,8 @@ async function main() {
     }
 
     const startTime = dt(entry.date, entry.h, entry.m);
-    const endTime   = dt(entry.date, entry.h + 1, entry.m); // all classes are 1 hour
+    const durationMinutes = /reformer/i.test(entry.title) ? 50 : 60;
+    const endTime   = new Date(startTime.getTime() + durationMinutes * 60 * 1000);
 
     const duplicate = await ScheduledClass.findOne({ cid, startTime });
     if (duplicate) {

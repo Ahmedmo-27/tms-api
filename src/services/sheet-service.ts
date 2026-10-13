@@ -228,12 +228,17 @@ function cairoHoursMinutes(date: Date): { hours: number; minutes: number } {
   return { hours: cairo.getHours(), minutes: cairo.getMinutes() };
 }
 
-function classSessionTimes(dateKey: string, hours: number, minutes: number) {
+function classSessionTimes(
+  dateKey: string,
+  hours: number,
+  minutes: number,
+  durationMinutes: number = 60,
+) {
   const cairo = toZonedTime(startOfDateCairo(dateKey), CAIRO_TZ);
   cairo.setHours(hours, minutes, 0, 0);
   const start = fromZonedTime(cairo, CAIRO_TZ);
   const endCairo = new Date(cairo);
-  endCairo.setMinutes(endCairo.getMinutes() + 60);
+  endCairo.setMinutes(endCairo.getMinutes() + durationMinutes);
   const end = fromZonedTime(endCairo, CAIRO_TZ);
   return { start, end };
 }
@@ -1065,7 +1070,15 @@ export class SheetService {
     if (!matched.ok) return matched;
     const catalog = matched.catalog;
 
-    const { start, end } = classSessionTimes(dateKey, parsed.hours, parsed.minutes);
+    const isReformer =
+      /reformer/i.test(catalog.title || "") || /reformer/i.test(block.title || "");
+    const durationMinutes = isReformer ? 50 : 60;
+    const { start, end } = classSessionTimes(
+      dateKey,
+      parsed.hours,
+      parsed.minutes,
+      durationMinutes,
+    );
     const coachIds = await this.findCoachIds(block.coachName || "");
 
     try {
