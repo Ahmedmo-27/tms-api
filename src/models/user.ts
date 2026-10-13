@@ -13,8 +13,8 @@ export interface Itoken {
 }
 
 export interface IUser extends Document {
-  email: string;
-  password: string;
+  email?: string;
+  password?: string;
   name: string;
   phoneNumber: string;
   role: string;
@@ -64,20 +64,22 @@ const TokenSchema: Schema<Itoken> = new Schema({
 const UserSchema: Schema<IUser, UserModel, IUserMethods> = new Schema({
   email: {
     type: String,
-    required: true,
-    unique: true,
+    required: false,
+    default: "",
     trim: true,
     lowercase: true,
-    match: [
-      /^[\w-]+(\.[\w-]+)*@([\w-]+\.)+[a-zA-Z]{2,}$/,
-      "Please enter a valid email address",
-    ],
+    validate: {
+      validator: function (v: string) {
+        if (!v || v === "") return true;
+        return /^[\w-]+(\.[\w-]+)*@([\w-]+\.)+[a-zA-Z]{2,}$/.test(v);
+      },
+      message: "Please enter a valid email address",
+    },
   },
   password: {
     type: String,
-    required: true,
+    required: false,
     trim: true,
-    minlength: [10, "Password must be at least 10 characters"],
   },
   name: {
     type: String,
@@ -142,8 +144,19 @@ const UserSchema: Schema<IUser, UserModel, IUserMethods> = new Schema({
   },
 });
 
+UserSchema.index(
+  { email: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      email: { $type: "string", $gt: "" },
+    },
+  }
+);
+
 UserSchema.set("toJSON", {
   transform(_doc, ret: Record<string, unknown>) {
+    ret.email = ret.email || "";
     delete ret.password;
     delete ret.tokens;
     delete ret.resetCode;
@@ -154,6 +167,7 @@ UserSchema.set("toJSON", {
 
 UserSchema.set("toObject", {
   transform(_doc, ret: Record<string, unknown>) {
+    ret.email = ret.email || "";
     delete ret.password;
     delete ret.tokens;
     delete ret.resetCode;
@@ -164,7 +178,7 @@ UserSchema.set("toObject", {
 
 UserSchema.pre("save", async function (next) {
   const user = this;
-  if (user.isModified("password")) {
+  if (user.isModified("password") && user.password) {
     try {
       user.password = await bcrypt.hash(user.password, 12);
       next();
@@ -188,7 +202,7 @@ UserSchema.static(
       "Invalid credentials",
       { phoneNumber },
     );
-    if (!user) throw invalid;
+    if (!user || !user.password) throw invalid;
     const isValid = await user.comparePassword(password);
     if (!isValid) throw invalid;
     return user;
@@ -200,6 +214,7 @@ UserSchema.method(
   async function (password: string): Promise<boolean> {
     try {
       const user = this;
+      if (!user.password) return false;
       return await bcrypt.compare(password, user.password);
     } catch (error) {
       throw new InternalError("BCRYPT_ERROR", "Password comparison failed");

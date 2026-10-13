@@ -28,6 +28,9 @@ export interface IPayment extends Document {
   coachName?: string;
   durationMonths?: number;
   platform?: string;
+  coacheraStatus?: "pending_signup" | "active" | "synced" | "failed" | "skipped";
+  coacheraSyncedAt?: Date;
+  coacheraError?: string;
 }
 
 const PaymentSchema = new Schema({
@@ -120,6 +123,19 @@ const PaymentSchema = new Schema({
     required: false,
   },
   platform: {
+    type: String,
+    required: false,
+  },
+  coacheraStatus: {
+    type: String,
+    enum: ["pending_signup", "active", "synced", "failed", "skipped"],
+    required: false,
+  },
+  coacheraSyncedAt: {
+    type: Date,
+    required: false,
+  },
+  coacheraError: {
     type: String,
     required: false,
   },

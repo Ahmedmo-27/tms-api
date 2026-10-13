@@ -22,6 +22,18 @@ const startServer = async () => {
   await connectDB();
 
   try {
+    try {
+      const indexes = await User.collection.indexes();
+      const emailIndex = indexes.find((idx) => idx.name === "email_1");
+      if (emailIndex && !emailIndex.partialFilterExpression) {
+        await User.collection.dropIndex("email_1");
+        await User.syncIndexes();
+        logger.info("Migrated email_1 index to partial unique index");
+      }
+    } catch (idxErr) {
+      logger.warn("Email index migration warning:", idxErr);
+    }
+
     // Migration: ensure all existing member and mobile tokens never expire by removing expiresIn
     await User.updateMany(
       { role: { $in: ["member", "user"] } },

@@ -19,6 +19,7 @@
     "test:package-categories": "node scripts/test-package-categories-flows.js",
     "test:package-branches": "node scripts/test-package-branch-flows.js",
     "test:package-flows": "npm run test:package-duplicates && npm run test:package-categories && npm run test:package-branches",
+    "test:non-member-flow": "node scripts/test-non-member-registration-flow.js",
     "test:member-payment-flow": "node scripts/test-member-booking-payment-flow.js",
     "coverage": "jest --runInBand --coverage",
     "seed": "npx ts-node ./src/seed/seed.ts",
@@ -34,7 +35,12 @@
     "verify-location-fix": "npx ts-node ./src/scripts/verify-location-fix-local.ts",
     "verify-location-fix:tms-test": "npx ts-node ./src/scripts/verify-location-fix-tms-test.ts",
     "assign-pt-coaches": "npx ts-node ./src/scripts/assign-pt-packages-to-coaches.ts",
-    "assign-pt-coaches:apply": "npx ts-node ./src/scripts/assign-pt-packages-to-coaches.ts --apply"
+    "assign-pt-coaches:apply": "npx ts-node ./src/scripts/assign-pt-packages-to-coaches.ts --apply",
+    "update-prices:dry-run": "npx ts-node ./src/scripts/update-prod-prices.ts",
+    "update-prices:apply": "npx ts-node ./src/scripts/update-prod-prices.ts --apply",
+    "check:space-memberships": "npx ts-node ./src/scripts/check-space-memberships.ts",
+    "sync-coaches-users": "npx ts-node ./src/scripts/sync-coaches-users.ts",
+    "sync-coaches-users:apply": "npx ts-node ./src/scripts/sync-coaches-users.ts --apply"
   },
   "repository": {
     "type": "git",
