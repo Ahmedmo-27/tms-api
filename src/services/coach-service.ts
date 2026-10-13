@@ -78,6 +78,95 @@ export class CoachService {
   }
 
   /**
+   * Resolves coach contact information (name, email, phone) for email notifications.
+   * Looks up Coach document, linked User document, or matches by phone/name.
+   */
+  static async getCoachContactInfo(coachId: Types.ObjectId | string): Promise<{
+    coachDocId: Types.ObjectId;
+    coachName: string;
+    email: string | null;
+    phoneNumber?: string;
+  } | null> {
+    if (!coachId) return null;
+    const coachIdStr = coachId.toString().trim();
+    if (!Types.ObjectId.isValid(coachIdStr)) return null;
+
+    const coachObjectId = new Types.ObjectId(coachIdStr);
+    const coachDoc = await Coach.findById(coachObjectId);
+
+    let email: string | null = null;
+    let coachName = coachDoc?.coachName || "Coach";
+    let phoneNumber = coachDoc?.phoneNumber;
+    let resolvedDocId: Types.ObjectId = coachDoc?._id ? (coachDoc._id as Types.ObjectId) : coachObjectId;
+
+    // 1. If Coach document found and has userId
+    if (coachDoc?.userId) {
+      const user = await User.findById(coachDoc.userId).select("name email tmsEmail phoneNumber").lean();
+      if (user) {
+        if (user.email || user.tmsEmail) {
+          email = (user.email || user.tmsEmail || "").trim().toLowerCase();
+        }
+        if (user.name) coachName = user.name;
+        if (user.phoneNumber) phoneNumber = user.phoneNumber;
+      }
+    }
+
+    // 2. If no email yet, try finding User by coach phone number
+    if (!email && coachDoc?.phoneNumber) {
+      const cleanPhone = coachDoc.phoneNumber.replace(/\s/g, "");
+      if (cleanPhone && cleanPhone.length >= 8 && cleanPhone !== "01111111111" && cleanPhone !== "00000000000") {
+        const user = await User.findOne({
+          phoneNumber: cleanPhone,
+          $or: [{ email: { $exists: true, $ne: "" } }, { tmsEmail: { $exists: true, $ne: "" } }],
+        }).select("name email tmsEmail phoneNumber").lean();
+        if (user) {
+          email = (user.email || user.tmsEmail || "").trim().toLowerCase();
+          if (user.name) coachName = user.name;
+        }
+      }
+    }
+
+    // 3. If no email yet, try finding User by coach name
+    if (!email && coachDoc?.coachName) {
+      const user = await User.findOne({
+        name: { $regex: new RegExp(`^${escapeRegex(coachDoc.coachName.trim())}$`, "i") },
+        role: { $in: ["coach", "managing_coach", "admin"] },
+        $or: [{ email: { $exists: true, $ne: "" } }, { tmsEmail: { $exists: true, $ne: "" } }],
+      }).select("name email tmsEmail phoneNumber").lean();
+      if (user) {
+        email = (user.email || user.tmsEmail || "").trim().toLowerCase();
+        if (user.name) coachName = user.name;
+      }
+    }
+
+    // 4. Fallback if coachDoc was null — maybe coachId was directly a User ObjectId
+    if (!coachDoc) {
+      const user = await User.findById(coachObjectId).select("name email tmsEmail phoneNumber role").lean();
+      if (user) {
+        resolvedDocId = user._id as Types.ObjectId;
+        coachName = user.name || "Coach";
+        phoneNumber = user.phoneNumber;
+        email = (user.email || user.tmsEmail || "").trim().toLowerCase();
+      } else {
+        return null;
+      }
+    }
+
+    // Validate email format
+    const emailRegex = /^[\w-]+(\.[\w-]+)*@([\w-]+\.)+[a-zA-Z]{2,}$/;
+    if (email && !emailRegex.test(email)) {
+      email = null;
+    }
+
+    return {
+      coachDocId: resolvedDocId,
+      coachName,
+      email: email || null,
+      phoneNumber,
+    };
+  }
+
+  /**
    * Resolves all possible identifier matches for a coach across Coach documents and User records.
    * This handles:
    * - Primary Coach document ID
@@ -911,7 +1000,7 @@ export class CoachService {
           memberId: "",
           name: walkIn.name ?? "Walk-In Guest",
           phoneNumber: walkIn.phoneNumber ?? "",
-          bookingMethod: "Walk In",
+          bookingMethod: walkIn.status === "FOC" ? "FOC" : "Walk In",
           activePackage: null,
         });
       }
@@ -1047,15 +1136,22 @@ export class CoachService {
           member: user?.name ?? "Unknown",
           phone:  user?.phoneNumber ?? "",
           time:   scan.scanTime.toISOString(),
-          method: scan.method ?? "",
-          status: scan.status ? "SUCCESS" : "FAILED",
+          method: scan.method === "Waitlist Confirmed" ? "Walk In" : (scan.method ?? ""),
+          status:
+            scan.status === "WILL_PAY" ||
+            scan.status === "FOC" ||
+            scan.status === "SUCCESS"
+              ? scan.status
+              : scan.status
+              ? "SUCCESS"
+              : "FAILED",
         };
       });
 
-      // Merge walk-in / non-user scans (ATTENDED -> WILL_PAY, PAID -> SUCCESS) matching Admin parseSchedule
+      // Merge walk-in / non-user scans (ATTENDED -> WILL_PAY, PAID -> SUCCESS, FOC -> FOC) matching Admin parseSchedule
       const walkInScans: any[] = [];
       for (const entry of classNonUserBookings) {
-        if (entry.status === "ATTENDED" || entry.status === "PAID") {
+        if (entry.status === "ATTENDED" || entry.status === "PAID" || entry.status === "FOC") {
           const scanTime = entry.attendanceTime
             ? new Date(entry.attendanceTime)
             : entry.bookingTime
@@ -1066,8 +1162,8 @@ export class CoachService {
             member: entry.name || "Walk-In Guest",
             phone: entry.phoneNumber || "",
             time: scanTime.toISOString(),
-            method: "Walk In",
-            status: entry.status === "PAID" ? "SUCCESS" : "WILL_PAY",
+            method: entry.status === "FOC" ? "FOC" : "Walk In",
+            status: entry.status === "FOC" ? "FOC" : entry.status === "PAID" ? "SUCCESS" : "WILL_PAY",
             bookingId: (entry._id as Types.ObjectId).toString(),
           });
         }
@@ -1184,7 +1280,7 @@ export class CoachService {
     const memberSuccessScanCount = scheduledClass.scans.filter((s: any) => s.status === true).length;
     const walkInAttendedCount = await NonUserBooking.countDocuments({
       scid: scheduledClass._id,
-      status: { $in: ["ATTENDED", "PAID"] },
+      status: { $in: ["ATTENDED", "PAID", "FOC"] },
     });
     const successScanCount = memberSuccessScanCount + walkInAttendedCount;
     const hasMissingPlace =

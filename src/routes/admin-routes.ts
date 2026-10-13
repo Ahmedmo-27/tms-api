@@ -36,6 +36,7 @@ import {
   bookNonUser,
   getNonUserBookings,
   recordNonUserAttendance,
+  recordNonUserFoc,
   cancelNonUserBooking,
   updateNonUserBookingPhone,
   addWalkIn,
@@ -75,7 +76,7 @@ import {
   updateCoach,
   deleteCoach,
 } from "../controllers/admin/coach-controller";
-import { addMember, getMember } from "../controllers/admin/member-controller";
+import { addMember, getMember, updateMember } from "../controllers/admin/member-controller";
 import { getAttendanceHistory } from "../controllers/admin/attendance-controller";
 import {
   deleteScanRow,
@@ -162,6 +163,12 @@ adminRoutes.post(
   authenticateUser,
   authorizeUser(["management", "branch_admin"]),
   addMember
+);
+adminRoutes.patch(
+  "/member/:id",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  updateMember
 );
 adminRoutes.get(
   "/pending-members",
@@ -488,6 +495,13 @@ adminRoutes.post(
   authenticateUser,
   authorizeUser(["management", "branch_admin"]),
   saveNonUserPayment
+)
+
+adminRoutes.post(
+  "/nonUserBooking/foc",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  recordNonUserFoc
 )
 
 adminRoutes.post(

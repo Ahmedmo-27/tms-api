@@ -99,7 +99,7 @@ export const verifyToken = asyncHandler(
 
 export const registerUserManually = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
-    const { name, phoneNumber, password } = req.body;
+    const { name, phoneNumber, password, nationalId } = req.body;
     assertPasswordStrength(password);
     const cleanPhoneNumber = normalizePhoneNumber(phoneNumber);
     if (await User.findOne({ phoneNumber: cleanPhoneNumber }))
@@ -107,15 +107,31 @@ export const registerUserManually = asyncHandler(
         phoneNumber,
       });
 
+    const cleanNationalId = nationalId
+      ? String(nationalId).trim().replace(/[\s\-]/g, "")
+      : undefined;
+    if (cleanNationalId) {
+      if (await User.findOne({ nationalId: cleanNationalId })) {
+        throw new ConflictError(
+          "NATIONAL_ID_ALREADY_EXISTS",
+          "National ID already exists",
+          { nationalId: cleanNationalId }
+        );
+      }
+    }
+
     let user: InstanceType<typeof User>;
     await runInTransaction(async (session) => {
-      const userData = {
+      const userData: any = {
         name,
         email: `${name.toLowerCase().replace(/\s/g, "")}@devdefault.com`,
         password,
         phoneNumber: cleanPhoneNumber,
         role: "member",
       };
+      if (cleanNationalId) {
+        userData.nationalId = cleanNationalId;
+      }
       user = new User(userData);
       await user.save(session ? { session } : {});
       const member = new Member({
@@ -138,7 +154,7 @@ export const registerUserManually = asyncHandler(
 
 export const registerUser = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
-    const { name, email, password, phoneNumber, fcmToken } = req.body;
+    const { name, email, password, phoneNumber, fcmToken, nationalId } = req.body;
     assertPasswordStrength(password);
     // Public registration creates pending "user" who will become a member on the mobile app
     const deviceType = "mobile";
@@ -157,6 +173,17 @@ export const registerUser = asyncHandler(
         email,
       });
 
+    const cleanNationalId = nationalId
+      ? String(nationalId).trim().replace(/[\s\-]/g, "")
+      : undefined;
+    if (cleanNationalId && (await User.findOne({ nationalId: cleanNationalId }))) {
+      throw new ConflictError(
+        "NATIONAL_ID_ALREADY_EXISTS",
+        "National ID already exists",
+        { nationalId: cleanNationalId }
+      );
+    }
+
     // Never accept role from the client — public registration is always pending "user"
     const user = new User({
       name,
@@ -164,6 +191,7 @@ export const registerUser = asyncHandler(
       password,
       phoneNumber: cleanPhoneNumber,
       role: "user",
+      ...(cleanNationalId ? { nationalId: cleanNationalId } : {}),
     });
     await user.save();
     const token = await user.generateAuthToken("mobile", fcmToken);

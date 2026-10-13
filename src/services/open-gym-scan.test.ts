@@ -96,7 +96,7 @@ describe("BookingsService branch open gym scans", () => {
     expect(DailyAttendance.recordOpenGymAttendance).toHaveBeenCalledWith(
       uid,
       "No Access At Location",
-      mockSession,
+      undefined,
       "FAILED",
       io,
       branchB,

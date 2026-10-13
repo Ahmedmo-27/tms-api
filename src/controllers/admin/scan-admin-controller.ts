@@ -87,9 +87,10 @@ export const updateScanRow = asyncHandler(async function (
     status !== undefined &&
     status !== "SUCCESS" &&
     status !== "FAILED" &&
-    status !== "WILL_PAY"
+    status !== "WILL_PAY" &&
+    status !== "FOC"
   ) {
-    throw new BadRequestError("INVALID_STATUS", "Status must be SUCCESS, FAILED, or WILL_PAY");
+    throw new BadRequestError("INVALID_STATUS", "Status must be SUCCESS, FAILED, WILL_PAY, or FOC");
   }
 
   const changes: ScanRowChanges = {};
@@ -133,9 +134,10 @@ export const moveScanToClass = asyncHandler(async function (
     status !== undefined &&
     status !== "SUCCESS" &&
     status !== "FAILED" &&
-    status !== "WILL_PAY"
+    status !== "WILL_PAY" &&
+    status !== "FOC"
   ) {
-    throw new BadRequestError("INVALID_STATUS", "Status must be SUCCESS, FAILED, or WILL_PAY");
+    throw new BadRequestError("INVALID_STATUS", "Status must be SUCCESS, FAILED, WILL_PAY, or FOC");
   }
 
   const restrictTo = resolveLocationFilter(req);
@@ -174,6 +176,10 @@ export const deleteScanRow = asyncHandler(async function (
   const restoreSession = raw === undefined ? true : raw !== "false" && raw !== false;
 
   await ScanAdminService.deleteScanRow(ref, { restoreSession });
+  const io = req.app.get("io");
+  if (io) {
+    io.emit("SUCCESS-SCAN");
+  }
   new SuccessResponse("Scan deleted", { restoreSession }).send(res);
 });
 

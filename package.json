@@ -75,6 +75,7 @@
   },
   "dependencies": {
     "@getbrevo/brevo": "^5.0.4",
+    "@types/nodemailer": "^8.0.2",
     "axios": "^1.10.0",
     "bcryptjs": "^3.0.2",
     "cookie-parser": "^1.4.7",
@@ -89,6 +90,7 @@
     "jsonwebtoken": "^9.0.2",
     "mailparser": "^3.9.9",
     "mongoose": "^8.12.1",
+    "nodemailer": "^10.1.0",
     "resend": "^6.0.2",
     "socket.io": "^4.8.3",
     "swagger-jsdoc": "^6.2.8",

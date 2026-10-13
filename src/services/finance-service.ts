@@ -433,7 +433,7 @@ async function loadClassSessions(
     const nonMember = (nonUserBySession.get(id) ?? []).map((nb) => ({
       name: nb.name,
       phone: nb.phoneNumber,
-      attended: nb.status === "ATTENDED" || nb.status === "PAID",
+      attended: nb.status === "ATTENDED" || nb.status === "PAID" || nb.status === "FOC",
     }));
     const start = new Date(d.startTime);
     const end = new Date(d.endTime);

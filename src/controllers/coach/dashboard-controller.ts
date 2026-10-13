@@ -8,6 +8,7 @@ import { DeductSessionRequestDto } from "../../dtos/coach.dto";
 import { startOfWeek } from "date-fns";
 import { BadRequestError } from "../../core/ApiError";
 import User from "../../models/user";
+import { PtAchievementService } from "../../services/pt-achievement-service";
 
 /**
  * GET /api/coach/clients
@@ -202,5 +203,19 @@ export const confirmClassAttendance = asyncHandler(async (req: Request, res: Res
   );
 
   return new SuccessResponse("Attendance confirmed", updatedClass).send(res);
+});
+
+export const getPtAchievementReport = asyncHandler(async (req: Request, res: Response) => {
+  const { filterType, date, month, startDate, endDate, coachId } = req.query;
+  const params = {
+    filterType: (filterType as string) || "weekly",
+    date: date as string | undefined,
+    month: month as string | undefined,
+    startDate: startDate as string | undefined,
+    endDate: endDate as string | undefined,
+    coachId: coachId as string | undefined,
+  };
+  const data = await PtAchievementService.getReport(params as any);
+  return new SuccessResponse("PT achievement report", data).send(res);
 });
 

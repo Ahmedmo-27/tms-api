@@ -45,6 +45,7 @@ export const getMemberProfile: RequestHandler = asyncHandler(async function (
         name: authReq.user.name,
         email: authReq.user.email,
         phoneNumber: authReq.user.phoneNumber,
+        nationalId: authReq.user.nationalId,
         role: "user",
       },
       packages: [],

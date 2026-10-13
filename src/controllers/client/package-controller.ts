@@ -68,6 +68,7 @@ export const subToPackage = asyncHandler(async function (
   const authReq = req as AuthRequest;
   const _id = authReq.user._id as string;
   const { pkgId, merchantReferenceId, promoCode } = req.body;
+  const io = req.app.get("io");
   await SubscriptionsService.subscribeToPackage(
     _id,
     pkgId,
@@ -75,6 +76,8 @@ export const subToPackage = asyncHandler(async function (
     "APP",
     merchantReferenceId,
     promoCode,
+    undefined,
+    io
   );
   new SuccessResponse("Package Added!").send(res);
 });

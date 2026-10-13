@@ -18,6 +18,7 @@ interface IMemberBooking {
 interface IWaitlistedMember {
   uid: Types.ObjectId;
   addedAt: Date;
+  isManual?: boolean;
 }
 
 export interface IAttendanceConfirmation {
@@ -200,6 +201,7 @@ const ScheduledClassSchema = new Schema<
       {
         uid: { type: Schema.Types.ObjectId, ref: "User", required: true },
         addedAt: { type: Date, default: Date.now },
+        isManual: { type: Boolean, default: false },
       },
     ],
     default: [],
@@ -393,35 +395,62 @@ ScheduledClassSchema.static(
       bookedMembers: { $elemMatch: { uid: new Types.ObjectId(uid) } },
     });
     const booking = scls?.bookedMembers.find((b) => b.uid.equals(uid));
-    const scanMethod =
+    let scanMethod =
       methodOverride !== undefined ? methodOverride : booking?.method;
-    const result = await this.findOneAndUpdate(
-      {
-        _id: new Types.ObjectId(scid),
-        scans: {
-          $not: {
-            $elemMatch: {
+    if (scanMethod === "Waitlist Confirmed") {
+      scanMethod = "Walk In";
+    }
+    const existingPendingScan = scls?.scans?.find(
+      (s) =>
+        ((s.uid as any)?._id ? (s.uid as any)._id.toString() : s.uid?.toString()) === uid &&
+        s.status !== status,
+    );
+
+    let result;
+    if (existingPendingScan) {
+      result = await this.findOneAndUpdate(
+        {
+          _id: new Types.ObjectId(scid),
+          "scans._id": existingPendingScan._id,
+        },
+        {
+          $set: {
+            "scans.$.method": scanMethod,
+            "scans.$.status": status,
+            "scans.$.scanTime": new Date(),
+          },
+        },
+        { new: true, session },
+      );
+    } else {
+      result = await this.findOneAndUpdate(
+        {
+          _id: new Types.ObjectId(scid),
+          scans: {
+            $not: {
+              $elemMatch: {
+                uid: new Types.ObjectId(uid),
+                status,
+              },
+            },
+          },
+        },
+        {
+          $push: {
+            scans: {
               uid: new Types.ObjectId(uid),
+              scanTime: new Date(),
+              method: scanMethod,
               status,
             },
           },
         },
-      },
-      {
-        $push: {
-          scans: {
-            uid: new Types.ObjectId(uid),
-            scanTime: new Date(),
-            method: scanMethod,
-            status,
-          },
+        {
+          new: true,
+          session,
         },
-      },
-      {
-        new: true,
-        session,
-      },
-    );
+      );
+    }
     if (!result)
       throw new ConflictError(
         "CLASS_ALREADY_SCANNED",
@@ -492,7 +521,11 @@ ScheduledClassSchema.static(
       { _id: new Types.ObjectId(scid) },
       {
         $push: {
-          waitlistedMembers: { uid: new Types.ObjectId(uid), addedAt: new Date() },
+          waitlistedMembers: {
+            uid: new Types.ObjectId(uid),
+            addedAt: new Date(),
+            isManual: true,
+          },
         },
       },
     );

@@ -1,8 +1,10 @@
-import Member from "../models/member";
+import Member, { IMemberPackageData } from "../models/member";
 import Package, { getPackageEndDate } from "../models/package";
 import PromoCode from "../models/promoCode";
 import { Types } from "mongoose";
 import { PaymentsService } from "./payments-service";
+import { CoachService } from "./coach-service";
+import { sendPtPackageRenewalCoachEmail } from "./email-service";
 import {
   NotFoundError,
   BadRequestError,
@@ -92,6 +94,107 @@ export class SubscriptionsService {
     }
   }
 
+  /**
+   * Determines whether this package subscription is a PT package renewal.
+   * Returns true when:
+   * 1. The package is in the PERSONAL_TRAINING category (or has a coachId assigned).
+   * 2. The member already has (or had) a non-deleted package record:
+   *    - With this exact package ID, OR
+   *    - Assigned to this same coach.
+   */
+  static async isPtPackageRenewal(
+    memberPackages: IMemberPackageData[] | undefined,
+    pkg: { _id?: any; category?: string; coachId?: any }
+  ): Promise<boolean> {
+    if (!memberPackages || memberPackages.length === 0) return false;
+
+    const isPt = pkg.category === "PERSONAL_TRAINING" || Boolean(pkg.coachId);
+    if (!isPt) return false;
+
+    const pkgIdStr = pkg._id ? pkg._id.toString() : "";
+
+    // 1. Direct package match: member previously subscribed to this exact package
+    const hasExactPackage = memberPackages.some(
+      (p) => p.status !== "DELETED" && p.pkgId && p.pkgId.toString() === pkgIdStr
+    );
+    if (hasExactPackage) return true;
+
+    // 2. Coach match: member previously had any package belonging to this coach
+    if (pkg.coachId) {
+      const coachPackages = await Package.find({ coachId: pkg.coachId })
+        .select("_id")
+        .lean();
+      const coachPkgIdSet = new Set(coachPackages.map((p) => p._id.toString()));
+      if (pkgIdStr) coachPkgIdSet.add(pkgIdStr);
+
+      const hasCoachPackage = memberPackages.some(
+        (p) =>
+          p.status !== "DELETED" &&
+          p.pkgId &&
+          coachPkgIdSet.has(p.pkgId.toString())
+      );
+      if (hasCoachPackage) return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Dispatches an email notification to the coach informing them that their client
+   * has renewed their Personal Training package.
+   * Best-effort: caught and logged without affecting the calling process.
+   */
+  static async notifyCoachOfPtRenewal(params: {
+    coachId: Types.ObjectId | string;
+    memberId: Types.ObjectId | string;
+    memberName?: string;
+    memberPhone?: string;
+    packageName: string;
+    sessionCount: number;
+    startDate: string | Date;
+  }): Promise<void> {
+    try {
+      let { memberName, memberPhone } = params;
+      if (!memberName || !memberPhone) {
+        const memberUser = await User.findById(params.memberId)
+          .select("name phoneNumber")
+          .lean();
+        if (memberUser) {
+          if (!memberName) memberName = memberUser.name;
+          if (!memberPhone) memberPhone = memberUser.phoneNumber;
+        }
+      }
+
+      const coachInfo = await CoachService.getCoachContactInfo(params.coachId);
+      if (!coachInfo || !coachInfo.email) {
+        logger.warn(
+          "Coach renewal notification skipped — coach email not found or unconfigured",
+          {
+            coachId: String(params.coachId),
+            coachName: coachInfo?.coachName,
+            memberId: String(params.memberId),
+          }
+        );
+        return;
+      }
+
+      await sendPtPackageRenewalCoachEmail({
+        coachEmail: coachInfo.email,
+        coachName: coachInfo.coachName,
+        memberName: memberName || "Member",
+        memberPhone: memberPhone || undefined,
+        packageName: params.packageName,
+        sessionCount: params.sessionCount,
+        startDate: params.startDate,
+      });
+    } catch (err) {
+      logger.error("Unexpected error in notifyCoachOfPtRenewal", {
+        coachId: String(params.coachId),
+        error: (err as Error).message,
+      });
+    }
+  }
+
   static async frontDeskSubscribeToPackage(
     uid: string,
     pkgId: string,
@@ -159,6 +262,13 @@ export class SubscriptionsService {
         "This package has no sessions to deduct",
       );
     }
+
+    const isRenewal = await SubscriptionsService.isPtPackageRenewal(
+      member.packages,
+      pkg
+    );
+    let memberUser: any = null;
+
     // Persist UTC noon of the Cairo calendar day so naive UTC formatters do not
     // show the previous day (Cairo midnight == previous evening in UTC).
     startDate = toStoredPackageDate(startDate).toISOString();
@@ -199,6 +309,9 @@ export class SubscriptionsService {
       const user = await User.findOne({ _id: new Types.ObjectId(uid) }).session(
         session,
       );
+      if (user) {
+        memberUser = { name: user.name, phoneNumber: user.phoneNumber };
+      }
       if (user && user.role === "user") {
         user.role = "member";
         await user.save(session ? { session } : {});
@@ -291,6 +404,24 @@ export class SubscriptionsService {
         await sendPaymentToRentalSystem(payment);
       }
       });
+
+    if (isRenewal && pkg.coachId) {
+      SubscriptionsService.notifyCoachOfPtRenewal({
+        coachId: pkg.coachId,
+        memberId: uid,
+        memberName: memberUser?.name,
+        memberPhone: memberUser?.phoneNumber,
+        packageName: pkg.name,
+        sessionCount: pkg.numberOfSessions,
+        startDate,
+      }).catch((err) => {
+        logger.error("Failed to notify coach of PT renewal", {
+          error: err.message,
+          uid,
+          pkgId,
+        });
+      });
+    }
   }
 
   static async subscribeToPackage(
@@ -301,6 +432,7 @@ export class SubscriptionsService {
     merchantReferenceId?: string,
     promoCode?: string,
     note?: string,
+    io?: SocketIOServer,
   ) {
     let orderId: string | undefined;
     const pkg = await Package.findById(pkgId);
@@ -329,6 +461,12 @@ export class SubscriptionsService {
     }
     if (!member)
       throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found", { uid });
+
+    const isRenewal = await SubscriptionsService.isPtPackageRenewal(
+      member.packages,
+      pkg
+    );
+    let memberUser: any = null;
 
     startDate = toStoredPackageDate(startDate).toISOString();
     const packageId = new Types.ObjectId(pkgId);
@@ -385,6 +523,10 @@ export class SubscriptionsService {
           `Package subscribe idempotent fulfill from payment ${existingPayment._id} mref=${merchantReferenceId}`,
         );
         await runInTransaction(async (session: ClientSession) => {
+          const user = await User.findById(uid).session(session);
+          if (user) {
+            memberUser = { name: user.name, phoneNumber: user.phoneNumber };
+          }
           await Member.addPackage(
             uid,
             pkg._id.toString(),
@@ -396,7 +538,49 @@ export class SubscriptionsService {
             restrictions,
             packageLocationId,
           );
+          if (pkg.coachId) {
+            const payload = {
+              memberId: uid,
+              memberName: user?.name ?? "",
+              packageName: pkg.name,
+              classesTotal: pkg.numberOfSessions,
+              createdAt: new Date().toISOString(),
+            };
+            await CoachNotification.create(
+              [
+                {
+                  coachId: pkg.coachId,
+                  memberId: new Types.ObjectId(uid),
+                  memberName: payload.memberName,
+                  packageName: payload.packageName,
+                  classesTotal: payload.classesTotal,
+                  read: false,
+                },
+              ],
+              { session },
+            );
+            if (io) {
+              io.to(`coach:${pkg.coachId.toString()}`).emit("coach:newPackage", payload);
+            }
+          }
         });
+        if (isRenewal && pkg.coachId) {
+          SubscriptionsService.notifyCoachOfPtRenewal({
+            coachId: pkg.coachId,
+            memberId: uid,
+            memberName: memberUser?.name,
+            memberPhone: memberUser?.phoneNumber,
+            packageName: pkg.name,
+            sessionCount: pkg.numberOfSessions,
+            startDate,
+          }).catch((err) => {
+            logger.error("Failed to notify coach of PT renewal (app idempotent)", {
+              error: err.message,
+              uid,
+              pkgId,
+            });
+          });
+        }
         return;
       }
 
@@ -422,6 +606,10 @@ export class SubscriptionsService {
             );
             if (!alreadyHasPkg) {
               await runInTransaction(async (session: ClientSession) => {
+                const user = await User.findById(uid).session(session);
+                if (user) {
+                  memberUser = { name: user.name, phoneNumber: user.phoneNumber };
+                }
                 await Member.addPackage(
                   uid,
                   pkg._id.toString(),
@@ -433,7 +621,49 @@ export class SubscriptionsService {
                   restrictions,
                   packageLocationId,
                 );
+                if (pkg.coachId) {
+                  const payload = {
+                    memberId: uid,
+                    memberName: user?.name ?? "",
+                    packageName: pkg.name,
+                    classesTotal: pkg.numberOfSessions,
+                    createdAt: new Date().toISOString(),
+                  };
+                  await CoachNotification.create(
+                    [
+                      {
+                        coachId: pkg.coachId,
+                        memberId: new Types.ObjectId(uid),
+                        memberName: payload.memberName,
+                        packageName: payload.packageName,
+                        classesTotal: payload.classesTotal,
+                        read: false,
+                      },
+                    ],
+                    { session },
+                  );
+                  if (io) {
+                    io.to(`coach:${pkg.coachId.toString()}`).emit("coach:newPackage", payload);
+                  }
+                }
               });
+              if (isRenewal && pkg.coachId) {
+                SubscriptionsService.notifyCoachOfPtRenewal({
+                  coachId: pkg.coachId,
+                  memberId: uid,
+                  memberName: memberUser?.name,
+                  memberPhone: memberUser?.phoneNumber,
+                  packageName: pkg.name,
+                  sessionCount: pkg.numberOfSessions,
+                  startDate,
+                }).catch((err) => {
+                  logger.error("Failed to notify coach of PT renewal (app conflict)", {
+                    error: err.message,
+                    uid,
+                    pkgId,
+                  });
+                });
+              }
             }
             return;
           }
@@ -450,6 +680,9 @@ export class SubscriptionsService {
         session,
       );
       const user = await User.findById(uid).session(session);
+      if (user) {
+        memberUser = { name: user.name, phoneNumber: user.phoneNumber };
+      }
       if (user?.phoneNumber) {
         await SubscriptionsService.assertNoDuplicateNonUserPackage(
           user.phoneNumber,
@@ -478,6 +711,31 @@ export class SubscriptionsService {
             restrictions,
             packageLocationId,
           );
+          if (pkg.coachId) {
+            const payload = {
+              memberId: uid,
+              memberName: user?.name ?? "",
+              packageName: pkg.name,
+              classesTotal: pkg.numberOfSessions,
+              createdAt: new Date().toISOString(),
+            };
+            await CoachNotification.create(
+              [
+                {
+                  coachId: pkg.coachId,
+                  memberId: new Types.ObjectId(uid),
+                  memberName: payload.memberName,
+                  packageName: payload.packageName,
+                  classesTotal: payload.classesTotal,
+                  read: false,
+                },
+              ],
+              { session },
+            );
+            if (io) {
+              io.to(`coach:${pkg.coachId.toString()}`).emit("coach:newPackage", payload);
+            }
+          }
           return;
         }
       }
@@ -509,10 +767,53 @@ export class SubscriptionsService {
         restrictions,
         packageLocationId,
       );
+      if (pkg.coachId) {
+        const payload = {
+          memberId: uid,
+          memberName: user?.name ?? "",
+          packageName: pkg.name,
+          classesTotal: pkg.numberOfSessions,
+          createdAt: new Date().toISOString(),
+        };
+        await CoachNotification.create(
+          [
+            {
+              coachId: pkg.coachId,
+              memberId: new Types.ObjectId(uid),
+              memberName: payload.memberName,
+              packageName: payload.packageName,
+              classesTotal: payload.classesTotal,
+              read: false,
+            },
+          ],
+          { session },
+        );
+        if (io) {
+          io.to(`coach:${pkg.coachId.toString()}`).emit("coach:newPackage", payload);
+        }
+      }
       if (pkg.category !== "PERSONAL_TRAINING") {
         await sendPaymentToRentalSystem(payment);
       }
     });
+
+    if (isRenewal && pkg.coachId) {
+      SubscriptionsService.notifyCoachOfPtRenewal({
+        coachId: pkg.coachId,
+        memberId: uid,
+        memberName: memberUser?.name,
+        memberPhone: memberUser?.phoneNumber,
+        packageName: pkg.name,
+        sessionCount: pkg.numberOfSessions,
+        startDate,
+      }).catch((err) => {
+        logger.error("Failed to notify coach of PT renewal (app)", {
+          error: err.message,
+          uid,
+          pkgId,
+        });
+      });
+    }
   }
 
   static async addSavedPkgToMember(

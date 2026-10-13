@@ -3,6 +3,7 @@ import Class from "../../models/class";
 import Member from "../../models/member";
 import ScheduledClass from "../../models/scheduledClass";
 import Location from "../../models/location";
+import User from "../../models/user";
 import {
   BadRequestError,
   ConflictError,
@@ -16,6 +17,8 @@ import { SchedulerService } from "../../services/scheduler-service";
 import NonUserBooking, { INonUserBooking } from "../../models/nonUserBookings";
 import Payment from "../../models/payment";
 import { Types } from "mongoose";
+import DailyAttendance from "../../models/dailyAttendance";
+import { ScanAdminService } from "../../services/scan-admin-service";
 import { runInTransaction } from "../../utils/transaction";
 import { ClientSession } from "mongoose";
 import logger from "../../config/logger";
@@ -527,6 +530,18 @@ export const recordNonUserAttendance = asyncHandler(async function (
   new SuccessResponse("Class Attended!").send(res);
 });
 
+export const recordNonUserFoc = asyncHandler(async function (
+  req: Request,
+  res: Response
+): Promise<void> {
+  const bookingId = req.body.bookingId;
+  if (!bookingId || bookingId === "")
+    throw new BadRequestError("INVALID_BOOKING_ID", "Booking Id is invalid");
+  const booking = await BookingsService.recordNonUserFoc(bookingId);
+  req.app.get("io")?.emit("SUCCESS-SCAN");
+  new SuccessResponse("Class Attended!", booking).send(res);
+});
+
 export const saveNonUserPayment = asyncHandler(async function (
   req: Request,
   res: Response
@@ -537,24 +552,46 @@ export const saveNonUserPayment = asyncHandler(async function (
   const paymentDate = req.body.paymentDate;
   if (!bookingId || bookingId === "")
     throw new BadRequestError("INVALID_BOOKING_ID", "Booking Id is invalid");
-  const branchLocationId = resolveLocationIdForWrite(req);
-  const booking = await BookingsService.recordNonUserPayment(
-    bookingId,
-    paymentMethod,
-    amount,
-    paymentDate,
-    undefined,
-    branchLocationId
-  );
+  let booking;
+  const isFoc =
+    typeof paymentMethod === "string" && paymentMethod.trim().toUpperCase() === "FOC";
+  if (isFoc) {
+    booking = await BookingsService.recordNonUserFoc(bookingId);
+  } else if (paymentMethod === "DEDUCTED") {
+    const nonUser = await NonUserBooking.findById(bookingId);
+    if (!nonUser) throw new NotFoundError("BOOKING_NOT_FOUND", "Booking is not found");
+    let uid = req.body.uid;
+    if (!uid && req.body.phoneNumber) {
+      const user = await User.findOne({ phoneNumber: req.body.phoneNumber.trim() });
+      if (user) uid = (user._id as Types.ObjectId).toString();
+    }
+    if (!uid) {
+      throw new BadRequestError("MEMBER_REQUIRED", "Member could not be found for package deduction");
+    }
+    booking = await ScanAdminService.updateScanRow(
+      { source: "class", parentId: nonUser.scid.toString(), rowId: bookingId },
+      { uid, pkgId: req.body.pkgId, status: "SUCCESS" }
+    );
+  } else {
+    const branchLocationId = resolveLocationIdForWrite(req);
+    booking = await BookingsService.recordNonUserPayment(
+      bookingId,
+      paymentMethod,
+      amount,
+      paymentDate,
+      undefined,
+      branchLocationId
+    );
+  }
   req.app.get("io")?.emit("SUCCESS-SCAN");
-  new SuccessResponse("Class Attended!").send(res);
+  new SuccessResponse("Class Attended!", booking).send(res);
 });
 
 export const addWalkIn = asyncHandler(async function (
   req: Request,
   res: Response
 ): Promise<void> {
-  const { name, phoneNumber, scid, paymentMethod, amount, paymentDate } = req.body;
+  const { name, phoneNumber, scid, paymentMethod, amount, paymentDate, status } = req.body;
   if (!name || !scid)
     throw new BadRequestError("INVALID_REQUEST", "Invalid request");
   await assertSessionAccess(req, scid);
@@ -570,19 +607,31 @@ export const addWalkIn = asyncHandler(async function (
     if (!booking)
       throw new NotFoundError("INVALID_BOOKING", "Booking was not found");
     logger.info("BookingId: ", booking._id);
-     finalBooking = await BookingsService.recordNonUserAttendance(
-      (booking._id as string),
-      session
-    );
-    if (paymentMethod && paymentMethod !== "WILL_PAY") {
-      finalBooking = await BookingsService.recordNonUserPayment(
+
+    const isFoc =
+      (typeof paymentMethod === "string" && paymentMethod.trim().toUpperCase() === "FOC") ||
+      (typeof status === "string" && status.trim().toUpperCase() === "FOC");
+
+    if (isFoc) {
+      finalBooking = await BookingsService.recordNonUserFoc(
         (booking._id as string),
-        paymentMethod,
-        amount,
-        paymentDate,
-        session,
-        branchLocationId
+        session
       );
+    } else {
+      finalBooking = await BookingsService.recordNonUserAttendance(
+        (booking._id as string),
+        session
+      );
+      if (paymentMethod && paymentMethod !== "WILL_PAY") {
+        finalBooking = await BookingsService.recordNonUserPayment(
+          (booking._id as string),
+          paymentMethod,
+          amount,
+          paymentDate,
+          session,
+          branchLocationId
+        );
+      }
     }
   });
   if(!finalBooking) throw new InternalError("INTERNAL_ERROR", "UnknownError")
@@ -673,7 +722,54 @@ export const removeFailedScan = asyncHandler(async function (
   req: Request,
   res: Response
 ): Promise<void> {
-  const { uid, scid } = req.body;
+  const { uid, scid, source, parentId, rowId } = req.body;
+
+  if (source && (source === "pt" || source === "open-gym")) {
+    if (parentId && rowId) {
+      await ScanAdminService.deleteScanRow(
+        { source, parentId, rowId },
+        { restoreSession: false }
+      );
+      req.app.get("io")?.emit("SUCCESS-SCAN");
+      new SuccessResponse("Failed scan removed").send(res);
+      return;
+    }
+
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const day = parentId
+      ? await DailyAttendance.findById(parentId)
+      : await DailyAttendance.findOne({ date: today });
+    if (day) {
+      const arrayPath = source === "pt" ? "ptAttendance" : "openGymAttendance";
+      const targetRow = (day[arrayPath] as any[]).find(
+        (r: any) =>
+          rowId
+            ? r._id?.toString() === rowId
+            : r.uid?.toString() === uid && r.status === "FAILED"
+      );
+      if (targetRow) {
+        (day[arrayPath] as any).pull({ _id: targetRow._id });
+        await day.save();
+        req.app.get("io")?.emit("SUCCESS-SCAN");
+        new SuccessResponse("Failed scan removed").send(res);
+        return;
+      }
+    }
+    new SuccessResponse("Failed scan removed").send(res);
+    return;
+  }
+
+  if (source === "class" && parentId && rowId) {
+    await ScanAdminService.deleteScanRow(
+      { source, parentId, rowId },
+      { restoreSession: false }
+    );
+    req.app.get("io")?.emit("SUCCESS-SCAN");
+    new SuccessResponse("Failed scan removed").send(res);
+    return;
+  }
+
   if (!uid || !scid)
     throw new BadRequestError("INVALID_REQUEST", "uid and scid are required");
   await assertSessionAccess(req, scid);
@@ -691,6 +787,7 @@ export const promoteFromWaitlist = asyncHandler(async function (
     throw new BadRequestError("INVALID_REQUEST", "uid and scid are required");
   await assertSessionAccess(req, scid);
   await BookingsService.adminPromoteFromWaitlist(uid, scid);
+  req.app.get("io")?.emit("SUCCESS-SCAN");
   new SuccessResponse("Member promoted from waitlist to booking").send(res);
 });
 

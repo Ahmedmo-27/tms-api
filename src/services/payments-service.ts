@@ -8,7 +8,7 @@ import { IPayment } from "../models/payment";
 
 export interface UpdatePaymentInput {
   amount?: number;
-  paymentMethod?: "APP" | "VISA" | "CASH" | "INSTAPAY" | "VALU" | "PAYMENT_LINK" | "DEDUCTED";
+  paymentMethod?: "APP" | "VISA" | "CASH" | "INSTAPAY" | "VALU" | "PAYMENT_LINK" | "DEDUCTED" | "COACHERA";
   paymentTime?: Date | string;
   purpose?:
     | "DROPIN"
@@ -16,6 +16,7 @@ export interface UpdatePaymentInput {
     | "WALKIN"
     | "NON_USER_BOOKING"
     | "NON_USER_PACKAGE"
+    | "ONLINE_CLASS"
     | "OTHER";
   note?: string;
   nonMemberName?: string;
@@ -157,6 +158,7 @@ export class PaymentsService {
       WALKIN: "Walk-in",
       NON_USER_BOOKING: "Non-user booking",
       NON_USER_PACKAGE: "Non-user package",
+      ONLINE_CLASS: "Online Class",
       OTHER: "Other",
     };
 
@@ -165,7 +167,9 @@ export class PaymentsService {
       const ptPurpose = resolvePtPaymentPurposeLabel(p);
       let itemName: string =
         openGymPurpose ?? ptPurpose ?? purposeLabels[p.purpose] ?? p.purpose;
-      if (!openGymPurpose && !ptPurpose && p.purpose === "PACKAGE" && p.pkgId) {
+      if (p.paymentMethod === "COACHERA" || p.purpose === "ONLINE_CLASS") {
+        itemName = p.coachName ? `Coach ${p.coachName}` : "Coachera";
+      } else if (!openGymPurpose && !ptPurpose && p.purpose === "PACKAGE" && p.pkgId) {
         const pkg = p.pkgId as unknown as { name: string };
         itemName = pkg.name;
       } else if (!openGymPurpose && !ptPurpose && p.scid) {

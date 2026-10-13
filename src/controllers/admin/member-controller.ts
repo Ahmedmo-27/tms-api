@@ -5,13 +5,14 @@ import User from "../../models/user";
 import DeductionLog from "../../models/deductionLog";
 import DailyAttendance from "../../models/dailyAttendance";
 import { isUnlimitedSpaceAccess } from "../../models/package";
-import { NotFoundError } from "../../core/ApiError";
+import { BadRequestError, ConflictError, NotFoundError } from "../../core/ApiError";
 import { SuccessResponse } from "../../core/ApiResponse";
 import asyncHandler from "../../utils/asyncHandler";
 import { SubscriptionsService } from "../../services/subscriptions-service";
 import { PackageStatusService } from "../../services/package-status-service";
 import { runInTransaction } from "../../utils/transaction";
 import { escapeRegex } from "../../utils/escapeRegex";
+import { normalizePhoneNumber } from "../../utils/phone";
 import { activeEndDateBound, cairoDateKey, isSameCairoDay } from "../../utils/timezone";
 
 export const addMember = asyncHandler(async function (
@@ -79,9 +80,19 @@ export const getMember = asyncHandler(async function (
         { name: { $regex: escaped, $options: "i" } },
         { phoneNumber: { $regex: escaped, $options: "i" } },
         { email: { $regex: escaped, $options: "i" } },
+        { nationalId: { $regex: escaped, $options: "i" } },
       ];
       if (cleanPhone && cleanPhone !== searchTerm) {
         orConditions.push({ phoneNumber: { $regex: escapeRegex(cleanPhone), $options: "i" } });
+      }
+      if (cleanPhone.startsWith("20") && cleanPhone.length > 2) {
+        const withoutCountry = cleanPhone.slice(2);
+        orConditions.push({ phoneNumber: { $regex: escapeRegex(withoutCountry), $options: "i" } });
+        orConditions.push({ phoneNumber: { $regex: escapeRegex("0" + withoutCountry), $options: "i" } });
+      } else if (cleanPhone.startsWith("0") && cleanPhone.length > 1) {
+        const withoutLeadingZero = cleanPhone.slice(1);
+        orConditions.push({ phoneNumber: { $regex: escapeRegex("20" + withoutLeadingZero), $options: "i" } });
+        orConditions.push({ phoneNumber: { $regex: escapeRegex("+20" + withoutLeadingZero), $options: "i" } });
       }
       userQuery.$or = orConditions;
     }
@@ -522,7 +533,11 @@ export const getMember = asyncHandler(async function (
       const methodLower = methodStr.toLowerCase();
       const isDropInOrFree =
         methodLower === "drop in" ||
+        methodLower === "drop-in" ||
         methodLower === "walk in" ||
+        methodLower === "walk-in" ||
+        methodLower === "walkin" ||
+        methodLower === "waitlist confirmed" ||
         cls?.price === 0 ||
         cls?.category === "WORKSPACE";
 
@@ -677,4 +692,89 @@ export const getMember = asyncHandler(async function (
     total,
   }).send(res);
 });
+
+export const updateMember = asyncHandler(async function (
+  req: Request,
+  res: Response
+): Promise<void> {
+  const { id } = req.params;
+  if (!id || !Types.ObjectId.isValid(id)) {
+    throw new BadRequestError("INVALID_ID", "Invalid member ID");
+  }
+
+  // Support both User ID (uid) and Member document ID
+  let user = await User.findById(id);
+  let member = await Member.findOne({ uid: id });
+  if (!user) {
+    member = await Member.findById(id);
+    if (member) {
+      user = await User.findById(member.uid);
+    }
+  }
+
+  if (!user) {
+    throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
+  }
+
+  const { name, phoneNumber, email, nationalId } = req.body;
+
+  if (phoneNumber !== undefined) {
+    const cleanPhone = normalizePhoneNumber(phoneNumber);
+    if (!/^\d{11}$/.test(cleanPhone)) {
+      throw new BadRequestError(
+        "INVALID_PHONE_NUMBER",
+        "Phone number must be exactly 11 digits"
+      );
+    }
+    if (cleanPhone !== user.phoneNumber) {
+      const existing = await User.findOne({ phoneNumber: cleanPhone, _id: { $ne: user._id } });
+      if (existing) {
+        throw new ConflictError("PHONE_ALREADY_EXISTS", "Phone number already registered");
+      }
+      user.phoneNumber = cleanPhone;
+    }
+  }
+
+  if (email !== undefined) {
+    const cleanEmail = String(email).trim().toLowerCase();
+    if (!/^[\w-]+(\.[\w-]+)*@([\w-]+\.)+[a-zA-Z]{2,}$/.test(cleanEmail)) {
+      throw new BadRequestError("INVALID_EMAIL", "Please enter a valid email address");
+    }
+    if (cleanEmail !== user.email) {
+      const existing = await User.findOne({ email: cleanEmail, _id: { $ne: user._id } });
+      if (existing) {
+        throw new ConflictError("EMAIL_ALREADY_EXISTS", "Email address already registered");
+      }
+      user.email = cleanEmail;
+    }
+  }
+
+  if (name !== undefined && name.trim()) {
+    user.name = name.trim();
+  }
+
+  if (nationalId !== undefined) {
+    const cleanNationalId = nationalId ? String(nationalId).trim().replace(/[\s\-]/g, "") : "";
+    if (cleanNationalId) {
+      if (cleanNationalId !== user.nationalId) {
+        const existing = await User.findOne({ nationalId: cleanNationalId, _id: { $ne: user._id } });
+        if (existing) {
+          throw new ConflictError("NATIONAL_ID_ALREADY_EXISTS", "National ID already registered");
+        }
+        user.nationalId = cleanNationalId;
+      }
+    } else {
+      user.nationalId = undefined;
+    }
+  }
+
+  await user.save();
+
+  const updatedMember = await Member.findOne({ uid: user._id })
+    .populate({ path: "uid", select: "-password -tokens -resetCode -fcmTokens" })
+    .lean();
+
+  new SuccessResponse("Member updated successfully", { member: updatedMember, user }).send(res);
+});
+
 

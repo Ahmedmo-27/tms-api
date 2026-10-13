@@ -17,6 +17,7 @@ import {
 export interface CoachAuthRequest extends Request {
   coachId: Types.ObjectId;
   coachDocId: Types.ObjectId;
+  userRole?: string;
 }
 
 export const coachGuard = asyncHandler(
@@ -86,6 +87,19 @@ export const coachGuard = asyncHandler(
     (req as CoachAuthRequest).coachDocId = coachDoc._id as Types.ObjectId;
 
     (req as any).deviceType = deviceType;
+    next();
+  }
+);
+
+export const requireManagingCoach = asyncHandler(
+  async (req: Request, _res: Response, next: NextFunction) => {
+    const user = await User.findById((req as CoachAuthRequest).coachId).select("role");
+    if (!user || user.role !== "managing_coach") {
+      throw new ForbiddenError(
+        "INSUFFICIENT_PERMISSIONS",
+        "This endpoint is restricted to managing coaches",
+      );
+    }
     next();
   }
 );

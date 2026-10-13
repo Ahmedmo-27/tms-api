@@ -49,7 +49,7 @@ export interface ScanRowChanges {
   pkgId?: string;
   /** Corrected check-in timestamp. */
   time?: string | Date;
-  status?: "SUCCESS" | "FAILED" | "WILL_PAY";
+  status?: "SUCCESS" | "FAILED" | "WILL_PAY" | "FOC";
   /** Guest rows (open gym or class walk-in) — these store their own name and phone. */
   guestName?: string;
   guestPhone?: string;
@@ -71,13 +71,13 @@ export interface ScanRowView {
   pkgId?: string;
   method: string;
   time: Date;
-  status: "SUCCESS" | "FAILED" | "WILL_PAY";
+  status: "SUCCESS" | "FAILED" | "WILL_PAY" | "FOC";
 }
 
 interface ScanEffect {
   uid?: string;
   pkgId?: string;
-  status: "SUCCESS" | "FAILED" | "WILL_PAY";
+  status: "SUCCESS" | "FAILED" | "WILL_PAY" | "FOC";
   time: Date;
 }
 
@@ -462,8 +462,9 @@ function readStatus(
   source: ScanSource,
   row: RowDoc,
   isNonUserBooking?: boolean,
-): "SUCCESS" | "FAILED" | "WILL_PAY" {
+): "SUCCESS" | "FAILED" | "WILL_PAY" | "FOC" {
   if (isNonUserBooking) {
+    if (row.status === "FOC") return "FOC";
     if (row.status === "PAID") return "SUCCESS";
     if (row.status === "CANCELLED") return "FAILED";
     return "WILL_PAY";
@@ -476,11 +477,12 @@ function readStatus(
 function writeStatus(
   source: ScanSource,
   row: RowDoc,
-  status: "SUCCESS" | "FAILED" | "WILL_PAY",
+  status: "SUCCESS" | "FAILED" | "WILL_PAY" | "FOC",
   isNonUserBooking?: boolean,
 ): void {
   if (isNonUserBooking) {
-    if (status === "SUCCESS") row.status = "PAID";
+    if (status === "FOC") row.status = "FOC";
+    else if (status === "SUCCESS") row.status = "PAID";
     else if (status === "FAILED") row.status = "CANCELLED";
     else row.status = "ATTENDED";
     return;
@@ -541,12 +543,13 @@ export class ScanAdminService {
         return;
       }
 
+      const status = readStatus(ref.source, row, false);
       const effect: ScanEffect = {
         uid: row.uid?.toString(),
         pkgId:
           row.pkgId?.toString() ??
-          (await resolveLegacyPkgId(row.method, session)),
-        status: readStatus(ref.source, row, false),
+          (status === "FAILED" ? undefined : await resolveLegacyPkgId(row.method, session)),
+        status,
         time: readTime(ref.source, row, false),
       };
 
@@ -614,7 +617,13 @@ export class ScanAdminService {
             .session(session);
           if (!user) throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found");
 
-          const targetStatus = changes.status ?? (row.status === "PAID" ? "SUCCESS" : "WILL_PAY");
+          const targetStatus =
+            changes.status ??
+            (row.status === "PAID"
+              ? "SUCCESS"
+              : row.status === "FOC"
+              ? "FOC"
+              : "WILL_PAY");
           const scanTime = changes.time ? new Date(changes.time) : readTime(ref.source, row, true);
           if (isNaN(scanTime.getTime())) {
             throw new BadRequestError("INVALID_TIME", "Check-in time is not a valid date");
@@ -748,7 +757,9 @@ export class ScanAdminService {
         if (changes.status) {
           const oldStatus = row.status;
           const newStatus =
-            changes.status === "SUCCESS"
+            changes.status === "FOC"
+              ? "FOC"
+              : changes.status === "SUCCESS"
               ? "PAID"
               : changes.status === "FAILED"
               ? "CANCELLED"
@@ -768,12 +779,13 @@ export class ScanAdminService {
         return;
       }
 
+      const statusBefore = readStatus(ref.source, row, false);
       const before: ScanEffect = {
         uid: row.uid?.toString(),
         pkgId:
           row.pkgId?.toString() ??
-          (await resolveLegacyPkgId(row.method, session)),
-        status: readStatus(ref.source, row, false),
+          (statusBefore === "FAILED" ? undefined : await resolveLegacyPkgId(row.method, session)),
+        status: statusBefore,
         time: readTime(ref.source, row, false),
       };
 
@@ -912,7 +924,7 @@ export class ScanAdminService {
       uid?: string;
       pkgId?: string;
       time?: string | Date;
-      status?: "SUCCESS" | "FAILED" | "WILL_PAY";
+      status?: "SUCCESS" | "FAILED" | "WILL_PAY" | "FOC";
       guestName?: string;
       guestPhone?: string;
       name?: string;
@@ -970,7 +982,9 @@ export class ScanAdminService {
           if (options.time) row.attendanceTime = new Date(options.time);
           if (options.status) {
             row.status =
-              options.status === "SUCCESS"
+              options.status === "FOC"
+                ? "FOC"
+                : options.status === "SUCCESS"
                 ? "PAID"
                 : options.status === "FAILED"
                 ? "CANCELLED"
@@ -1203,7 +1217,7 @@ export class ScanAdminService {
       guestName,
       guestPhone,
       pkgId: row.pkgId?.toString(),
-      method: isNonUserBooking ? "Walk In" : row.method,
+      method: isNonUserBooking ? (row.status === "FOC" ? "FOC" : "Walk In") : row.method,
       time: readTime(ref.source, row, isNonUserBooking),
       status: readStatus(ref.source, row, isNonUserBooking),
     };

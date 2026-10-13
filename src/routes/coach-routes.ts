@@ -1,9 +1,9 @@
 import { Router } from "express";
-import { getClients, getMemberPackages, deductSession, getSchedule, getScans, getPtAttendance, getToday, getNotifications, markNotificationsRead, getDeductionHistory, getClientAttendanceHistory, confirmClassAttendance } from "../controllers/coach/dashboard-controller";
+import { getClients, getMemberPackages, deductSession, getSchedule, getScans, getPtAttendance, getToday, getNotifications, markNotificationsRead, getDeductionHistory, getClientAttendanceHistory, confirmClassAttendance, getPtAchievementReport } from "../controllers/coach/dashboard-controller";
 import { coachLogin, getCoachMe, changeCoachPassword } from "../controllers/coach/auth-controller";
 import { verifyToken } from "../controllers/auth/auth-controller";
 import { authenticateUser, authorizeUser } from "../middlewares/auth.middleware";
-import { coachGuard } from "../middlewares/coach.middleware";
+import { coachGuard, requireManagingCoach } from "../middlewares/coach.middleware";
 import { loginLimiter } from "../config/rateLimiter";
 import {
   getCoachTickets,
@@ -36,5 +36,8 @@ router.post("/deduct", coachGuard, deductSession);
 router.get("/tickets", coachGuard, getCoachTickets);
 router.post("/tickets", coachGuard, submitCoachTicket);
 router.get("/ticket-categories", coachGuard, getActiveTicketCategories);
+
+// Managing coach reports
+router.get("/managing/pt-achievement", coachGuard, requireManagingCoach, getPtAchievementReport);
 
 export default router;

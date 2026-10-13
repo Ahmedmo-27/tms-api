@@ -72,6 +72,7 @@ const PAYMENT_PURPOSE_LABELS: Record<IPayment["purpose"], string> = {
   WALKIN: "Walk-in",
   NON_USER_BOOKING: "Non-user booking",
   NON_USER_PACKAGE: "Non-user package",
+  ONLINE_CLASS: "Online Class",
   OTHER: "Other",
 };
 

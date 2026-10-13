@@ -27,6 +27,7 @@ import {
   isPackageExpired,
 } from "../../utils/timezone";
 import { resolveLocationFilter, resolveLocationIdForWrite, locationIdScalarQuery } from "../../utils/location-scope";
+import { escapeRegex } from "../../utils/escapeRegex";
 
 async function syncRefundToErp(
   refund: IRefund,
@@ -374,15 +375,35 @@ export const getRefundByPaymentId = asyncHandler(
 
 export const searchMembers = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
-    const query = (req.query.name as string) ?? "";
+    const rawQuery = ((req.query.search || req.query.name || req.query.phone) as string) ?? "";
+    const query = rawQuery.trim();
 
     if (query.length < 2) {
       new SuccessResponse("Members Found!", []).send(res);
       return;
     }
 
+    const escaped = escapeRegex(query);
+    const cleanPhone = query.replace(/[\s\-+]/g, "");
+    const orConditions: any[] = [
+      { name: { $regex: escaped, $options: "i" } },
+      { phoneNumber: { $regex: escaped, $options: "i" } },
+    ];
+    if (cleanPhone && cleanPhone !== query) {
+      orConditions.push({ phoneNumber: { $regex: escapeRegex(cleanPhone), $options: "i" } });
+    }
+    if (cleanPhone.startsWith("20") && cleanPhone.length > 2) {
+      const withoutCountry = cleanPhone.slice(2);
+      orConditions.push({ phoneNumber: { $regex: escapeRegex(withoutCountry), $options: "i" } });
+      orConditions.push({ phoneNumber: { $regex: escapeRegex("0" + withoutCountry), $options: "i" } });
+    } else if (cleanPhone.startsWith("0") && cleanPhone.length > 1) {
+      const withoutLeadingZero = cleanPhone.slice(1);
+      orConditions.push({ phoneNumber: { $regex: escapeRegex("20" + withoutLeadingZero), $options: "i" } });
+      orConditions.push({ phoneNumber: { $regex: escapeRegex("+20" + withoutLeadingZero), $options: "i" } });
+    }
+
     const members = await User.find({
-      name: { $regex: query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" },
+      $or: orConditions,
       role: "member",
     })
       .select("_id name phoneNumber email")

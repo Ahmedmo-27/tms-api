@@ -20,6 +20,7 @@ import Payment from "../models/payment";
 import { PaymentsService } from "./payments-service";
 import { NotificationsService } from "./notifications-service";
 import { WaitlistService } from "./waitlist-service";
+import WaitlistEntry from "../models/waitlistEntry";
 import { startOfDateCairo, endOfDateCairo } from "../utils/timezone";
 
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -177,7 +178,86 @@ export class SchedulerService {
       locations: sessionLocations,
       sessionBranchName: sessionLocObj.branchName,
       sessionLocationCity: sessionLocObj.location,
+      waitlist: cls.waitlist || doc.waitlist || [],
+      waitlistedMembers: cls.waitlist || doc.waitlist || doc.waitlistedMembers || [],
     };
+  }
+
+  private static async populateWaitlistsForClasses(classes: any[]) {
+    if (!classes || classes.length === 0) return;
+    try {
+      const scids = classes.map((c) => c._id).filter(Boolean);
+      if (scids.length === 0) return;
+
+      let waitlistDocs: any[] = [];
+      try {
+        waitlistDocs = await WaitlistEntry.find({
+          sessionId: { $in: scids },
+          status: { $in: ["WAITING", "NOTIFIED"] },
+        })
+          .populate({ path: "userId", select: "name phoneNumber phone" })
+          .sort({ position: 1, joinedAt: 1 })
+          .lean();
+      } catch {
+        waitlistDocs = [];
+      }
+
+      const waitlistMap = new Map<string, any[]>();
+      if (Array.isArray(waitlistDocs)) {
+        for (const entry of waitlistDocs) {
+          const sid = entry.sessionId?.toString();
+          if (!sid) continue;
+          if (!waitlistMap.has(sid)) {
+            waitlistMap.set(sid, []);
+          }
+          const u = entry.userId as any;
+          const uidStr = u?._id ? u._id.toString() : (entry.userId ? entry.userId.toString() : "");
+          waitlistMap.get(sid)!.push({
+            _id: entry._id ? entry._id.toString() : uidStr,
+            uid: uidStr,
+            name: u?.name || "Unknown Member",
+            phone: u?.phoneNumber || u?.phone || "",
+            phoneNumber: u?.phoneNumber || u?.phone || "",
+            status: entry.status || "WAITING",
+            position: entry.position ?? (waitlistMap.get(sid)!.length + 1),
+            addedAt: entry.joinedAt,
+            isManual: Boolean(entry.isManual),
+          });
+        }
+      }
+
+      for (const cls of classes) {
+        const sid = cls._id?.toString();
+        const list = sid && waitlistMap.has(sid) ? [...waitlistMap.get(sid)!] : [];
+        const seenUids = new Set(list.map((item: any) => item.uid));
+
+        if (Array.isArray(cls.waitlistedMembers)) {
+          cls.waitlistedMembers.forEach((m: any, idx: number) => {
+            const u = m.uid;
+            const uidStr = u?._id ? u._id.toString() : (typeof u === "string" ? u : m.uid?.toString?.() || "");
+            if (uidStr && !seenUids.has(uidStr)) {
+              seenUids.add(uidStr);
+              list.push({
+                _id: m._id ? m._id.toString() : `${uidStr}-${idx}`,
+                uid: uidStr,
+                name: u?.name || "Unknown Member",
+                phone: u?.phoneNumber || u?.phone || "",
+                phoneNumber: u?.phoneNumber || u?.phone || "",
+                status: "WAITING",
+                position: list.length + 1,
+                addedAt: m.addedAt,
+                isManual: Boolean(m.isManual ?? true),
+              });
+            }
+          });
+        }
+
+        cls.waitlist = list;
+        cls.waitlistedMembers = list;
+      }
+    } catch (err) {
+      logger.warn("Failed to populate waitlists for classes (non-fatal):", err);
+    }
   }
 
   static async getSchedule(
@@ -198,6 +278,7 @@ export class SchedulerService {
       .populate({ path: "locationId", select: "branchName location locationUrl" })
       .populate({ path: "coachId" })
       .populate({ path: "bookedMembers.uid", select: "name phoneNumber" })
+      .populate({ path: "waitlistedMembers.uid", select: "name phoneNumber phone" })
       .sort({ startTime: 1 })
       .lean();
 
@@ -215,10 +296,13 @@ export class SchedulerService {
           .populate({ path: "locationId", select: "branchName location locationUrl" })
           .populate({ path: "coachId" })
           .populate({ path: "bookedMembers.uid", select: "name phoneNumber" })
+          .populate({ path: "waitlistedMembers.uid", select: "name phoneNumber phone" })
           .sort({ startTime: 1 })
           .lean();
       }
     }
+
+    await this.populateWaitlistsForClasses(scheduledClasses);
 
     return scheduledClasses.map((cls) =>
       this.shapeSessionForLegacyClients(cls),
@@ -238,8 +322,11 @@ export class SchedulerService {
       .populate({ path: "coachId" })
       .populate({ path: "scans.uid" })
       .populate({ path: "bookedMembers.uid", select: "name phoneNumber" })
+      .populate({ path: "waitlistedMembers.uid", select: "name phoneNumber phone" })
       .sort({ startTime: 1 })
       .lean();
+
+    await this.populateWaitlistsForClasses(scheduledClasses);
 
     return scheduledClasses.map((cls) =>
       this.shapeSessionForLegacyClients(cls),
@@ -257,9 +344,12 @@ export class SchedulerService {
       .populate({ path: "coachId" })
       .populate({ path: "scans.uid" })
       .populate({ path: "bookedMembers.uid", select: "name phoneNumber" })
+      .populate({ path: "waitlistedMembers.uid", select: "name phoneNumber phone" })
       .sort({ startTime: -1 })
       .limit(200)
       .lean();
+
+    await this.populateWaitlistsForClasses(scheduledClasses);
 
     return scheduledClasses.map((cls) =>
       this.shapeSessionForLegacyClients(cls),
@@ -555,7 +645,7 @@ export class SchedulerService {
     const memberSuccessScanCount = scheduledClass.scans.filter((s: any) => s.status === true).length;
     const walkInAttendedCount = await NonUserBooking.countDocuments({
       scid: scheduledClass._id,
-      status: { $in: ["ATTENDED", "PAID"] },
+      status: { $in: ["ATTENDED", "PAID", "FOC"] },
     });
     const successScanCount = memberSuccessScanCount + walkInAttendedCount;
     const hasMissingPlace =

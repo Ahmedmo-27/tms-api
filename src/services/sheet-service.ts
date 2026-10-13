@@ -492,7 +492,7 @@ export class SheetService {
           id: `guest:${String(booking._id)}`,
           source: "non_user",
           name: booking.name,
-          memberLabel: amount ? "" : "FOC",
+          memberLabel: booking.status === "FOC" ? "FOC" : amount ? "" : "FOC",
           amount,
           paymentMethod: displayPaymentMethod(paymentDoc?.paymentMethod),
           purpose: amount ? "Drop in" : "",
@@ -1467,7 +1467,7 @@ export class SheetService {
       );
       return;
     }
-    await this.walkInGuest(person.name, person.phone, row.scid!);
+    await this.walkInGuest(person.name, person.phone, row.scid!, "FOC");
   }
 
   private static async walkInGuest(
@@ -1487,6 +1487,12 @@ export class SheetService {
       status: { $ne: "CANCELLED" },
     });
     if (existing) {
+      if (paymentMethod === "FOC") {
+        if (existing.status !== "FOC") {
+          await BookingsService.recordNonUserFoc(String(existing._id));
+        }
+        return;
+      }
       if (existing.status === "BOOKED") {
         await BookingsService.recordNonUserAttendance(String(existing._id));
       }
@@ -1511,20 +1517,27 @@ export class SheetService {
         scid,
         session,
       );
-      await BookingsService.recordNonUserAttendance(
-        String(booking._id),
-        session,
-      );
-      if (paymentMethod) {
-        await BookingsService.recordNonUserPayment(
+      if (paymentMethod === "FOC") {
+        await BookingsService.recordNonUserFoc(
           String(booking._id),
-          paymentMethod,
-          amount ?? undefined,
-          paymentDate,
           session,
-          locationId,
-          note,
         );
+      } else {
+        await BookingsService.recordNonUserAttendance(
+          String(booking._id),
+          session,
+        );
+        if (paymentMethod) {
+          await BookingsService.recordNonUserPayment(
+            String(booking._id),
+            paymentMethod,
+            amount ?? undefined,
+            paymentDate,
+            session,
+            locationId,
+            note,
+          );
+        }
       }
     });
   }
