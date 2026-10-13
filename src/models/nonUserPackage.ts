@@ -8,6 +8,7 @@ import mongoose, {
 export interface INonUserPackage extends Document {
   name: string;
   phoneNumber: string;
+  nationalId?: string;
   pkgId: Types.ObjectId;
   pkgStartDate: Date;
   pkgEndDate: Date;
@@ -28,6 +29,11 @@ const NonUserPackageSchema: Schema<INonUserPackage, INonUserPackageModel> = new 
     phoneNumber: {
       type: String,
       required: true,
+    },
+    nationalId: {
+      type: String,
+      required: false,
+      trim: true,
     },
     pkgId: {
       type: Schema.Types.ObjectId,

@@ -7,6 +7,8 @@ import exposedRoutes from "./exposed-routes";
 import feedRoutes from "./feed-routes"
 import coachRoutes from "./coach-routes"
 import financeRoutes from "./finance-routes";
+import { verifyCoacheraSignature } from "../middlewares/coachera-auth.middleware";
+import { receiveCoacheraIntake } from "../controllers/external/coachera-controller";
 
 const router = Router();
 
@@ -18,6 +20,7 @@ router.use("/feed", feedRoutes)
 router.use("/external", exposedRoutes);
 router.use("/coach", coachRoutes);
 router.use("/finance", financeRoutes);
+router.post("/mindspace-intake", verifyCoacheraSignature, receiveCoacheraIntake);
 // /api/coach is available via app.use("/api", router) → /api/coach (no double mount)
 
 export default router;

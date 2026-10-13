@@ -15,3 +15,5 @@ dev.env
 prod.env
 tmp-*
 /docs
+firebase-users.json
+*.csv

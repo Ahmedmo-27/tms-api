@@ -134,7 +134,7 @@ export const updatePayment = asyncHandler(
       }
     }
 
-    const VALID_METHODS = ["APP", "VISA", "CASH", "INSTAPAY", "VALU", "PAYMENT_LINK", "DEDUCTED"];
+    const VALID_METHODS = ["APP", "VISA", "CASH", "INSTAPAY", "VALU", "PAYMENT_LINK", "DEDUCTED", "COACHERA"];
     if (paymentMethod !== undefined && !VALID_METHODS.includes(paymentMethod)) {
       throw new BadRequestError(
         "INVALID_PAYMENT_METHOD",
@@ -148,6 +148,7 @@ export const updatePayment = asyncHandler(
       "WALKIN",
       "NON_USER_BOOKING",
       "NON_USER_PACKAGE",
+      "ONLINE_CLASS",
       "OTHER",
     ];
     if (purpose !== undefined && !VALID_PURPOSES.includes(purpose)) {
@@ -231,3 +232,40 @@ export const deletePayment = asyncHandler(
     new SuccessResponse("Payment Deleted!", { id }).send(res);
   }
 );
+
+export const syncPaymentToCoachera = asyncHandler(
+  async (req: Request, res: Response): Promise<void> => {
+    const { id } = req.params;
+    if (!id || !Types.ObjectId.isValid(id)) {
+      throw new BadRequestError("INVALID_PAYMENT_ID", "Please provide a valid payment ID");
+    }
+
+    const existingPayment = await Payment.findById(id).lean();
+    if (!existingPayment) {
+      throw new NotFoundError("PAYMENT_NOT_FOUND", "Payment not found");
+    }
+
+    const { notifyCoacheraOfPurchase } = await import("../../services/coachera-service");
+    const result = await notifyCoacheraOfPurchase({
+      payment: existingPayment as any,
+      fallbackClient: req.body?.client,
+    });
+
+    const updatedPayment = await Payment.findById(id)
+      .populate("uid")
+      .populate("pkgId")
+      .populate("coachId")
+      .lean();
+
+    new SuccessResponse(
+      result.success
+        ? "Payment synced to Coachera!"
+        : `Coachera sync status: ${result.status}`,
+      {
+        result,
+        payment: updatedPayment,
+      }
+    ).send(res);
+  }
+);
+

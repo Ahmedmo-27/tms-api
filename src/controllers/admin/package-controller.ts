@@ -611,6 +611,7 @@ export const addNonUserPackage = asyncHandler(async function (
   const {
     name,
     phoneNumber,
+    nationalId,
     pendingDeduction,
     pkgId,
     pkgStartDate,
@@ -624,11 +625,15 @@ export const addNonUserPackage = asyncHandler(async function (
 
   const trimmedName = (name as string)?.trim();
   const cleanPhone = normalizePhoneNumber(phoneNumber as string);
+  const cleanNationalId = (nationalId as string)?.trim().replace(/[\s\-]/g, "");
   if (!trimmedName) {
     throw new BadRequestError("INVALID_NAME", "Name is required");
   }
   if (!/^[0-9]{11}$/.test(cleanPhone)) {
     throw new BadRequestError("INVALID_PHONE", "Phone number must be 11 digits");
+  }
+  if (!cleanNationalId) {
+    throw new BadRequestError("INVALID_NATIONAL_ID", "ID is required");
   }
 
   await SubscriptionsService.addNonUserPackage(
@@ -640,7 +645,9 @@ export const addNonUserPackage = asyncHandler(async function (
     pendingDeduction,
     paymentDate,
     amount,
-    targetLocationId
+    targetLocationId,
+    undefined,
+    cleanNationalId
   );
   new SuccessResponse("Package Added!").send(res);
 });

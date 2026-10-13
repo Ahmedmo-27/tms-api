@@ -14,7 +14,9 @@ import asyncHandler from "../../utils/asyncHandler";
 import { BookingsService } from "../../services/bookings-service";
 import { SchedulerService } from "../../services/scheduler-service";
 import NonUserBooking, { INonUserBooking } from "../../models/nonUserBookings";
+import NonUserPackage from "../../models/nonUserPackage";
 import Payment from "../../models/payment";
+import { normalizePhoneNumber } from "../../utils/phone";
 import { Types } from "mongoose";
 import { runInTransaction } from "../../utils/transaction";
 import { ClientSession } from "mongoose";
@@ -535,6 +537,7 @@ export const saveNonUserPayment = asyncHandler(async function (
   const paymentMethod = req.body.paymentMethod;
   const amount = req.body.amount;
   const paymentDate = req.body.paymentDate;
+  const { uid, pkgId, phoneNumber } = req.body;
   if (!bookingId || bookingId === "")
     throw new BadRequestError("INVALID_BOOKING_ID", "Booking Id is invalid");
   const branchLocationId = resolveLocationIdForWrite(req);
@@ -546,6 +549,52 @@ export const saveNonUserPayment = asyncHandler(async function (
     undefined,
     branchLocationId
   );
+
+  if (paymentMethod === "DEDUCTED") {
+    let deducted = false;
+    if (pkgId && Types.ObjectId.isValid(pkgId)) {
+      const nonUserPkg = await NonUserPackage.findOne({
+        _id: pkgId,
+        added: { $ne: true },
+        remainingClasses: { $gt: 0 },
+      });
+      if (nonUserPkg) {
+        nonUserPkg.remainingClasses -= 1;
+        await nonUserPkg.save();
+        deducted = true;
+      }
+    }
+    if (!deducted && phoneNumber) {
+      const cleanPhone = normalizePhoneNumber(phoneNumber);
+      const nonUserPkg = await NonUserPackage.findOne({
+        phoneNumber: cleanPhone,
+        added: { $ne: true },
+        remainingClasses: { $gt: 0 },
+        ...(pkgId && Types.ObjectId.isValid(pkgId) ? { $or: [{ _id: pkgId }, { pkgId }] } : {}),
+      });
+      if (nonUserPkg) {
+        nonUserPkg.remainingClasses -= 1;
+        await nonUserPkg.save();
+        deducted = true;
+      }
+    }
+    if (!deducted && uid) {
+      const member = await Member.findOne({ uid });
+      if (member) {
+        const memberPkg = member.packages.find(
+          (p) =>
+            (p.pkgId.toString() === pkgId || (p as any)._id?.toString() === pkgId) &&
+            p.remainingClasses > 0
+        );
+        if (memberPkg) {
+          memberPkg.remainingClasses -= 1;
+          await member.save();
+          deducted = true;
+        }
+      }
+    }
+  }
+
   req.app.get("io")?.emit("SUCCESS-SCAN");
   new SuccessResponse("Class Attended!").send(res);
 });

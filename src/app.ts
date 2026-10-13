@@ -28,7 +28,13 @@ app.use(
     credentials: true, // Allow cookies / Authorization headers
   })
 );
-app.use(express.json());
+app.use(
+  express.json({
+    verify: (req: Request, _res: Response, buf: Buffer) => {
+      (req as any).rawBody = buf.toString("utf8");
+    },
+  })
+);
 app.use(cookieParser());
 // Sanitize request logging — never log passwords, tokens, or auth headers
 app.use((req: Request, res: Response, next: NextFunction) => {

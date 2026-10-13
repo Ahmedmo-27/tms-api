@@ -101,6 +101,7 @@ import {
   getPayments,
   updatePayment,
   deletePayment,
+  syncPaymentToCoachera,
 } from "../controllers/admin/payments-controller";
 import {
   getProducts,
@@ -712,6 +713,12 @@ adminRoutes.delete(
   authenticateUser,
   authorizeUser(["management"]),
   deletePayment
+);
+adminRoutes.post(
+  "/payments/:id/sync-coachera",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  syncPaymentToCoachera
 );
 
 // Refund Routes
