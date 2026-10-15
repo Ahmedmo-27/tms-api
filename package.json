@@ -40,7 +40,9 @@
     "update-prices:apply": "npx ts-node ./src/scripts/update-prod-prices.ts --apply",
     "check:space-memberships": "npx ts-node ./src/scripts/check-space-memberships.ts",
     "sync-coaches-users": "npx ts-node ./src/scripts/sync-coaches-users.ts",
-    "sync-coaches-users:apply": "npx ts-node ./src/scripts/sync-coaches-users.ts --apply"
+    "sync-coaches-users:apply": "npx ts-node ./src/scripts/sync-coaches-users.ts --apply",
+    "notify:run": "npx ts-node ./src/scripts/send-run-announcement-notification.ts",
+    "notify:run:apply": "npx ts-node ./src/scripts/send-run-announcement-notification.ts --apply"
   },
   "repository": {
     "type": "git",

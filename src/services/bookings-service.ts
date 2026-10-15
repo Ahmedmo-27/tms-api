@@ -525,11 +525,7 @@ export class BookingsService {
         SCAN_ERROR_MESSAGES.CLASS_NOT_FOUND,
       );
     const member = await Member.findOne({ uid }).populate({ path: "uid" });
-    if (!member)
-      throw new NotFoundError(
-        "MEMBER_NOT_FOUND",
-        SCAN_ERROR_MESSAGES.MEMBER_NOT_FOUND,
-      );
+    const memberName = member ? (member.uid as any).name : "Guest";
     const scheduledClass = await ScheduledClass.findById(scid);
     if (!scheduledClass)
       throw new NotFoundError(
@@ -543,7 +539,7 @@ export class BookingsService {
       io.emit("FAILED-SCAN", {
         code: "PAST_ATTENDANCE_DEADLINE",
         message: SCAN_ERROR_MESSAGES.PAST_ATTENDANCE_DEADLINE,
-        member: (member.uid as any).name,
+        member: memberName,
       });
       await recordFailedClassScan(scid, uid);
       throw new ForbiddenError(
@@ -551,9 +547,18 @@ export class BookingsService {
         SCAN_ERROR_MESSAGES.PAST_ATTENDANCE_DEADLINE,
       );
     }
+    // If the UID does not belong to a member, allow guest scan without booking checks.
+    if (!member) {
+      io.emit("SUCCESS-SCAN", {
+        code: "CLASS_ATTENDED",
+        message: "Success",
+        member: memberName,
+      });
+      return;
+    }
     const isBooked = await scheduledClass.checkBookedMember(
       uid,
-      (member.uid as any).name,
+      memberName,
       io,
     );
     if (!isBooked) {
@@ -568,7 +573,7 @@ export class BookingsService {
         uid,
         scid,
         session,
-        (member.uid as any).name,
+        memberName,
         io,
       );
       await ScheduledClass.addMemberScan(scid, uid, true, session);
@@ -576,7 +581,7 @@ export class BookingsService {
     io.emit("SUCCESS-SCAN", {
       code: "CLASS_ATTENDED",
       message: "Success",
-      member: (member.uid as any).name,
+      member: memberName,
     });
   }
 
@@ -873,12 +878,45 @@ export class BookingsService {
         SCAN_ERROR_MESSAGES.PACKAGE_NOT_FOUND,
       );
 
+    const startOfDay = new Date();
+    startOfDay.setUTCHours(0, 0, 0, 0);
+    const endOfDay = new Date();
+    endOfDay.setUTCHours(23, 59, 59, 999);
+
     if (
       await DailyAttendance.hasSuccessfulOpenGymToday(
         uid,
         locationId,
       )
     ) {
+      // Check if today's attendance was recorded as a desk Drop In
+      const elemMatch: Record<string, unknown> = {
+        uid: new Types.ObjectId(uid),
+        status: "SUCCESS",
+      };
+      if (locationId) {
+        elemMatch.locationId = new Types.ObjectId(locationId);
+      }
+
+      const todayAttendance = await DailyAttendance.findOne(
+        {
+          date: { $gte: startOfDay, $lte: endOfDay },
+          openGymAttendance: { $elemMatch: elemMatch },
+        },
+        { "openGymAttendance.$": 1 }
+      );
+
+      const matchedRow = todayAttendance?.openGymAttendance?.[0];
+      if (matchedRow && matchedRow.method === "Drop In") {
+        // Front desk recorded a paid drop-in today. Allow entrance via turnstile QR scan!
+        io.emit("SUCCESS-SCAN", {
+          code: "OPEN_GYM_DROP_IN",
+          message: "Success",
+          member: memberName,
+        });
+        return;
+      }
+
       io.emit("FAILED-SCAN", {
         code: "ATTENDANCE_ALREADY_RECORDED",
         message: locationId
@@ -894,9 +932,21 @@ export class BookingsService {
       );
     }
 
-    const hasDropIn = locationId
+    const hasDropInBooking = locationId
       ? await BookingsService.findOpenGymDropInBooking(uid, locationId)
       : false;
+
+    const hasDropInPaymentToday = locationId
+      ? await Payment.exists({
+          uid: new Types.ObjectId(uid),
+          purpose: "DROPIN",
+          locationId: new Types.ObjectId(locationId),
+          paymentTime: { $gte: startOfDay, $lte: endOfDay },
+          isRefunded: false,
+        })
+      : false;
+
+    const hasDropIn = Boolean(hasDropInBooking || hasDropInPaymentToday);
 
     let pid: "NO_ACCESS_AT_LOCATION" | string | null = null;
     let pkg: any = null;
