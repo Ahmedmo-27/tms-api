@@ -91,7 +91,12 @@ import {
   updateUser,
   deleteUser,
 } from "../controllers/admin/user-contoller";
-import { sendCustomNotification } from "../controllers/admin/notifications-controller";
+import {
+  sendCustomNotification,
+  sendNotificationBatch,
+  getNotificationHistory,
+  getNotificationStats,
+} from "../controllers/admin/notifications-controller";
 import {
   addLocation,
   getLocation,
@@ -656,6 +661,24 @@ adminRoutes.post(
   authenticateUser,
   authorizeUser(["management", "branch_admin"]),
   sendCustomNotification
+);
+adminRoutes.post(
+  "/notifications/send",
+  authenticateUser,
+  authorizeUser(["management"]),
+  sendNotificationBatch
+);
+adminRoutes.get(
+  "/notifications/history",
+  authenticateUser,
+  authorizeUser(["management"]),
+  getNotificationHistory
+);
+adminRoutes.get(
+  "/notifications/stats",
+  authenticateUser,
+  authorizeUser(["management"]),
+  getNotificationStats
 );
 
 // Coach Management Routes
