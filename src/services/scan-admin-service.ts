@@ -354,6 +354,8 @@ async function applyEffect(
               bookings: {
                 scid: new Types.ObjectId(parentId),
                 cid: scheduledClass?.cid,
+                isDropIn: false,
+                bookingTime: new Date(),
               },
             },
           },
@@ -693,6 +695,8 @@ export class ScanAdminService {
                       bookings: {
                         scid: new Types.ObjectId(ref.parentId),
                         cid: parent.cid,
+                        isDropIn: false,
+                        bookingTime: new Date(),
                       },
                     },
                   },
@@ -1132,6 +1136,8 @@ export class ScanAdminService {
                   bookings: {
                     scid: targetObjectId,
                     cid: targetClass.cid,
+                    isDropIn: false,
+                    bookingTime: new Date(),
                   },
                 },
               },
