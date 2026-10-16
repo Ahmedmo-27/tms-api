@@ -12,7 +12,6 @@ import { parseScanPayload } from "../../utils/scan-payload";
 import { getInvalidQrCodeMessage } from "../../utils/error-messages";
 import {
   AppVersionRequest,
-  buildScheduleUpdateBannerItem,
   UPDATE_REMINDER_MESSAGE,
   withUpdateReminder,
 } from "../../middlewares/appVersion.middleware";
@@ -41,15 +40,7 @@ export const getSchedule = asyncHandler(async function (
 ): Promise<void> {
   const date = req.query.date;
   const scheduleData = await SchedulerService.getSchedule(date as string);
-  const versionReq = req as AppVersionRequest;
-  const responseSchedule = versionReq.isOutdatedMobileApp
-    ? [
-        buildScheduleUpdateBannerItem(date as string, false, scheduleData),
-        ...scheduleData,
-      ]
-    : scheduleData;
-
-  new SuccessResponse("Scheduled Classes Found!", responseSchedule).send(res);
+  new SuccessResponse("Scheduled Classes Found!", scheduleData).send(res);
 });
 
 export const getBookings = asyncHandler(async function (

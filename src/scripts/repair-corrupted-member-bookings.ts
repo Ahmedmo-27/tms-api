@@ -8,23 +8,23 @@ import ScheduledClass from "../models/scheduledClass";
 // ============================================================================
 // CONFIGURATION
 // ============================================================================
-// DRY_RUN mode is strictly enforced to preview changes without modifying the database.
-const DRY_RUN = true;
+// DRY_RUN mode is enabled by default unless --apply is passed as a CLI flag.
+const DRY_RUN = !process.argv.includes("--apply");
 
 async function main() {
-  dotenv.config({ path: path.join(__dirname, "../../prod.env") });
+  const isDev = process.argv.includes("--dev");
+  const envFile = isDev ? "../../dev.env" : "../../prod.env";
+  dotenv.config({ path: path.join(__dirname, envFile) });
   const uri = process.env.MONGO_URI;
   if (!uri) {
-    throw new Error("MONGO_URI not found in prod.env");
+    throw new Error(`MONGO_URI not found in ${envFile}`);
   }
 
   console.log("=================================================================");
-  console.log(`REPAIR CORRUPTED MEMBER BOOKINGS - ${DRY_RUN ? "DRY RUN (READ ONLY)" : "LIVE EXECUTION"}`);
+  console.log(`REPAIR CORRUPTED MEMBER BOOKINGS [${isDev ? "DEV / TEST ENV" : "PROD ENV"}] - ${DRY_RUN ? "DRY RUN (READ ONLY)" : "LIVE EXECUTION"}`);
   console.log("=================================================================\n");
 
-  await mongoose.connect(uri, {
-    readPreference: DRY_RUN ? "secondaryPreferred" : "primary",
-  });
+  await mongoose.connect(uri);
 
   const members = await Member.find({}).lean();
   console.log(`Inspecting ${members.length} members in database...\n`);

@@ -520,10 +520,8 @@ describe("Production Booking & Auth Complaints Regression Suite (50 & Fab Audit)
       expect(res.status).toHaveBeenCalledWith(200);
       const payload = res.json.mock.calls[0][0];
       expect(payload.message).toBe("Scheduled Classes Found!");
-      expect(payload.data).toHaveLength(2);
-      expect(payload.data[0]._id).toBe("app_update_reminder");
-      expect(payload.data[0].cid.title).toContain("New App Update Available");
-      expect(payload.data[1]._id).toBe("real_class_1");
+      expect(payload.data).toHaveLength(1);
+      expect(payload.data[0]._id).toBe("real_class_1");
     });
 
     it("does not prepend reminder banner or append reminder message when client sends latest x-app-version (1.0.12)", async () => {
@@ -597,12 +595,10 @@ describe("Production Booking & Auth Complaints Regression Suite (50 & Fab Audit)
         resScheduleBlocked,
         nextScheduleBlocked
       );
-      expect(nextScheduleBlocked).not.toHaveBeenCalled();
-      expect(resScheduleBlocked.status).toHaveBeenCalledWith(200);
-      const blockedPayload = resScheduleBlocked.json.mock.calls[0][0];
-      expect(blockedPayload.message).toBe("Scheduled Classes Found!");
-      expect(blockedPayload.data).toHaveLength(1);
-      expect(blockedPayload.data[0]._id).toBe("app_update_required");
+      expect(nextScheduleBlocked).toHaveBeenCalled();
+      const errBlocked = nextScheduleBlocked.mock.calls[0][0];
+      expect(errBlocked).toBeDefined();
+      expect(errBlocked.code).toBe("APP_UPDATE_REQUIRED");
     });
 
     it("returns version metadata from GET /auth/app-version", async () => {

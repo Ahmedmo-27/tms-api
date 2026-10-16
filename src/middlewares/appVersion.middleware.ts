@@ -1,6 +1,5 @@
 import { Request, Response, NextFunction } from "express";
 import { BadRequestError, ForbiddenError } from "../core/ApiError";
-import { SuccessResponse } from "../core/ApiResponse";
 
 export const DEFAULT_LATEST_APP_VERSION = "1.0.12";
 export const DEFAULT_MIN_REQUIRED_APP_VERSION = "1.0.10";
@@ -129,64 +128,6 @@ export function evaluateAppVersion(
   };
 }
 
-export function buildScheduleUpdateBannerItem(
-  dateRaw?: string,
-  isHardBlock = false,
-  existingClasses: any[] = [],
-) {
-  const baseDate =
-    typeof dateRaw === "string" && /^\d{4}-\d{2}-\d{2}$/.test(dateRaw.trim())
-      ? dateRaw.trim()
-      : new Date().toISOString().slice(0, 10);
-
-  const startTime = new Date(`${baseDate}T08:00:00.000Z`).toISOString();
-  const endTime = new Date(`${baseDate}T22:00:00.000Z`).toISOString();
-
-  // Collect existing branch locations so the banner appears under any selected branch filter
-  // without adding synthetic location pills to the filter bar.
-  const existingLocations: Array<Record<string, unknown>> = [];
-  const seenBranches = new Set<string>();
-  for (const cls of existingClasses) {
-    const locObj = cls?.locationId;
-    if (locObj && typeof locObj === "object" && (locObj.branchName || locObj.location)) {
-      const key = `${locObj.branchName ?? ""}|${locObj.location ?? ""}`;
-      if (!seenBranches.has(key)) {
-        seenBranches.add(key);
-        existingLocations.push(locObj);
-      }
-    }
-  }
-
-  const title = isHardBlock
-    ? "⚠️ Update Required to Book Classes"
-    : "📲 New App Update Available";
-  const subtitle = isHardBlock
-    ? "Please update The Mind Space app from App Store / Play Store to continue"
-    : "Please update The Mind Space app from App Store / Play Store for the latest fixes";
-
-  return {
-    _id: isHardBlock ? "app_update_required" : "app_update_reminder",
-    className: title,
-    type: "ST",
-    availableSlots: 0,
-    startTime,
-    endTime,
-    coachName: subtitle,
-    coachId: {
-      coachName: subtitle,
-    },
-    cid: {
-      title,
-      category: "Studio",
-      price: 0,
-      allowDropIn: false,
-      locations: existingLocations,
-    },
-    locationId: existingLocations.length === 1 ? existingLocations[0] : {},
-    locations: existingLocations,
-  };
-}
-
 export function withUpdateReminder(req: Request, baseMessage: string): string {
   const versionReq = req as AppVersionRequest;
   if (versionReq.isOutdatedMobileApp) {
@@ -207,16 +148,6 @@ export const checkMobileAppVersion = (
 
   if (!evaluation.forceUpdate) {
     next();
-    return;
-  }
-
-  // If the client is hard-blocked and requesting the class schedule, return a single
-  // non-bookable banner item so legacy app builds display the update notice instead of a generic network error.
-  if (req.method === "GET" && req.path.includes("schedule")) {
-    const date = typeof req.query.date === "string" ? req.query.date : undefined;
-    new SuccessResponse("Scheduled Classes Found!", [
-      buildScheduleUpdateBannerItem(date, true, []),
-    ]).send(res);
     return;
   }
 
