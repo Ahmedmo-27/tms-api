@@ -585,6 +585,18 @@ export class ScanAdminService {
     changes: ScanRowChanges,
   ): Promise<ScanRowView> {
     if (changes.targetScid && changes.targetScid !== ref.parentId) {
+      if (changes.targetScid === "open-gym" || changes.targetScid === "none") {
+        return ScanAdminService.moveScanToOpenGym(ref, {
+          uid: changes.uid,
+          pkgId: changes.pkgId,
+          time: changes.time,
+          status: changes.status,
+          guestName: changes.guestName,
+          guestPhone: changes.guestPhone,
+          name: changes.name,
+          phoneNumber: changes.phoneNumber,
+        });
+      }
       return ScanAdminService.moveScanToClass(ref, changes.targetScid, {
         uid: changes.uid,
         pkgId: changes.pkgId,
@@ -1193,6 +1205,183 @@ export class ScanAdminService {
     return ScanAdminService.getScanRow({
       source: "class",
       parentId: targetScid,
+      rowId: newRowId!.toString(),
+    });
+  }
+
+  /**
+   * Moves a check-in to Open Gym.
+   * Reverts the effect from the false class or PT check-in (session returned, class attendance removed)
+   * and records the check-in in Open Gym attendance for that day.
+   */
+  static async moveScanToOpenGym(
+    ref: ScanRowRef,
+    options: {
+      uid?: string;
+      pkgId?: string;
+      time?: string | Date;
+      status?: "SUCCESS" | "FAILED" | "WILL_PAY" | "FOC";
+      guestName?: string;
+      guestPhone?: string;
+      name?: string;
+      phoneNumber?: string;
+    } = {},
+  ): Promise<ScanRowView> {
+    if (ref.source === "open-gym") {
+      throw new BadRequestError("SAME_CLASS", "Cannot move check-in to the same activity");
+    }
+    toObjectId(ref.rowId, "rowId");
+
+    let newRowId: Types.ObjectId | undefined;
+    let newDayId: Types.ObjectId | undefined;
+
+    await runInTransaction(async (session: ClientSession) => {
+      const { parent: oldParent, row, arrayPath, isNonUserBooking } = await loadRow(ref, session);
+
+      if (isNonUserBooking) {
+        if (row.status !== "CANCELLED") {
+          await ScheduledClass.removeBookedNonUser(ref.parentId, session);
+        }
+        await NonUserBooking.cancelBooking(ref.rowId, session);
+      }
+
+      const oldUid = row.uid?.toString();
+      const targetUid = options.uid ?? oldUid;
+
+      const scanTime = options.time
+        ? new Date(options.time)
+        : readTime(ref.source, row, isNonUserBooking);
+      if (isNaN(scanTime.getTime())) {
+        throw new BadRequestError("INVALID_TIME", "Check-in time is not a valid date");
+      }
+
+      const targetStatus = options.status ?? "SUCCESS";
+
+      // 1. Revert effect from false class / old check-in
+      if (oldUid) {
+        const beforeEffect: ScanEffect = {
+          uid: oldUid,
+          pkgId:
+            row.pkgId?.toString() ??
+            (await resolveLegacyPkgId(row.method, session)),
+          status: readStatus(ref.source, row, false),
+          time: readTime(ref.source, row, false),
+        };
+
+        await revertEffect(ref.source, beforeEffect, session, ref.parentId);
+      }
+
+      // Remove row from old parent if not walk-in
+      if (!isNonUserBooking) {
+        (oldParent[arrayPath] as any).pull({ _id: new Types.ObjectId(ref.rowId) });
+        await oldParent.save({ session });
+      }
+
+      // Determine target locationId
+      const targetLocationId = row.locationId || (ref.source === "class" ? oldParent.locationId : undefined);
+
+      // Find or create DailyAttendance for scanTime's day
+      const startOfDay = new Date(scanTime);
+      startOfDay.setUTCHours(0, 0, 0, 0);
+      const endOfDay = new Date(startOfDay);
+      endOfDay.setUTCHours(23, 59, 59, 999);
+
+      let day = await DailyAttendance.findOne(
+        { date: { $gte: startOfDay, $lte: endOfDay } },
+        null,
+        { session },
+      );
+      if (!day) {
+        day = new DailyAttendance({ date: startOfDay });
+        await day.save({ session });
+      }
+
+      newDayId = (day as any)._id as Types.ObjectId;
+
+      // 2. Apply check-in to Open Gym
+      if (targetUid) {
+        let targetPkgId = options.pkgId;
+        let targetMethod = isNonUserBooking ? "Walk In" : (row.method || "Open Gym Scan");
+
+        if (targetPkgId) {
+          const catalog = await Package.findById(targetPkgId).session(session);
+          if (!catalog) {
+            throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found");
+          }
+          targetMethod = catalog.name;
+        } else {
+          // Look for an active open gym package on the member
+          const memberDoc = await Member.findOne({ uid: targetUid }).session(session);
+          const openGymPkgs = await Package.find({
+            category: { $in: ["OPEN_GYM", "SPACE_MEMBERSHIP", "ULTIMATE_MINDSPACER", "MIXED"] },
+          }).session(session);
+          const openGymPkgIds = new Set(openGymPkgs.map((p) => p._id.toString()));
+          const candidate = (memberDoc?.packages ?? []).find(
+            (p) =>
+              openGymPkgIds.has(p.pkgId.toString()) &&
+              p.status === "ACTIVE" &&
+              (isUnlimitedSpaceAccess(openGymPkgs.find((x) => x._id.toString() === p.pkgId.toString())?.category || "") || p.remainingClasses > 0),
+          );
+          if (candidate) {
+            targetPkgId = candidate.pkgId.toString();
+            const cat = openGymPkgs.find((p) => p._id.toString() === targetPkgId);
+            if (cat) targetMethod = cat.name;
+          }
+        }
+
+        if (targetStatus === "SUCCESS" && targetPkgId) {
+          await adjustCredit(
+            targetUid,
+            targetPkgId,
+            "charge",
+            "Scan moved to Open Gym — session charged",
+            session,
+            scanTime,
+          );
+        }
+
+        const newEntryId = new Types.ObjectId();
+        const newEntry = {
+          _id: newEntryId,
+          uid: new Types.ObjectId(targetUid),
+          method: targetMethod,
+          time: scanTime,
+          status: targetStatus === "FAILED" ? "FAILED" : targetStatus,
+          locationId: targetLocationId ? new Types.ObjectId(targetLocationId) : undefined,
+          pkgId: targetPkgId ? new Types.ObjectId(targetPkgId) : undefined,
+        };
+
+        (day.openGymAttendance as any).push(newEntry);
+        await day.save({ session });
+        newRowId = newEntryId;
+      } else {
+        // Guest walk-in moved to Open Gym
+        const effectiveName = options.guestName ?? options.name ?? row.name ?? row.guestName ?? "Guest";
+        const effectivePhone = options.guestPhone ?? options.phoneNumber ?? row.phoneNumber ?? row.guestPhone;
+        const newEntryId = new Types.ObjectId();
+        const newEntry = {
+          _id: newEntryId,
+          guestName: effectiveName,
+          guestPhone: effectivePhone,
+          method: "Walk In",
+          time: scanTime,
+          status: targetStatus === "FAILED" ? "FAILED" : targetStatus,
+          locationId: targetLocationId ? new Types.ObjectId(targetLocationId) : undefined,
+        };
+
+        (day.openGymAttendance as any).push(newEntry);
+        await day.save({ session });
+        newRowId = newEntryId;
+      }
+    });
+
+    logger.info(
+      `[ScanAdmin] Moved scan ${ref.rowId} from ${ref.source} (${ref.parentId}) to open-gym (${newDayId}) (new row ${newRowId})`,
+    );
+
+    return ScanAdminService.getScanRow({
+      source: "open-gym",
+      parentId: newDayId!.toString(),
       rowId: newRowId!.toString(),
     });
   }

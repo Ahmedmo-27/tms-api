@@ -57,6 +57,28 @@ export const updateScanRow = asyncHandler(async function (
 
   const { uid, pkgId, time, status, guestName, guestPhone, name, phoneNumber, targetScid } = req.body ?? {};
   if (targetScid && targetScid !== ref.parentId) {
+    if (targetScid === "open-gym" || targetScid === "none") {
+      const row = await ScanAdminService.moveScanToOpenGym(ref, {
+        uid,
+        pkgId,
+        time,
+        status,
+        guestName,
+        guestPhone,
+        name,
+        phoneNumber,
+      });
+      const io = req.app.get("io");
+      if (io) {
+        io.emit("SUCCESS-SCAN", {
+          code: "OPEN_GYM_ATTENDED",
+          message: "Check-in moved to Open Gym",
+        });
+      }
+      new SuccessResponse("Scan moved to Open Gym", row).send(res);
+      return;
+    }
+
     const restrictTo = resolveLocationFilter(req);
     if (restrictTo) {
       await SchedulerService.assertSessionAtLocation(targetScid, restrictTo);
@@ -122,7 +144,7 @@ export const moveScanToClass = asyncHandler(async function (
   const ref = readRef(req);
   await assertRowAccess(req, ref);
 
-  const { targetScid, uid, pkgId, time, status } = req.body ?? {};
+  const { targetScid, uid, pkgId, time, status, guestName, guestPhone, name, phoneNumber } = req.body ?? {};
   if (!targetScid) {
     throw new BadRequestError(
       "TARGET_CLASS_REQUIRED",
@@ -138,6 +160,28 @@ export const moveScanToClass = asyncHandler(async function (
     status !== "FOC"
   ) {
     throw new BadRequestError("INVALID_STATUS", "Status must be SUCCESS, FAILED, WILL_PAY, or FOC");
+  }
+
+  if (targetScid === "open-gym" || targetScid === "none") {
+    const row = await ScanAdminService.moveScanToOpenGym(ref, {
+      uid,
+      pkgId,
+      time,
+      status,
+      guestName,
+      guestPhone,
+      name,
+      phoneNumber,
+    });
+    const io = req.app.get("io");
+    if (io) {
+      io.emit("SUCCESS-SCAN", {
+        code: "OPEN_GYM_ATTENDED",
+        message: "Check-in moved to Open Gym",
+      });
+    }
+    new SuccessResponse("Scan moved to Open Gym", row).send(res);
+    return;
   }
 
   const restrictTo = resolveLocationFilter(req);
