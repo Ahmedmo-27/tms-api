@@ -1,5 +1,7 @@
 import Member, { IMemberPackageData } from "../models/member";
-import Package, { getPackageEndDate } from "../models/package";
+import Package, { getPackageEndDate, isUnlimitedSpaceAccess } from "../models/package";
+import DailyAttendance from "../models/dailyAttendance";
+import { format } from "date-fns";
 import PromoCode from "../models/promoCode";
 import { Types } from "mongoose";
 import { PaymentsService } from "./payments-service";
@@ -210,6 +212,7 @@ export class SubscriptionsService {
     io?: SocketIOServer,
     locationId?: string,
     pendingDeduction = false,
+    previousSessionDates?: string[],
   ) {
     if (!uid) {
       throw new BadRequestError("MEMBER_ID_REQUIRED", "Member ID is required");
@@ -260,7 +263,35 @@ export class SubscriptionsService {
         "This open gym package is not available at the selected branch",
       );
     }
-    if (pendingDeduction && pkg.numberOfSessions < 1) {
+
+    const normalizedPreviousDates: string[] = Array.isArray(previousSessionDates)
+      ? previousSessionDates.map((d) => String(d).trim()).filter(Boolean)
+      : [];
+
+    if (normalizedPreviousDates.length > 0) {
+      if (normalizedPreviousDates.length > pkg.numberOfSessions) {
+        throw new BadRequestError(
+          "INVALID_PREVIOUS_SESSIONS",
+          `Cannot record more previous sessions (${normalizedPreviousDates.length}) than package total (${pkg.numberOfSessions})`,
+        );
+      }
+      const now = new Date();
+      for (const dStr of normalizedPreviousDates) {
+        const parsed = new Date(dStr);
+        if (isNaN(parsed.getTime())) {
+          throw new BadRequestError(
+            "INVALID_DATE",
+            `Invalid previous session date: ${dStr}`,
+          );
+        }
+        if (parsed > now) {
+          throw new BadRequestError(
+            "FUTURE_DATE_NOT_ALLOWED",
+            "Previous session dates cannot be in the future",
+          );
+        }
+      }
+    } else if (pendingDeduction && pkg.numberOfSessions < 1) {
       throw new BadRequestError(
         "INVALID_DEDUCTION",
         "This package has no sessions to deduct",
@@ -353,9 +384,16 @@ export class SubscriptionsService {
         locationId
       );
       createdPayment = payment;
-      const remainingClasses = pendingDeduction
-        ? pkg.numberOfSessions - 1
-        : pkg.numberOfSessions;
+      const previousDeductCount =
+        normalizedPreviousDates.length > 0
+          ? normalizedPreviousDates.length
+          : pendingDeduction
+          ? 1
+          : 0;
+      const remainingClasses = Math.max(
+        0,
+        pkg.numberOfSessions - previousDeductCount
+      );
       await Member.addPackage(
         uid,
         pkg._id.toString(),
@@ -367,7 +405,69 @@ export class SubscriptionsService {
         restrictions,
         locationId
       );
-      if (pendingDeduction) {
+
+      if (remainingClasses === 0 && !isUnlimitedSpaceAccess(pkg.category)) {
+        await Member.updateOne(
+          {
+            uid: new Types.ObjectId(uid),
+            "packages.pkgId": pkg._id,
+            "packages.pkgStartDate": new Date(startDate),
+          },
+          { $set: { "packages.$.status": "COMPLETED" } },
+          { session }
+        );
+      }
+
+      if (normalizedPreviousDates.length > 0) {
+        const isPtPackage =
+          pkg.category === "PERSONAL_TRAINING" || Boolean(pkg.coachId);
+        for (const dStr of normalizedPreviousDates) {
+          const pastDate = toStoredPackageDate(dStr);
+          await Member.pushAdjustmentRecord(
+            uid,
+            pkg._id.toString(),
+            new Date(startDate),
+            {
+              date: new Date(),
+              attendanceDate: pastDate,
+              source: "ADMIN",
+              type: "DEDUCT",
+              amount: 1,
+              className: pkg.name,
+              reason: `Previous session: ${format(pastDate, "dd-MM-yyyy")}`,
+            },
+            session
+          );
+
+          if (isPtPackage) {
+            await Member.updateOne(
+              { uid: new Types.ObjectId(uid) },
+              {
+                $addToSet: {
+                  ptAttendance: {
+                    pkgId: pkg._id,
+                    date: format(pastDate, "yyyy-MM-dd"),
+                    attendanceTime: pastDate,
+                  },
+                },
+              },
+              { session }
+            );
+
+            await DailyAttendance.recordPtAttendance(
+              uid,
+              pkg.name,
+              session,
+              "SUCCESS",
+              io as any,
+              locationId || (pkg.locationId ? pkg.locationId.toString() : undefined),
+              pkg.coachId ? pkg.coachId.toString() : undefined,
+              pastDate,
+              pkg._id.toString()
+            );
+          }
+        }
+      } else if (pendingDeduction) {
         await Member.pushAdjustmentRecord(
           uid,
           pkg._id.toString(),
