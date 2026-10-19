@@ -1028,4 +1028,82 @@ describe("ScanAdminService walk-in NonUserBooking", () => {
     expect(walkIn.status).toBe("FOC");
     expect(walkIn.save).toHaveBeenCalled();
   });
+
+  describe("ScanAdminService.moveScanToOpenGym", () => {
+    it("moves a member's check-in from class to Open Gym", async () => {
+      const falseScanRow = {
+        _id: new Types.ObjectId(rowId),
+        uid: new Types.ObjectId(uidA),
+        pkgId: new Types.ObjectId(ptPkgId),
+        method: "20 Functional Training",
+        scanTime: new Date("2026-10-10T16:00:00Z"),
+        status: true,
+      };
+      const falseArr: any = [falseScanRow];
+      falseArr.id = (id: string) => (falseScanRow._id.toString() === id ? falseScanRow : null);
+      falseArr.pull = jest.fn();
+      const falseCls = {
+        _id: new Types.ObjectId(scid),
+        scans: falseArr,
+        bookedMembers: [{ uid: new Types.ObjectId(uidA), method: "20 Functional Training" }],
+        save: jest.fn(),
+      };
+
+      (ScheduledClass.findById as jest.Mock).mockReturnValue({
+        session: jest.fn().mockResolvedValue(falseCls),
+      });
+
+      const openGymArr: any = [];
+      const dayDoc = {
+        _id: new Types.ObjectId(dayId),
+        date: new Date("2026-10-10T00:00:00Z"),
+        openGymAttendance: openGymArr,
+        save: jest.fn(),
+      };
+      openGymArr.id = jest.fn((id: string) => openGymArr.find((e: any) => e._id.toString() === id.toString()));
+
+      (DailyAttendance.findOne as jest.Mock).mockResolvedValue(dayDoc);
+      (DailyAttendance.findById as jest.Mock).mockReturnValue({
+        session: jest.fn().mockResolvedValue(dayDoc),
+      });
+
+      const pkgA = makePackage(ptPkgId, 3, "20 Functional Training");
+      const openGymPkg = makePackage(otherPkgId, 5, "Open Gym Monthly");
+      const member = makeMember(uidA, [pkgA, openGymPkg]);
+      (Member.findOne as jest.Mock).mockReturnValue({
+        session: jest.fn().mockResolvedValue(member),
+      });
+      (User.findById as jest.Mock).mockReturnValue({
+        select: jest.fn().mockResolvedValue({ _id: new Types.ObjectId(uidA), name: "Member A", phoneNumber: "01000000000" }),
+      });
+      (Package.findById as jest.Mock).mockImplementation((id: any) => {
+        const idStr = id.toString();
+        const cat = idStr === ptPkgId ? "CLASS" : "OPEN_GYM";
+        const name = idStr === ptPkgId ? "20 Functional Training" : "Open Gym Monthly";
+        const sessionFn = jest.fn().mockResolvedValue({ _id: new Types.ObjectId(idStr), category: cat, name });
+        return {
+          select: jest.fn().mockReturnValue({ session: sessionFn }),
+          session: sessionFn,
+        };
+      });
+
+      const result = await ScanAdminService.moveScanToOpenGym(
+        { source: "class", parentId: scid, rowId },
+        { pkgId: otherPkgId },
+      );
+
+      expect(pkgA.remainingClasses).toBe(4); // Class credit returned (+1)
+      expect(falseArr.pull).toHaveBeenCalled();
+      expect(dayDoc.openGymAttendance).toHaveLength(1);
+      expect(result.source).toBe("open-gym");
+    });
+
+    it("refuses to move a scan if already in Open Gym", async () => {
+      await expect(
+        ScanAdminService.moveScanToOpenGym(
+          { source: "open-gym", parentId: dayId, rowId },
+        ),
+      ).rejects.toThrow("Cannot move check-in to the same activity");
+    });
+  });
 });

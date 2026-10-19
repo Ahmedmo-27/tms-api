@@ -12,7 +12,7 @@ export interface IDailyAttendance extends Document {
       coachId?: mongoose.Types.ObjectId;
       time: Date;
       method: string;
-      status: "SUCCESS" | "FAILED";
+      status: "SUCCESS" | "FAILED" | "WILL_PAY" | "FOC";
       locationId?: mongoose.Types.ObjectId;
       /** Catalog package the visit was charged to; absent on rows predating this field. */
       pkgId?: mongoose.Types.ObjectId;
@@ -25,7 +25,7 @@ export interface IDailyAttendance extends Document {
       guestPhone?: string;
       time: Date;
       method: string;
-      status: "SUCCESS" | "FAILED";
+      status: "SUCCESS" | "FAILED" | "WILL_PAY" | "FOC";
       locationId?: mongoose.Types.ObjectId;
       /** Catalog package the visit was charged to; absent on rows predating this field. */
       pkgId?: mongoose.Types.ObjectId;
@@ -110,7 +110,7 @@ const DailyAttendanceSchema: Schema<IDailyAttendance, DailyAttendanceModel> =
         coachId: { type: Schema.Types.ObjectId, ref: "Coach", default: null },
         time: { type: Date, required: true },
         method: { type: String, required: true },
-        status: { type: String, enum: ["SUCCESS", "FAILED"], default: "SUCCESS" },
+        status: { type: String, enum: ["SUCCESS", "FAILED", "WILL_PAY", "FOC"], default: "SUCCESS" },
         locationId: { type: Schema.Types.ObjectId, ref: "Location", default: null },
         pkgId: { type: Schema.Types.ObjectId, ref: "Package", default: null },
       },
@@ -122,7 +122,7 @@ const DailyAttendanceSchema: Schema<IDailyAttendance, DailyAttendanceModel> =
         guestPhone: { type: String },
         time: { type: Date, required: true },
         method: { type: String, required: true },
-        status: { type: String, enum: ["SUCCESS", "FAILED"], default: "SUCCESS" },
+        status: { type: String, enum: ["SUCCESS", "FAILED", "WILL_PAY", "FOC"], default: "SUCCESS" },
         locationId: { type: Schema.Types.ObjectId, ref: "Location", default: null },
         pkgId: { type: Schema.Types.ObjectId, ref: "Package", default: null },
       },
