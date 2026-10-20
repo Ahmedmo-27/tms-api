@@ -8,6 +8,55 @@ import Member from "../../models/member";
 import Package from "../../models/package";
 import User from "../../models/user";
 import DailyAttendance from "../../models/dailyAttendance";
+import ScheduledClass from "../../models/scheduledClass";
+import Class from "../../models/class";
+
+jest.mock("../../models/scheduledClass", () => {
+  const mockScls = {
+    _id: new Types.ObjectId("69e75e4ceedc2cfac76e0999"),
+    cid: new Types.ObjectId("69e75e4ceedc2cfac76e0172"),
+    bookedMembers: [],
+    scans: [],
+    save: jest.fn().mockImplementation(function (this: any) {
+      return Promise.resolve(this);
+    }),
+  };
+  const ctor: any = jest.fn().mockImplementation((data: any) => ({
+    _id: new Types.ObjectId("69e75e4ceedc2cfac76e0999"),
+    bookedMembers: [],
+    scans: [],
+    ...data,
+    save: jest.fn().mockResolvedValue(true),
+  }));
+  ctor.findById = jest.fn().mockImplementation(() => {
+    const p: any = Promise.resolve(mockScls);
+    p.session = jest.fn().mockReturnValue(p);
+    return p;
+  });
+  ctor.findOne = jest.fn().mockImplementation(() => {
+    const p: any = Promise.resolve(mockScls);
+    p.session = jest.fn().mockReturnValue(p);
+    return p;
+  });
+  ctor.updateOne = jest.fn().mockImplementation(() => {
+    const p: any = Promise.resolve({ acknowledged: true });
+    p.session = jest.fn().mockReturnValue(p);
+    return p;
+  });
+  return {
+    __esModule: true,
+    default: ctor,
+  };
+});
+
+jest.mock("../../models/class", () => ({
+  findById: jest.fn().mockImplementation(() => {
+    const p: any = Promise.resolve({ _id: new Types.ObjectId("69e75e4ceedc2cfac76e0172"), title: "Flow Yoga" });
+    p.session = jest.fn().mockReturnValue(p);
+    return p;
+  }),
+}));
+
 
 jest.mock("../../models/member");
 jest.mock("../../models/package", () => {
@@ -1176,4 +1225,365 @@ describe("Unit Tests: Record Previous Session Dates & Edge Cases", () => {
       expect(mockIo.emit).not.toHaveBeenCalled();
     });
   });
+
+  // =========================================================================
+  // SUITE 5: Packages with Classes vs Non-Class (Open Gym / Default Scan)
+  // =========================================================================
+  describe("Class Packages & Default Scan on Scans Monitor", () => {
+    it("should record past session for a package with classes: book member and push scan to ScheduledClass", async () => {
+      const uid = new Types.ObjectId().toString();
+      const pkgId = new Types.ObjectId().toString();
+      const classId = new Types.ObjectId("69e75e4ceedc2cfac76e0172").toString();
+      const startDate = new Date("2026-10-01");
+
+      const mockMember: any = {
+        uid,
+        packages: [
+          {
+            pkgId: new Types.ObjectId(pkgId),
+            pkgStartDate: startDate,
+            remainingClasses: 5,
+            name: "10 Studio",
+          },
+        ],
+      };
+      (Member.findOne as jest.Mock).mockResolvedValue(mockMember);
+      (Member.editPackageClasses as any) = jest.fn().mockResolvedValue(undefined);
+      (Member.pushAdjustmentRecord as any) = jest.fn().mockResolvedValue(undefined);
+      (Member.updateOne as any) = jest.fn().mockResolvedValue({ acknowledged: true });
+      (Package.findById as jest.Mock).mockResolvedValue({
+        _id: new Types.ObjectId(pkgId),
+        name: "10 Studio",
+        category: "STUDIO",
+        opensClasses: [{ _id: new Types.ObjectId(classId), title: "Flow Yoga" }],
+      });
+
+      const mockIo = { emit: jest.fn() };
+      const req: any = {
+        body: {
+          uid,
+          pkgId,
+          pkgStartDate: startDate.toISOString(),
+          previousSessionDates: [
+            {
+              date: "2026-10-05",
+              classId,
+              className: "Flow Yoga",
+            },
+          ],
+        },
+        app: { get: jest.fn().mockReturnValue(mockIo) },
+      };
+      const res: any = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+
+      await invokeController(recordMemberPreviousSessions, req, res);
+
+      // Verify ScheduledClass updated with bookedMember and scan
+      expect(ScheduledClass.updateOne).toHaveBeenCalledWith(
+        expect.objectContaining({ _id: expect.anything() }),
+        expect.objectContaining({
+          $push: expect.objectContaining({
+            bookedMembers: expect.objectContaining({
+              uid: new Types.ObjectId(uid),
+              method: "10 Studio",
+            }),
+          }),
+        }),
+        expect.anything()
+      );
+
+      expect(ScheduledClass.updateOne).toHaveBeenCalledWith(
+        expect.objectContaining({ _id: expect.anything() }),
+        expect.objectContaining({
+          $push: expect.objectContaining({
+            scans: expect.objectContaining({
+              uid: new Types.ObjectId(uid),
+              method: "10 Studio",
+              status: true,
+            }),
+          }),
+        }),
+        expect.anything()
+      );
+
+      // Verify Member bookings and attendance updated
+      expect(Member.updateOne).toHaveBeenCalledWith(
+        expect.objectContaining({ uid: new Types.ObjectId(uid) }),
+        expect.objectContaining({
+          $push: expect.objectContaining({
+            attendance: expect.objectContaining({
+              scid: expect.anything(),
+            }),
+          }),
+        }),
+        expect.anything()
+      );
+
+      // Verify adjustment record has the specific class name
+      expect(Member.pushAdjustmentRecord).toHaveBeenCalledWith(
+        uid,
+        pkgId,
+        startDate,
+        expect.objectContaining({
+          className: "Flow Yoga",
+          type: "DEDUCT",
+          amount: 1,
+        }),
+        null
+      );
+
+      // Verify NO live socket emission for past date
+      expect(mockIo.emit).not.toHaveBeenCalled();
+    });
+
+    it("should record default scan on DailyAttendance.openGymAttendance when package has NO classes (Open Gym)", async () => {
+      const uid = new Types.ObjectId().toString();
+      const pkgId = new Types.ObjectId().toString();
+      const startDate = new Date("2026-10-01");
+
+      const mockMember: any = {
+        uid,
+        packages: [
+          {
+            pkgId: new Types.ObjectId(pkgId),
+            pkgStartDate: startDate,
+            remainingClasses: 10,
+            name: "1 Month Open Gym",
+          },
+        ],
+      };
+      (Member.findOne as jest.Mock).mockResolvedValue(mockMember);
+      (Member.editPackageClasses as any) = jest.fn().mockResolvedValue(undefined);
+      (Member.pushAdjustmentRecord as any) = jest.fn().mockResolvedValue(undefined);
+      (Member.updateOne as any) = jest.fn().mockResolvedValue({ acknowledged: true });
+      (DailyAttendance.recordOpenGymAttendance as any) = jest.fn().mockResolvedValue(undefined);
+      (Package.findById as jest.Mock).mockResolvedValue({
+        _id: new Types.ObjectId(pkgId),
+        name: "1 Month Open Gym",
+        category: "OPEN_GYM",
+        opensClasses: [],
+      });
+
+      const mockIo = { emit: jest.fn() };
+      const req: any = {
+        body: {
+          uid,
+          pkgId,
+          pkgStartDate: startDate.toISOString(),
+          previousSessionDates: ["2026-10-03"],
+        },
+        app: { get: jest.fn().mockReturnValue(mockIo) },
+      };
+      const res: any = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+
+      await invokeController(recordMemberPreviousSessions, req, res);
+
+      // Verify DailyAttendance.recordOpenGymAttendance called with pastDate
+      expect(DailyAttendance.recordOpenGymAttendance).toHaveBeenCalledWith(
+        uid,
+        "1 Month Open Gym",
+        null,
+        "SUCCESS",
+        mockIo,
+        null,
+        expect.any(Date),
+        pkgId
+      );
+
+      // Verify adjustment record pushed
+      expect(Member.pushAdjustmentRecord).toHaveBeenCalledWith(
+        uid,
+        pkgId,
+        startDate,
+        expect.objectContaining({
+          className: "1 Month Open Gym",
+          type: "DEDUCT",
+          amount: 1,
+        }),
+        null
+      );
+    });
+
+    it("should handle graceful conflict when open gym attendance was already recorded on that past date", async () => {
+      const uid = new Types.ObjectId().toString();
+      const pkgId = new Types.ObjectId().toString();
+      const startDate = new Date("2026-10-01");
+
+      const mockMember: any = {
+        uid,
+        packages: [
+          {
+            pkgId: new Types.ObjectId(pkgId),
+            pkgStartDate: startDate,
+            remainingClasses: 10,
+            name: "Space Membership",
+          },
+        ],
+      };
+      (Member.findOne as jest.Mock).mockResolvedValue(mockMember);
+      (Member.editPackageClasses as any) = jest.fn().mockResolvedValue(undefined);
+      (Member.pushAdjustmentRecord as any) = jest.fn().mockResolvedValue(undefined);
+      (Member.updateOne as any) = jest.fn().mockResolvedValue({ acknowledged: true });
+      const conflictErr = new Error("Attendance was already recorded");
+      (conflictErr as any).code = "ATTENDANCE_ALREADY_RECORDED";
+      (DailyAttendance.recordOpenGymAttendance as any) = jest.fn().mockRejectedValue(conflictErr);
+      (Package.findById as jest.Mock).mockResolvedValue({
+        _id: new Types.ObjectId(pkgId),
+        name: "Space Membership",
+        category: "SPACE_MEMBERSHIP",
+        opensClasses: [],
+      });
+
+      const mockIo = { emit: jest.fn() };
+      const req: any = {
+        body: {
+          uid,
+          pkgId,
+          pkgStartDate: startDate.toISOString(),
+          previousSessionDates: ["2026-10-04"],
+        },
+        app: { get: jest.fn().mockReturnValue(mockIo) },
+      };
+      const res: any = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+
+      // Should NOT throw an error - conflict is gracefully ignored
+      await expect(invokeController(recordMemberPreviousSessions, req, res)).resolves.not.toThrow();
+      expect(res.json).toHaveBeenCalled();
+    });
+
+    it("SubscriptionsService: should record ScheduledClass scan when subscribing to a package with classes", async () => {
+      const uid = new Types.ObjectId().toString();
+      const pkgId = new Types.ObjectId().toString();
+      const classId = new Types.ObjectId("69e75e4ceedc2cfac76e0172").toString();
+
+      (Member.findOne as jest.Mock).mockResolvedValue({
+        uid,
+        packages: [],
+      });
+      (User.findOne as jest.Mock).mockImplementation(() => {
+        const p: any = Promise.resolve({ _id: new Types.ObjectId(uid), name: "Sara", role: "member" });
+        p.session = jest.fn().mockReturnValue(p);
+        return p;
+      });
+      (Package.findById as jest.Mock).mockResolvedValue({
+        _id: new Types.ObjectId(pkgId),
+        name: "5 Studio",
+        price: 2500,
+        numberOfSessions: 5,
+        expiryPeriod: 30,
+        category: "STUDIO",
+        opensClasses: [{ _id: new Types.ObjectId(classId), title: "Flow Yoga" }],
+      });
+      (Member.addPackage as any) = jest.fn().mockResolvedValue(undefined);
+      (Member.pushAdjustmentRecord as any) = jest.fn().mockResolvedValue(undefined);
+      (Member.updateOne as any) = jest.fn().mockResolvedValue({ acknowledged: true });
+
+      const mockIo: any = { emit: jest.fn() };
+      await SubscriptionsService.frontDeskSubscribeToPackage(
+        uid,
+        pkgId,
+        "2026-10-01",
+        "Cash",
+        undefined,
+        undefined,
+        undefined,
+        mockIo,
+        undefined,
+        false,
+        [
+          {
+            date: "2026-10-02",
+            classId,
+            className: "Flow Yoga",
+          },
+        ]
+      );
+
+      // Remaining classes should be 5 - 1 = 4
+      expect(Member.addPackage).toHaveBeenCalledWith(
+        uid,
+        pkgId,
+        "5 Studio",
+        4,
+        expect.any(String),
+        expect.any(String),
+        null,
+        undefined,
+        undefined
+      );
+
+      // ScheduledClass should have scan recorded
+      expect(ScheduledClass.updateOne).toHaveBeenCalledWith(
+        expect.objectContaining({ _id: expect.anything() }),
+        expect.objectContaining({
+          $push: expect.objectContaining({
+            scans: expect.objectContaining({
+              uid: new Types.ObjectId(uid),
+              status: true,
+            }),
+          }),
+        }),
+        expect.anything()
+      );
+    });
+
+    it("SubscriptionsService: should record default open gym scan when subscribing to Open Gym package with past sessions", async () => {
+      const uid = new Types.ObjectId().toString();
+      const pkgId = new Types.ObjectId().toString();
+
+      (Member.findOne as jest.Mock).mockResolvedValue({
+        uid,
+        packages: [],
+      });
+      (User.findOne as jest.Mock).mockImplementation(() => {
+        const p: any = Promise.resolve({ _id: new Types.ObjectId(uid), name: "Ahmed", role: "member" });
+        p.session = jest.fn().mockReturnValue(p);
+        return p;
+      });
+      (Package.findById as jest.Mock).mockResolvedValue({
+        _id: new Types.ObjectId(pkgId),
+        name: "10 Open Gym",
+        price: 1500,
+        numberOfSessions: 10,
+        expiryPeriod: 30,
+        category: "OPEN_GYM",
+        opensClasses: [],
+      });
+      (Member.addPackage as any) = jest.fn().mockResolvedValue(undefined);
+      (Member.pushAdjustmentRecord as any) = jest.fn().mockResolvedValue(undefined);
+      (DailyAttendance.recordOpenGymAttendance as any) = jest.fn().mockResolvedValue(undefined);
+
+      const mockIo: any = { emit: jest.fn() };
+      await SubscriptionsService.frontDeskSubscribeToPackage(
+        uid,
+        pkgId,
+        "2026-10-01",
+        "Visa",
+        undefined,
+        undefined,
+        undefined,
+        mockIo,
+        undefined,
+        false,
+        ["2026-10-03", "2026-10-05"]
+      );
+
+      // 10 - 2 = 8 remaining classes
+      expect(Member.addPackage).toHaveBeenCalledWith(
+        uid,
+        pkgId,
+        "10 Open Gym",
+        8,
+        expect.any(String),
+        expect.any(String),
+        null,
+        undefined,
+        undefined
+      );
+
+      // DailyAttendance.recordOpenGymAttendance called twice
+      expect(DailyAttendance.recordOpenGymAttendance).toHaveBeenCalledTimes(2);
+    });
+  });
+
 });

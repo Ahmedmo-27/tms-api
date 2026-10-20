@@ -620,11 +620,10 @@ export const recordMemberPreviousSessions = asyncHandler(async function (
       "Member ID, package ID, and package start date are required"
     );
   }
-  const dates: string[] = Array.isArray(previousSessionDates)
-    ? previousSessionDates.map((d: any) => String(d).trim()).filter(Boolean)
-    : [];
 
-  if (dates.length === 0) {
+  const normalizedDates =
+    SubscriptionsService.normalizePreviousSessionInputs(previousSessionDates);
+  if (normalizedDates.length === 0) {
     throw new BadRequestError(
       "NO_DATES_PROVIDED",
       "At least one previous session date is required"
@@ -647,18 +646,18 @@ export const recordMemberPreviousSessions = asyncHandler(async function (
     });
   }
 
-  if (dates.length > pkg.remainingClasses) {
+  if (normalizedDates.length > pkg.remainingClasses) {
     throw new BadRequestError(
       "INSUFFICIENT_CLASSES",
-      `Cannot record ${dates.length} sessions. Only ${pkg.remainingClasses} classes remaining.`
+      `Cannot record ${normalizedDates.length} sessions. Only ${pkg.remainingClasses} classes remaining.`
     );
   }
 
   const now = new Date();
-  for (const dStr of dates) {
-    const parsed = new Date(dStr);
+  for (const item of normalizedDates) {
+    const parsed = new Date(item.date);
     if (isNaN(parsed.getTime())) {
-      throw new BadRequestError("INVALID_DATE", `Invalid session date: ${dStr}`);
+      throw new BadRequestError("INVALID_DATE", `Invalid session date: ${item.date}`);
     }
     if (parsed > now) {
       throw new BadRequestError(
@@ -669,9 +668,7 @@ export const recordMemberPreviousSessions = asyncHandler(async function (
   }
 
   const packageDoc = await Package.findById(pkgId);
-  const isPtPackage =
-    packageDoc?.category === "PERSONAL_TRAINING" || Boolean(packageDoc?.coachId);
-  const newClasses = pkg.remainingClasses - dates.length;
+  const newClasses = pkg.remainingClasses - normalizedDates.length;
   const targetLocationId = resolveLocationFilter(req);
   const io = req.app.get("io");
 
@@ -695,55 +692,20 @@ export const recordMemberPreviousSessions = asyncHandler(async function (
       );
     }
 
-    for (const dStr of dates) {
-      const pastDate = toStoredPackageDate(dStr);
-      await Member.pushAdjustmentRecord(
+    for (const item of normalizedDates) {
+      await SubscriptionsService.recordSinglePreviousSessionAttendance({
         uid,
-        pkgId,
-        pkg.pkgStartDate,
-        {
-          date: new Date(),
-          attendanceDate: pastDate,
-          source: "ADMIN",
-          type: "DEDUCT",
-          amount: 1,
-          className: packageDoc?.name || pkg.name,
-          reason:
-            reason?.toString().trim() ||
-            `Previous session: ${format(pastDate, "dd-MM-yyyy")}`,
-        },
-        session
-      );
-
-      if (isPtPackage && packageDoc) {
-        await Member.updateOne(
-          { uid: new Types.ObjectId(uid) },
-          {
-            $addToSet: {
-              ptAttendance: {
-                pkgId: new Types.ObjectId(pkgId),
-                date: format(pastDate, "yyyy-MM-dd"),
-                attendanceTime: pastDate,
-              },
-            },
-          },
-          { session }
-        );
-
-        await DailyAttendance.recordPtAttendance(
-          uid,
-          packageDoc.name,
-          session,
-          "SUCCESS",
-          io,
+        packageDoc: packageDoc || pkg,
+        pkgStartDate: pkg.pkgStartDate,
+        item,
+        reason,
+        targetLocationId:
           (pkg as any).locationId?.toString() ||
-            packageDoc.locationId?.toString() ||
-            targetLocationId,
-          packageDoc.coachId ? packageDoc.coachId.toString() : undefined,
-          pastDate,
-          pkgId
-        );
-      }
+          packageDoc?.locationId?.toString() ||
+          targetLocationId,
+        session,
+        io,
+      });
     }
   });
 
