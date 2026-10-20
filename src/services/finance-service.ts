@@ -544,9 +544,10 @@ export class FinanceService {
           amount: row.amount,
           count: row.count,
         })),
-        bySegment: group(revenue, (p) =>
-          paymentSegment(p.purpose, lookups.packages.get(idStr(p.pkgId))?.category),
-        ).map((row) => ({ segment: row.key, amount: row.amount, count: row.count })),
+        bySegment: group(revenue, (p) => {
+          const pkg = lookups.packages.get(idStr(p.pkgId));
+          return paymentSegment(p.purpose, pkg?.category, pkg?.name);
+        }).map((row) => ({ segment: row.key, amount: row.amount, count: row.count })),
       };
     });
   }
@@ -579,7 +580,7 @@ export class FinanceService {
           phone: user?.phone || p.nonMemberPhone || "",
           memberId: idStr(p.uid) || null,
           item: paymentItemName(p, lookups, scheduled),
-          segment: paymentSegment(p.purpose, pkg?.category),
+          segment: paymentSegment(p.purpose, pkg?.category, pkg?.name),
           purpose: p.purpose,
           method: p.paymentMethod,
           amount: round2(amount),
@@ -594,7 +595,8 @@ export class FinanceService {
 
       const prevBySegment = new Map<string, number>();
       for (const p of prevPayments) {
-        const seg = paymentSegment(p.purpose, lookups.packages.get(idStr(p.pkgId))?.category);
+        const prevPkg = lookups.packages.get(idStr(p.pkgId));
+        const seg = paymentSegment(p.purpose, prevPkg?.category, prevPkg?.name);
         prevBySegment.set(seg, (prevBySegment.get(seg) ?? 0) + (Number(p.amount) || 0));
       }
       return { rows, prevBySegment };
@@ -1828,7 +1830,7 @@ export class FinanceService {
             customer: user?.name || p.nonMemberName || "Walk-in customer",
             phone: user?.phone || p.nonMemberPhone || "",
             item: paymentItemName(p, lookups, scheduled),
-            segment: paymentSegment(p.purpose, pkg?.category),
+            segment: paymentSegment(p.purpose, pkg?.category, pkg?.name),
             purpose: p.purpose,
             method: p.paymentMethod,
             amount: round2(Number(p.amount) || 0),
