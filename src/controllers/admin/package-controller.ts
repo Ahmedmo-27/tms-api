@@ -399,6 +399,7 @@ export const subMemberToPackage = asyncHandler(async function (
     amount,
     note,
     pendingDeduction,
+    previousSessionDates,
   } = req.body;
   const targetLocationId = resolveLocationIdForWrite(req);
   const io = req.app.get("io");
@@ -413,6 +414,7 @@ export const subMemberToPackage = asyncHandler(async function (
     io,
     targetLocationId,
     pendingDeduction === true || pendingDeduction === "true",
+    previousSessionDates,
   );
   new SuccessResponse("Package Added!").send(res);
 });
@@ -595,7 +597,7 @@ export const adjustMemberPackageClasses = asyncHandler(async function (
     }
   });
 
-  if (isCompletedSession && io) {
+  if (isCompletedSession && io && isSameCairoDay(targetDate, now)) {
     io.emit("SUCCESS-SCAN", {
       code: "PT_CLASS_ATTENDED",
       message: "Success",
@@ -605,6 +607,116 @@ export const adjustMemberPackageClasses = asyncHandler(async function (
   }
 
   new SuccessResponse("Package updated!", pkg).send(res);
+});
+
+export const recordMemberPreviousSessions = asyncHandler(async function (
+  req: Request,
+  res: Response
+): Promise<void> {
+  const { uid, pkgId, pkgStartDate, previousSessionDates, reason } = req.body;
+  if (!uid || !pkgId || !pkgStartDate) {
+    throw new BadRequestError(
+      "INVALID_REQUEST_BODY",
+      "Member ID, package ID, and package start date are required"
+    );
+  }
+
+  const normalizedDates =
+    SubscriptionsService.normalizePreviousSessionInputs(previousSessionDates);
+  if (normalizedDates.length === 0) {
+    throw new BadRequestError(
+      "NO_DATES_PROVIDED",
+      "At least one previous session date is required"
+    );
+  }
+
+  const member = await Member.findOne({ uid });
+  if (!member) {
+    throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found", { uid });
+  }
+
+  const pkg = member.packages.find(
+    (p) =>
+      p.pkgId.toString() === pkgId &&
+      isSameCairoDay(p.pkgStartDate, pkgStartDate)
+  );
+  if (!pkg) {
+    throw new NotFoundError("PACKAGE_NOT_FOUND", "Package not found on member", {
+      pkgId,
+    });
+  }
+
+  if (normalizedDates.length > pkg.remainingClasses) {
+    throw new BadRequestError(
+      "INSUFFICIENT_CLASSES",
+      `Cannot record ${normalizedDates.length} sessions. Only ${pkg.remainingClasses} classes remaining.`
+    );
+  }
+
+  const now = new Date();
+  for (const item of normalizedDates) {
+    const parsed = new Date(item.date);
+    if (isNaN(parsed.getTime())) {
+      throw new BadRequestError("INVALID_DATE", `Invalid session date: ${item.date}`);
+    }
+    if (parsed > now) {
+      throw new BadRequestError(
+        "FUTURE_DATE_NOT_ALLOWED",
+        "Previous session dates cannot be in the future"
+      );
+    }
+  }
+
+  const packageDoc = await Package.findById(pkgId);
+  const newClasses = pkg.remainingClasses - normalizedDates.length;
+  const targetLocationId = resolveLocationFilter(req);
+  const io = req.app.get("io");
+
+  await runInTransaction(async (session: ClientSession) => {
+    await Member.editPackageClasses(
+      uid,
+      pkgId,
+      pkg.pkgStartDate.toISOString(),
+      newClasses
+    );
+
+    if (newClasses === 0 && packageDoc && !isUnlimitedSpaceAccess(packageDoc.category)) {
+      await Member.updateOne(
+        {
+          uid: new Types.ObjectId(uid),
+          "packages.pkgId": new Types.ObjectId(pkgId),
+          "packages.pkgStartDate": pkg.pkgStartDate,
+        },
+        { $set: { "packages.$.status": "COMPLETED" } },
+        { session }
+      );
+    }
+
+    for (const item of normalizedDates) {
+      await SubscriptionsService.recordSinglePreviousSessionAttendance({
+        uid,
+        packageDoc: packageDoc || pkg,
+        pkgStartDate: pkg.pkgStartDate,
+        item,
+        reason,
+        targetLocationId:
+          (pkg as any).locationId?.toString() ||
+          packageDoc?.locationId?.toString() ||
+          targetLocationId,
+        session,
+        io,
+      });
+    }
+  });
+
+  const updatedMember = await Member.findOne({ uid });
+  const updatedPkg = updatedMember?.packages.find(
+    (p) =>
+      p.pkgId.toString() === pkgId &&
+      isSameCairoDay(p.pkgStartDate, pkgStartDate)
+  );
+
+  new SuccessResponse("Previous sessions recorded successfully!", updatedPkg).send(res);
 });
 
 export const addNonUserPackage = asyncHandler(async function (

@@ -59,6 +59,7 @@ import {
   unsubMemberFromPackage,
   editMemberPackage,
   adjustMemberPackageClasses,
+  recordMemberPreviousSessions,
   addNonUserPackage,
   getNonUserPackages,
 } from "../controllers/admin/package-controller";
@@ -615,6 +616,12 @@ adminRoutes.patch(
   authenticateUser,
   authorizeUser(["management", "branch_admin"]),
   adjustMemberPackageClasses
+);
+adminRoutes.post(
+  "/member-packages/previous-sessions",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  recordMemberPreviousSessions
 );
 adminRoutes.post(
   "/member-packages/freeze",

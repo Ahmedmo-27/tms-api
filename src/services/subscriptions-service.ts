@@ -1,5 +1,9 @@
 import Member, { IMemberPackageData } from "../models/member";
-import Package, { getPackageEndDate } from "../models/package";
+import Package, { getPackageEndDate, isUnlimitedSpaceAccess } from "../models/package";
+import DailyAttendance from "../models/dailyAttendance";
+import ScheduledClass from "../models/scheduledClass";
+import Class from "../models/class";
+import { format } from "date-fns";
 import PromoCode from "../models/promoCode";
 import { Types } from "mongoose";
 import { PaymentsService } from "./payments-service";
@@ -23,7 +27,12 @@ import User from "../models/user";
 import { Server as SocketIOServer } from "socket.io";
 import { resolveOpenGymPaymentNote } from "../utils/open-gym-payment-purpose";
 import { normalizePhoneNumber } from "../utils/phone";
-import { cairoDayRange, toStoredPackageDate } from "../utils/timezone";
+import {
+  cairoDayRange,
+  startOfDateCairo,
+  endOfDateCairo,
+  toStoredPackageDate,
+} from "../utils/timezone";
 import CoachNotification from "../models/coachNotification";
 import {
   ensureMemberForPendingPurchase,
@@ -36,7 +45,294 @@ import {
   notifyCoacheraOfPurchase,
 } from "./coachera-service";
 
+export interface PreviousSessionInputRecord {
+  date: string;
+  classId?: string;
+  className?: string;
+  scid?: string;
+}
+
+export type PreviousSessionInput = string | PreviousSessionInputRecord;
+
 export class SubscriptionsService {
+  static normalizePreviousSessionInputs(
+    inputs: unknown,
+  ): PreviousSessionInputRecord[] {
+    if (!Array.isArray(inputs)) return [];
+    const normalized: PreviousSessionInputRecord[] = [];
+    for (const item of inputs) {
+      if (!item) continue;
+      if (typeof item === "string") {
+        const trimmed = item.trim();
+        if (trimmed) {
+          normalized.push({ date: trimmed });
+        }
+      } else if (typeof item === "object") {
+        const rawDate = String((item as any).date || "").trim();
+        if (rawDate) {
+          normalized.push({
+            date: rawDate,
+            classId: (item as any).classId ? String((item as any).classId).trim() : undefined,
+            className: (item as any).className ? String((item as any).className).trim() : undefined,
+            scid: (item as any).scid ? String((item as any).scid).trim() : undefined,
+          });
+        }
+      }
+    }
+    return normalized;
+  }
+
+  static async recordSinglePreviousSessionAttendance({
+    uid,
+    packageDoc,
+    pkgStartDate,
+    item,
+    reason,
+    targetLocationId,
+    session,
+    io,
+  }: {
+    uid: string;
+    packageDoc: any;
+    pkgStartDate: Date | string;
+    item: PreviousSessionInputRecord;
+    reason?: string;
+    targetLocationId?: string;
+    session: ClientSession;
+    io?: any;
+  }): Promise<void> {
+    const pastDate = toStoredPackageDate(item.date);
+    const isPtPackage =
+      packageDoc.category === "PERSONAL_TRAINING" || Boolean(packageDoc.coachId);
+    const opensClasses = packageDoc.opensClasses || [];
+    const hasClasses = Array.isArray(opensClasses) && opensClasses.length > 0;
+
+    if (hasClasses) {
+      let resolvedClassId = item.classId;
+      if (!resolvedClassId && item.scid) {
+        const scls = await ScheduledClass.findById(item.scid).session(session);
+        if (scls?.cid) {
+          resolvedClassId = scls.cid.toString();
+        }
+      }
+      if (!resolvedClassId && opensClasses.length > 0) {
+        const first = opensClasses[0];
+        resolvedClassId = (first?._id || first).toString();
+      }
+
+      let resolvedClassName = item.className;
+      if (!resolvedClassName && resolvedClassId) {
+        const cDoc = await Class.findById(resolvedClassId).session(session);
+        if (cDoc?.title) {
+          resolvedClassName = cDoc.title;
+        }
+      }
+      const finalClassName = resolvedClassName || packageDoc.name;
+
+      let scheduledClass: any = null;
+      if (item.scid) {
+        scheduledClass = await ScheduledClass.findById(item.scid).session(session);
+      }
+      if (!scheduledClass && resolvedClassId) {
+        const startOfDay = startOfDateCairo(pastDate);
+        const endOfDay = endOfDateCairo(pastDate);
+        scheduledClass = await ScheduledClass.findOne({
+          cid: new Types.ObjectId(resolvedClassId),
+          startTime: { $gte: startOfDay, $lte: endOfDay },
+          ...(targetLocationId ? { locationId: new Types.ObjectId(targetLocationId) } : {}),
+        }).session(session);
+
+        if (!scheduledClass) {
+          const startTime = new Date(pastDate);
+          if (startTime.getUTCHours() === 0 && startTime.getUTCMinutes() === 0) {
+            startTime.setUTCHours(8, 0, 0, 0);
+          }
+          const endTime = new Date(startTime.getTime() + 60 * 60 * 1000);
+          scheduledClass = new ScheduledClass({
+            cid: new Types.ObjectId(resolvedClassId),
+            locationId: targetLocationId ? new Types.ObjectId(targetLocationId) : undefined,
+            startTime,
+            endTime,
+            availableSlots: 20,
+            bookedMembers: [],
+            scans: [],
+          });
+          await scheduledClass.save({ session });
+        }
+      }
+
+      if (scheduledClass) {
+        await ScheduledClass.updateOne(
+          {
+            _id: scheduledClass._id,
+            "bookedMembers.uid": { $ne: new Types.ObjectId(uid) },
+          },
+          {
+            $push: {
+              bookedMembers: {
+                uid: new Types.ObjectId(uid),
+                method: packageDoc.name,
+                bookingTime: pastDate,
+              },
+            },
+          },
+          { session }
+        );
+
+        await ScheduledClass.updateOne(
+          {
+            _id: scheduledClass._id,
+            "scans.uid": { $ne: new Types.ObjectId(uid) },
+          },
+          {
+            $push: {
+              scans: {
+                uid: new Types.ObjectId(uid),
+                scanTime: pastDate,
+                method: packageDoc.name,
+                status: true,
+              },
+            },
+          },
+          { session }
+        );
+
+        await Member.updateOne(
+          {
+            uid: new Types.ObjectId(uid),
+            "bookings.scid": { $ne: scheduledClass._id },
+          },
+          {
+            $push: {
+              bookings: {
+                scid: scheduledClass._id,
+                cid: new Types.ObjectId(resolvedClassId),
+                isDropIn: false,
+                bookingTime: pastDate,
+              },
+            },
+          },
+          { session }
+        );
+
+        await Member.updateOne(
+          {
+            uid: new Types.ObjectId(uid),
+            "attendance.scid": { $ne: scheduledClass._id },
+          },
+          {
+            $push: {
+              attendance: {
+                scid: scheduledClass._id,
+                date: pastDate,
+              },
+            },
+          },
+          { session }
+        );
+      }
+
+      await Member.pushAdjustmentRecord(
+        uid,
+        packageDoc._id.toString(),
+        new Date(pkgStartDate),
+        {
+          date: new Date(),
+          attendanceDate: pastDate,
+          source: "ADMIN",
+          type: "DEDUCT",
+          amount: 1,
+          className: finalClassName,
+          reason:
+            reason?.trim() ||
+            `Previous session: ${finalClassName} (${format(pastDate, "dd-MM-yyyy")})`,
+        },
+        session
+      );
+    } else if (isPtPackage) {
+      await Member.updateOne(
+        { uid: new Types.ObjectId(uid) },
+        {
+          $addToSet: {
+            ptAttendance: {
+              pkgId: new Types.ObjectId(packageDoc._id),
+              date: format(pastDate, "yyyy-MM-dd"),
+              attendanceTime: pastDate,
+            },
+          },
+        },
+        { session }
+      );
+
+      await DailyAttendance.recordPtAttendance(
+        uid,
+        packageDoc.name,
+        session,
+        "SUCCESS",
+        io,
+        (packageDoc as any).locationId?.toString() || targetLocationId,
+        packageDoc.coachId ? packageDoc.coachId.toString() : undefined,
+        pastDate,
+        packageDoc._id.toString()
+      );
+
+      await Member.pushAdjustmentRecord(
+        uid,
+        packageDoc._id.toString(),
+        new Date(pkgStartDate),
+        {
+          date: new Date(),
+          attendanceDate: pastDate,
+          source: "ADMIN",
+          type: "DEDUCT",
+          amount: 1,
+          className: packageDoc.name,
+          reason:
+            reason?.trim() ||
+            `Previous session: ${format(pastDate, "dd-MM-yyyy")}`,
+        },
+        session
+      );
+    } else {
+      try {
+        await DailyAttendance.recordOpenGymAttendance(
+          uid,
+          packageDoc.name,
+          session,
+          "SUCCESS",
+          io,
+          (packageDoc as any).locationId?.toString() || targetLocationId,
+          pastDate,
+          packageDoc._id.toString()
+        );
+      } catch (err: any) {
+        if (err?.code === "ATTENDANCE_ALREADY_RECORDED" || (err instanceof ConflictError && (err as any).code === "ATTENDANCE_ALREADY_RECORDED")) {
+          // Already recorded for this date, ignore duplicate error
+        } else {
+          throw err;
+        }
+      }
+
+      await Member.pushAdjustmentRecord(
+        uid,
+        packageDoc._id.toString(),
+        new Date(pkgStartDate),
+        {
+          date: new Date(),
+          attendanceDate: pastDate,
+          source: "ADMIN",
+          type: "DEDUCT",
+          amount: 1,
+          className: packageDoc.name,
+          reason:
+            reason?.trim() ||
+            `Previous session: ${format(pastDate, "dd-MM-yyyy")}`,
+        },
+        session
+      );
+    }
+  }
+
   /** Same catalog package + Cairo start day already on the member. */
   static async assertNoDuplicateMemberPackage(
     uid: string,
@@ -210,6 +506,7 @@ export class SubscriptionsService {
     io?: SocketIOServer,
     locationId?: string,
     pendingDeduction = false,
+    previousSessionDates?: Array<string | PreviousSessionInputRecord>,
   ) {
     if (!uid) {
       throw new BadRequestError("MEMBER_ID_REQUIRED", "Member ID is required");
@@ -260,7 +557,34 @@ export class SubscriptionsService {
         "This open gym package is not available at the selected branch",
       );
     }
-    if (pendingDeduction && pkg.numberOfSessions < 1) {
+
+    const normalizedPreviousDates =
+      SubscriptionsService.normalizePreviousSessionInputs(previousSessionDates);
+
+    if (normalizedPreviousDates.length > 0) {
+      if (normalizedPreviousDates.length > pkg.numberOfSessions) {
+        throw new BadRequestError(
+          "INVALID_PREVIOUS_SESSIONS",
+          `Cannot record more previous sessions (${normalizedPreviousDates.length}) than package total (${pkg.numberOfSessions})`,
+        );
+      }
+      const now = new Date();
+      for (const item of normalizedPreviousDates) {
+        const parsed = new Date(item.date);
+        if (isNaN(parsed.getTime())) {
+          throw new BadRequestError(
+            "INVALID_DATE",
+            `Invalid previous session date: ${item.date}`,
+          );
+        }
+        if (parsed > now) {
+          throw new BadRequestError(
+            "FUTURE_DATE_NOT_ALLOWED",
+            "Previous session dates cannot be in the future",
+          );
+        }
+      }
+    } else if (pendingDeduction && pkg.numberOfSessions < 1) {
       throw new BadRequestError(
         "INVALID_DEDUCTION",
         "This package has no sessions to deduct",
@@ -353,9 +677,16 @@ export class SubscriptionsService {
         locationId
       );
       createdPayment = payment;
-      const remainingClasses = pendingDeduction
-        ? pkg.numberOfSessions - 1
-        : pkg.numberOfSessions;
+      const previousDeductCount =
+        normalizedPreviousDates.length > 0
+          ? normalizedPreviousDates.length
+          : pendingDeduction
+          ? 1
+          : 0;
+      const remainingClasses = Math.max(
+        0,
+        pkg.numberOfSessions - previousDeductCount
+      );
       await Member.addPackage(
         uid,
         pkg._id.toString(),
@@ -367,7 +698,32 @@ export class SubscriptionsService {
         restrictions,
         locationId
       );
-      if (pendingDeduction) {
+
+      if (remainingClasses === 0 && !isUnlimitedSpaceAccess(pkg.category)) {
+        await Member.updateOne(
+          {
+            uid: new Types.ObjectId(uid),
+            "packages.pkgId": pkg._id,
+            "packages.pkgStartDate": new Date(startDate),
+          },
+          { $set: { "packages.$.status": "COMPLETED" } },
+          { session }
+        );
+      }
+
+      if (normalizedPreviousDates.length > 0) {
+        for (const item of normalizedPreviousDates) {
+          await SubscriptionsService.recordSinglePreviousSessionAttendance({
+            uid,
+            packageDoc: pkg,
+            pkgStartDate: startDate,
+            item,
+            targetLocationId: locationId || (pkg.locationId ? pkg.locationId.toString() : undefined),
+            session,
+            io,
+          });
+        }
+      } else if (pendingDeduction) {
         await Member.pushAdjustmentRecord(
           uid,
           pkg._id.toString(),
