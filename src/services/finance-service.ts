@@ -20,6 +20,7 @@ import {
   NON_REVENUE_METHODS,
   ONLINE_METHODS,
   SALES_SEGMENTS,
+  UNLIMITED_SESSIONS_THRESHOLD,
   cairoKey,
   paymentSegment,
   perSessionValue,
@@ -372,8 +373,8 @@ interface ClassSessionInfo {
   hours: number;
   coachIds: string[];
   capacity: number;
-  bookings: { uid: string; method: string; attended: boolean }[];
-  nonMember: { name: string; phone: string; attended: boolean }[];
+  bookings: { uid: string; method: string; attended: boolean; paidAmount: number | null }[];
+  nonMember: { name: string; phone: string; attended: boolean; paidAmount: number | null }[];
   dropInRevenue: number;
 }
 
@@ -393,10 +394,10 @@ async function loadClassSessions(
   const ids = docs.map((d) => d._id);
   const [nonUsers, dropInPayments] = await Promise.all([
     NonUserBooking.find({ scid: { $in: ids }, status: { $ne: "CANCELLED" } })
-      .select("scid name phoneNumber status")
+      .select("scid name phoneNumber status paymentId")
       .lean(),
     Payment.find({ scid: { $in: ids }, paymentMethod: { $nin: NON_REVENUE_METHODS } })
-      .select("scid amount")
+      .select("scid amount uid nonMemberPhone")
       .lean(),
   ]);
 
@@ -406,9 +407,19 @@ async function loadClassSessions(
     nonUserBySession.set(key, [...(nonUserBySession.get(key) ?? []), nb]);
   }
   const dropInBySession = new Map<string, number>();
+  const paidByMember = new Map<string, number>();
+  const paidByPayment = new Map<string, number>();
+  const paidByPhone = new Map<string, number>();
+  const addTo = (map: Map<string, number>, key: string, amount: number) =>
+    map.set(key, (map.get(key) ?? 0) + amount);
   for (const p of dropInPayments as AnyDoc[]) {
     const key = idStr(p.scid);
-    dropInBySession.set(key, (dropInBySession.get(key) ?? 0) + (Number(p.amount) || 0));
+    const amount = Number(p.amount) || 0;
+    addTo(dropInBySession, key, amount);
+    addTo(paidByPayment, idStr(p._id), amount);
+    if (p.uid) addTo(paidByMember, `${key}|${idStr(p.uid)}`, amount);
+    const phone = String(p.nonMemberPhone ?? "").trim();
+    if (phone) addTo(paidByPhone, `${key}|${phone}`, amount);
   }
 
   return docs.map((d) => {
@@ -429,11 +440,17 @@ async function loadClassSessions(
         uid: idStr(b.uid),
         method: b.method,
         attended: attendedUids.has(idStr(b.uid)),
+        paidAmount:
+          b.method === DROP_IN_METHOD ? (paidByMember.get(`${id}|${idStr(b.uid)}`) ?? null) : null,
       }));
     const nonMember = (nonUserBySession.get(id) ?? []).map((nb) => ({
       name: nb.name,
       phone: nb.phoneNumber,
       attended: nb.status === "ATTENDED" || nb.status === "PAID" || nb.status === "FOC",
+      paidAmount:
+        (nb.paymentId ? paidByPayment.get(idStr(nb.paymentId)) : undefined) ??
+        paidByPhone.get(`${id}|${String(nb.phoneNumber ?? "").trim()}`) ??
+        null,
     }));
     const start = new Date(d.startTime);
     const end = new Date(d.endTime);
@@ -715,6 +732,8 @@ export class FinanceService {
         coachId: string;
         name: string;
         sessions: number;
+        soloClassSessions: number;
+        groupClassSessions: number;
         hours: number;
         hoursByCategory: Record<string, number>;
         sessionsByCategory: Record<string, number>;
@@ -738,6 +757,8 @@ export class FinanceService {
             coachId,
             name: lookups.coaches.get(coachId) ?? "Unknown coach",
             sessions: 0,
+            soloClassSessions: 0,
+            groupClassSessions: 0,
             hours: 0,
             hoursByCategory: {},
             sessionsByCategory: {},
@@ -783,6 +804,8 @@ export class FinanceService {
         for (const coachId of s.coachIds) {
           const row = rowFor(coachId);
           row.sessions += 1;
+          if (s.coachIds.length > 1) row.groupClassSessions += 1;
+          else row.soloClassSessions += 1;
           row.hours += s.hours;
           row.hoursByCategory[s.category] = (row.hoursByCategory[s.category] ?? 0) + s.hours;
           row.sessionsByCategory[s.category] = (row.sessionsByCategory[s.category] ?? 0) + 1;
@@ -897,6 +920,89 @@ export class FinanceService {
         ...pt.map((s) => s.memberId),
       ]);
 
+      // A package's price can change long after it was sold, so a session is worth what the
+      // member paid for the package they used — the latest purchase on or before the session.
+      const memberIds = [
+        ...new Set(
+          [
+            ...sessions.flatMap((s) =>
+              s.bookings.filter((b) => b.method !== DROP_IN_METHOD).map((b) => b.uid),
+            ),
+            ...pt.map((s) => s.memberId),
+          ].filter((id) => id && Types.ObjectId.isValid(id)),
+        ),
+      ];
+      const purchases = memberIds.length
+        ? ((await Payment.find({
+            uid: { $in: memberIds.map((id) => new Types.ObjectId(id)) },
+            purpose: { $in: ["PACKAGE", "NON_USER_PACKAGE"] },
+            paymentMethod: { $nin: NON_REVENUE_METHODS },
+            pkgId: { $exists: true },
+            paymentTime: { $lt: range.end },
+          })
+            .select("uid pkgId amount paymentTime")
+            .lean()) as AnyDoc[])
+        : [];
+
+      type Purchase = { nameKey: string; sessionCount: number; amount: number; at: number };
+      const purchasesByMember = new Map<string, Purchase[]>();
+      for (const p of purchases) {
+        const pkg = lookups.packages.get(idStr(p.pkgId));
+        if (!pkg) continue;
+        const key = idStr(p.uid);
+        purchasesByMember.set(key, [
+          ...(purchasesByMember.get(key) ?? []),
+          {
+            nameKey: String(pkg.name ?? "").trim().toLowerCase(),
+            sessionCount: pkg.numberOfSessions,
+            amount: Number(p.amount) || 0,
+            at: new Date(p.paymentTime).getTime(),
+          },
+        ]);
+      }
+      // Most recent purchase first, so the first match is the one in force at the session.
+      for (const list of purchasesByMember.values()) list.sort((a, b) => b.at - a.at);
+
+      /** What this use is worth, and what the package cost when the member bought it. */
+      const sessionWorth = (
+        memberId: string | null,
+        pkg: PackageInfo | null | undefined,
+        at: Date,
+      ): {
+        value: number | null;
+        source: "paid" | "list" | null;
+        packagePrice: number | null;
+        packageSessions: number | null;
+      } => {
+        const nameKey = String(pkg?.name ?? "").trim().toLowerCase();
+        const mine = memberId && pkg ? purchasesByMember.get(memberId) : undefined;
+        const ofPackage = mine?.filter((p) => p.nameKey === nameKey) ?? [];
+        // The purchase in force at the session, or — when the payment was recorded after the
+        // session, as back-dated packages are — the earliest purchase of that package.
+        const purchase =
+          ofPackage.find((p) => p.at <= at.getTime()) ?? ofPackage[ofPackage.length - 1];
+
+        if (purchase?.amount && purchase.sessionCount) {
+          return {
+            value:
+              purchase.sessionCount >= UNLIMITED_SESSIONS_THRESHOLD
+                ? null
+                : purchase.amount / purchase.sessionCount,
+            source: "paid",
+            packagePrice: purchase.amount,
+            packageSessions: purchase.sessionCount,
+          };
+        }
+
+        const listValue = perSessionValue(pkg);
+        return {
+          value: listValue,
+          source: listValue === null ? null : "list",
+          packagePrice: pkg?.price || null,
+          packageSessions: pkg?.numberOfSessions || null,
+        };
+      };
+
       type Entry = {
         id: string;
         date: Date;
@@ -910,6 +1016,10 @@ export class FinanceService {
         phone: string;
         packageName: string;
         packageCategory: string | null;
+        coachCount: number;
+        valueSource: "paid" | "list" | null;
+        packagePrice: number | null;
+        packageSessions: number | null;
         isDropIn: boolean;
         attended: boolean;
         sessionValue: number | null;
@@ -922,6 +1032,14 @@ export class FinanceService {
           const isDropIn = b.method === DROP_IN_METHOD;
           const pkg = isDropIn ? null : resolvePackageByName(lookups, b.method, s.locationId);
           const user = users.get(b.uid);
+          const worth = isDropIn
+            ? {
+                value: b.paidAmount,
+                source: b.paidAmount === null ? null : ("paid" as const),
+                packagePrice: null,
+                packageSessions: null,
+              }
+            : sessionWorth(b.uid, pkg, s.start);
           entries.push({
             id: `${s.id}:${b.uid}`,
             date: s.start,
@@ -935,9 +1053,13 @@ export class FinanceService {
             phone: user?.phone ?? "",
             packageName: isDropIn ? "Drop-in" : b.method,
             packageCategory: pkg?.category ?? null,
+            coachCount: Math.max(1, s.coachIds.length),
+            valueSource: worth.source,
+            packagePrice: worth.packagePrice,
+            packageSessions: worth.packageSessions,
             isDropIn,
             attended: b.attended,
-            sessionValue: isDropIn ? null : perSessionValue(pkg),
+            sessionValue: worth.value,
             branch: branchName(lookups, s.locationId),
           });
         }
@@ -955,9 +1077,13 @@ export class FinanceService {
             phone: n.phone,
             packageName: "Non-member drop-in",
             packageCategory: null,
+            coachCount: Math.max(1, s.coachIds.length),
+            valueSource: n.paidAmount === null ? null : "paid",
+            packagePrice: null,
+            packageSessions: null,
             isDropIn: true,
             attended: n.attended,
-            sessionValue: null,
+            sessionValue: n.paidAmount,
             branch: branchName(lookups, s.locationId),
           });
         });
@@ -965,6 +1091,7 @@ export class FinanceService {
       pt.forEach((s, i) => {
         const pkg = lookups.packages.get(s.pkgId);
         const user = users.get(s.memberId);
+        const worth = sessionWorth(s.memberId, pkg, s.date);
         entries.push({
           id: `pt:${i}:${s.memberId}:${s.date.getTime()}`,
           date: s.date,
@@ -978,9 +1105,13 @@ export class FinanceService {
           phone: user?.phone ?? "",
           packageName: pkg?.name ?? "Unknown package",
           packageCategory: pkg?.category ?? "PERSONAL_TRAINING",
+          coachCount: 1,
+          valueSource: worth.source,
+          packagePrice: worth.packagePrice,
+          packageSessions: worth.packageSessions,
           isDropIn: false,
           attended: true,
-          sessionValue: perSessionValue(pkg),
+          sessionValue: worth.value,
           branch: branchName(lookups, s.locationId),
         });
       });
@@ -1013,6 +1144,26 @@ export class FinanceService {
         byMember.set(key, row);
       }
 
+      // Individual = this coach ran the session on their own (PT is always one-to-one);
+      // group = at least one other coach was on the same session.
+      const groupClasses = sessions.filter((s) => s.coachIds.some((id) => id !== coachId));
+      const soloClasses = sessions.filter((s) => !s.coachIds.some((id) => id !== coachId));
+      const sumHours = (list: typeof sessions) => round2(list.reduce((sum, s) => sum + s.hours, 0));
+
+      const coCoachSessions = new Map<string, number>();
+      for (const s of groupClasses) {
+        for (const id of s.coachIds) {
+          if (id !== coachId) coCoachSessions.set(id, (coCoachSessions.get(id) ?? 0) + 1);
+        }
+      }
+      const coCoaches = [...coCoachSessions.entries()]
+        .map(([id, sessionCount]) => ({
+          coachId: id,
+          name: lookups.coaches.get(id) ?? "Unknown coach",
+          sessions: sessionCount,
+        }))
+        .sort((a, b) => b.sessions - a.sessions);
+
       const attendedPackage = packageEntries.filter((e) => e.attended);
       return {
         coach: { id: coachId, name: (coach as AnyDoc).coachName },
@@ -1022,15 +1173,25 @@ export class FinanceService {
           ptSessions: pt.length,
           totalSessions: sessions.length + pt.length,
           classHours: round2(sessions.reduce((sum, s) => sum + s.hours, 0)),
+          individualSessions: soloClasses.length + pt.length,
+          groupSessions: groupClasses.length,
+          soloClassSessions: soloClasses.length,
+          groupClassSessions: groupClasses.length,
+          soloClassHours: sumHours(soloClasses),
+          groupClassHours: sumHours(groupClasses),
           totalBookings: entries.length,
           packageUses: packageEntries.length,
           attendedPackageUses: attendedPackage.length,
           dropIns: entries.filter((e) => e.isDropIn).length,
           attendedDropIns: entries.filter((e) => e.isDropIn && e.attended).length,
+          dropInRevenue: round2(
+            entries.filter((e) => e.isDropIn).reduce((sum, e) => sum + (e.sessionValue ?? 0), 0),
+          ),
           uniqueMembers: new Set(entries.map((e) => e.memberId ?? `${e.phone}|${e.memberName}`)).size,
           uniquePackages: byPackage.size,
           estimatedValue: round2(attendedPackage.reduce((sum, e) => sum + (e.sessionValue ?? 0), 0)),
         },
+        coCoaches,
         byPackage: [...byPackage.values()]
           .map(({ members, ...row }) => ({ ...row, members: members.size, value: round2(row.value) }))
           .sort((a, b) => b.uses - a.uses),
