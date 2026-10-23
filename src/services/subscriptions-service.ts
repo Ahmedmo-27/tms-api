@@ -820,7 +820,7 @@ export class SubscriptionsService {
       );
     }
 
-    if (await isPendingMember(uid)) {
+    if ((await isPendingMember(uid)) && !isCoacheraOnlinePackage(pkg)) {
       throw new ForbiddenError(
         "MEMBERSHIP_REQUIRED",
         "Packages require membership",
