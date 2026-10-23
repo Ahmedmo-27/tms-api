@@ -14,9 +14,15 @@ export const getPackage = asyncHandler(async function (
   req: Request,
   res: Response
 ): Promise<void> {
+  const authReq = req as AuthRequest;
   const { name, category, coachId } = req.query;
   const query: any = { isDeprecated: { $ne: true } };
-  if (name) {
+
+  // For non-member users (role: "user"), restrict packages to ONLY online packages
+  const isNonMember = authReq.user && authReq.user.role === "user";
+  if (isNonMember) {
+    query.name = { $regex: "\\bonline\\b", $options: "i" };
+  } else if (name) {
     query.name = { $regex: String(name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" };
   }
   if (category) {
@@ -32,8 +38,12 @@ export const getPackage = asyncHandler(async function (
     path: "coachId",
     select: "_id coachName",
   });
-  if (!packages || packages.length === 0)
+  if (!packages) {
+    packages = [];
+  }
+  if (packages.length === 0 && !isNonMember) {
     throw new NotFoundError("PACKAGES_NOT_FOUND", "Packages not found");
+  }
   new SuccessResponse("Packages Found!", packages).send(res);
 });
 

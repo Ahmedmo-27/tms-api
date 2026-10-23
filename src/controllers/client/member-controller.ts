@@ -8,6 +8,7 @@ import logger from "../../config/logger";
 import { PackageStatusService } from "../../services/package-status-service";
 
 import User from "../../models/user";
+import { isCoacheraOnlinePackage } from "../../services/coachera-service";
 
 export const getMemberProfile: RequestHandler = asyncHandler(async function (
   req: Request,
@@ -25,9 +26,11 @@ export const getMemberProfile: RequestHandler = asyncHandler(async function (
     Array.isArray(member.packages) &&
     member.packages.some(
       (p: any) =>
-        p.status === "ACTIVE" ||
-        p.status === "FROZEN" ||
-        (typeof p.remainingClasses === "number" && p.remainingClasses > 0)
+        !isCoacheraOnlinePackage(p) &&
+        !isCoacheraOnlinePackage(p.pkgId) &&
+        (p.status === "ACTIVE" ||
+          p.status === "FROZEN" ||
+          (typeof p.remainingClasses === "number" && p.remainingClasses > 0))
     );
 
   const isMember = authReq.user.role === "member" || Boolean(hasActivePackages);

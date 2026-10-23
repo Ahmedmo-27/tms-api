@@ -107,7 +107,7 @@ memberRoutes.get(
 memberRoutes.post(
   "/packages",
   authenticateUser,
-  authorizeUser(["member"]),
+  authorizeUser([...memberOrPending]),
   subToPackage
 );
 memberRoutes.delete(

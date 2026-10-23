@@ -2,6 +2,7 @@ import { ClientSession, Types } from "mongoose";
 import Location from "../models/location";
 import Member, { IMember } from "../models/member";
 import User from "../models/user";
+import { isCoacheraOnlinePackage } from "../services/coachera-service";
 import {
   BadRequestError,
   ForbiddenError,
@@ -67,9 +68,11 @@ export async function isPendingMember(uid: string): Promise<boolean> {
     Array.isArray(member.packages) &&
     member.packages.some(
       (p: any) =>
-        p.status === "ACTIVE" ||
-        p.status === "FROZEN" ||
-        (typeof p.remainingClasses === "number" && p.remainingClasses > 0)
+        !isCoacheraOnlinePackage(p) &&
+        !isCoacheraOnlinePackage(p.pkgId) &&
+        (p.status === "ACTIVE" ||
+          p.status === "FROZEN" ||
+          (typeof p.remainingClasses === "number" && p.remainingClasses > 0))
     )
   ) {
     await User.findByIdAndUpdate(uid, { role: "member" });

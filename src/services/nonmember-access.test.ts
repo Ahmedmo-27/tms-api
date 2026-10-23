@@ -14,17 +14,36 @@ import { runInTransaction } from "../utils/transaction";
 import Reservation from "../models/reservation";
 import WaitlistEntry from "../models/waitlistEntry";
 import User from "../models/user";
+import NonUserPackage from "../models/nonUserPackage";
+import { notifyCoacheraOfPurchase } from "./coachera-service";
 
 jest.mock("../models/member");
 jest.mock("../models/scheduledClass");
-jest.mock("../models/package");
+jest.mock("../models/package", () => {
+  const actual = jest.requireActual("../models/package");
+  const mockModel: any = jest.fn();
+  mockModel.findById = jest.fn();
+  mockModel.find = jest.fn();
+  mockModel.findOne = jest.fn();
+  return {
+    __esModule: true,
+    ...actual,
+    default: mockModel,
+  };
+});
 jest.mock("../models/promoCode");
 jest.mock("../models/payment");
 jest.mock("../models/reservation");
 jest.mock("../models/waitlistEntry");
 jest.mock("../models/user");
+jest.mock("../models/nonUserPackage");
+jest.mock("../models/coachNotification");
 jest.mock("./payments-service");
 jest.mock("./scheduler-service");
+jest.mock("./coachera-service", () => ({
+  ...jest.requireActual("./coachera-service"),
+  notifyCoacheraOfPurchase: jest.fn().mockResolvedValue({ success: true, status: "pending_signup" }),
+}));
 jest.mock("./egygap-erp-service", () => ({
   sendPaymentToRentalSystem: jest.fn(),
 }));
@@ -166,6 +185,62 @@ describe("Non-Member Access: View Classes, Drop-ins Only, Packages Blocked", () 
           "ref-pkg-123",
         ),
       ).rejects.toThrow("Packages require membership");
+    });
+
+    it("allows non-members to purchase online packages via subscribeToPackage and triggers Coachera notification", async () => {
+      const onlinePkg = {
+        _id: new Types.ObjectId(pkgId),
+        name: "1 month Online PT with Hana Abaza",
+        isDeprecated: false,
+        price: 3500,
+        expiryPeriod: 30,
+        numberOfSessions: 12,
+        coachId: new Types.ObjectId(),
+      };
+      (Package.findById as jest.Mock).mockResolvedValue(onlinePkg);
+      (Member.findOne as jest.Mock).mockResolvedValue({
+        uid: new Types.ObjectId(uid),
+        packages: [],
+      });
+      (Member.hasPackageOnStartDay as jest.Mock).mockResolvedValue(false);
+      (Member.addPackage as jest.Mock).mockResolvedValue({});
+      (PaymentsService.findPaymentByMerchantReference as jest.Mock).mockResolvedValue(null);
+      (Payment.findOne as jest.Mock).mockReturnValue({
+        session: jest.fn().mockResolvedValue(null),
+      });
+      const nonUserQuery: any = {
+        session: jest.fn().mockReturnThis(),
+        then: (resolve: any) => resolve(null),
+      };
+      (NonUserPackage.findOne as jest.Mock).mockReturnValue(nonUserQuery);
+      (PaymentsService.checkPayment as jest.Mock).mockResolvedValue("ord_123");
+      const mockPayment = {
+        _id: new Types.ObjectId(),
+        orderId: "ord_123",
+        amount: 3500,
+        paymentTime: new Date(),
+      };
+      (PaymentsService.savePayment as jest.Mock).mockResolvedValue(mockPayment);
+      (User.findById as jest.Mock).mockReturnValue({
+        session: jest.fn().mockResolvedValue({
+          _id: new Types.ObjectId(uid),
+          name: "Test NonMember",
+          email: "nonmember@test.com",
+          phoneNumber: "01012345678",
+        }),
+      });
+
+      await SubscriptionsService.subscribeToPackage(
+        uid,
+        pkgId,
+        new Date().toISOString(),
+        "APP",
+        "ref-online-123",
+      );
+
+      expect(Member.addPackage).toHaveBeenCalled();
+      expect(PaymentsService.savePayment).toHaveBeenCalled();
+      expect(notifyCoacheraOfPurchase).toHaveBeenCalled();
     });
   });
 
@@ -355,6 +430,93 @@ describe("Non-Member Access: View Classes, Drop-ins Only, Packages Blocked", () 
       expect(result.data.isMember).toBe(true);
       expect(result.data.role).toBe("member");
     });
+
+    it("keeps user as role 'user' and isMember: false when only active package is an online package", async () => {
+      const mockMemberDoc = {
+        uid: new Types.ObjectId(uid),
+        bookings: [],
+        packages: [
+          {
+            pkgId: {
+              _id: new Types.ObjectId(),
+              name: "1 month Online PT with Coach",
+            },
+            name: "1 month Online PT with Coach",
+            status: "ACTIVE",
+            remainingClasses: 10,
+          },
+        ],
+        toObject: () => ({
+          uid,
+          bookings: [],
+          packages: [
+            {
+              name: "1 month Online PT with Coach",
+              status: "ACTIVE",
+              remainingClasses: 10,
+            },
+          ],
+        }),
+      };
+
+      (Member.findOne as jest.Mock).mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          populate: jest.fn().mockResolvedValue(mockMemberDoc),
+        }),
+      });
+      (Member.populate as jest.Mock).mockResolvedValue(mockMemberDoc);
+      (User.findByIdAndUpdate as jest.Mock).mockResolvedValue({});
+
+      const req: any = {
+        user: { _id: new Types.ObjectId(uid), role: "user" },
+      };
+      let result: any = null;
+      const res: any = {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn((data) => {
+          result = data;
+        }),
+      };
+
+      const { getMemberProfile } = await import("../controllers/client/member-controller");
+      await getMemberProfile(req, res, () => {});
+
+      expect(result).toBeDefined();
+      expect(result.data.isMember).toBe(false);
+      expect(result.data.role).toBe("user");
+      expect(User.findByIdAndUpdate).not.toHaveBeenCalledWith(
+        expect.anything(),
+        { role: "member" },
+      );
+    });
+  });
+
+  describe("getPackage controller for non-members", () => {
+    it("filters packages to only online packages when user role is 'user'", async () => {
+      const { getPackage } = await import("../controllers/client/package-controller");
+      (Package.find as jest.Mock).mockReturnValue({
+        populate: jest.fn().mockResolvedValue([
+          { _id: "pkg1", name: "1 month Online PT with Salma", price: 3800 },
+        ]),
+      });
+
+      const req: any = {
+        query: {},
+        user: { _id: uid, role: "user" },
+      };
+      let result: any = null;
+      const res: any = {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn((d) => { result = d; }),
+      };
+
+      await getPackage(req, res, () => {});
+
+      expect(Package.find).toHaveBeenCalledWith(expect.objectContaining({
+        name: { $regex: "\\bonline\\b", $options: "i" },
+      }));
+      expect(result.data).toHaveLength(1);
+    });
   });
 
   describe("Route authorization middleware: packages route gating", () => {
@@ -372,6 +534,20 @@ describe("Non-Member Access: View Classes, Drop-ins Only, Packages Blocked", () 
       expect(next).toHaveBeenCalledWith(expect.objectContaining({
         message: "Access denied - Insufficient permissions",
       }));
+    });
+
+    it("allows non-member with role 'user' through memberOrPending authorization", async () => {
+      const { authorizeUser } = await import("../middlewares/auth.middleware");
+      const middleware = authorizeUser(["member", "user"]);
+
+      const req: any = {
+        user: { _id: new Types.ObjectId(uid), role: "user" },
+      };
+      const res: any = {};
+      const next = jest.fn();
+
+      await middleware(req, res, next);
+      expect(next).toHaveBeenCalled();
     });
 
     it("allows user with role 'member' to access member-only routes", async () => {
