@@ -399,7 +399,9 @@ export class PaymentsService {
     note?: string,
     nonMemberName?: string,
     nonMemberPhone?: string,
-    locationId?: string
+    locationId?: string,
+    coachId?: string | Types.ObjectId,
+    coachName?: string,
   ): Promise<IPayment> {
     let resolvedLocationId = locationId;
     if (!resolvedLocationId && (purpose === "PACKAGE" || pkgId)) {
@@ -421,6 +423,8 @@ export class PaymentsService {
       nonMemberName,
       nonMemberPhone,
       locationId: resolvedLocationId ? (toObjectId(resolvedLocationId) ?? undefined) : undefined,
+      coachId: coachId ? (toObjectId(coachId) ?? undefined) : undefined,
+      coachName,
     });
     await payment.save(session ? { session } : {});
     return payment;

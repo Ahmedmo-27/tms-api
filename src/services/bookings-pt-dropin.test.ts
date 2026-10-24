@@ -208,6 +208,8 @@ describe("BookingsService PT Drop-In", () => {
         undefined,
         undefined,
         locationId,
+        coachId,
+        "Salma Ghazzawi",
       );
 
       expect(DailyAttendance.recordPtAttendance).toHaveBeenCalledWith(
@@ -270,6 +272,8 @@ describe("BookingsService PT Drop-In", () => {
         undefined,
         undefined,
         locationId,
+        coachId,
+        "Salma Ghazzawi",
       );
 
       expect(DailyAttendance.recordPtAttendance).toHaveBeenCalledWith(
@@ -346,6 +350,8 @@ describe("BookingsService PT Drop-In", () => {
         "Walk-in Trainee",
         "01200000000",
         locationId,
+        coachId,
+        "Salma Ghazzawi",
       );
 
       expect(DailyAttendance.recordPtGuestAttendance).toHaveBeenCalledWith(
