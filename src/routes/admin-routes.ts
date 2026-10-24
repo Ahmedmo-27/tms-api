@@ -162,7 +162,7 @@ const adminRoutes = express.Router();
 adminRoutes.get(
   "/member",
   authenticateUser,
-  authorizeUser(["management", "branch_admin"]),
+  authorizeUser(["management", "branch_admin", "accountant"]),
   getMember
 );
 adminRoutes.post(
@@ -214,13 +214,13 @@ adminRoutes.delete(
 adminRoutes.get(
   "/schedule",
   authenticateUser,
-  authorizeUser(["management", "branch_admin"]),
+  authorizeUser(["management", "branch_admin", "accountant"]),
   getScheduledClasses
 );
 adminRoutes.get(
   "/next-schedule",
   authenticateUser,
-  authorizeUser(["management", "branch_admin"]),
+  authorizeUser(["management", "branch_admin", "accountant"]),
   getNextScheduledClasses
 );
 adminRoutes.post(
@@ -250,13 +250,13 @@ adminRoutes.post(
 adminRoutes.get(
   "/daily-attendance",
   authenticateUser,
-  authorizeUser(["management", "branch_admin"]),
+  authorizeUser(["management", "branch_admin", "accountant"]),
   getDailyAttendnace
 );
 adminRoutes.get(
   "/attendance",
   authenticateUser,
-  authorizeUser(["management", "branch_admin"]),
+  authorizeUser(["management", "branch_admin", "accountant"]),
   getAttendanceHistory
 );
 
@@ -264,7 +264,7 @@ adminRoutes.get(
 adminRoutes.get(
   "/class",
   authenticateUser,
-  authorizeUser(["management", "branch_admin"]),
+  authorizeUser(["management", "branch_admin", "accountant"]),
   getClass
 );
 adminRoutes.post(
@@ -290,7 +290,7 @@ adminRoutes.delete(
 adminRoutes.get(
   "/bookings",
   authenticateUser,
-  authorizeUser(["management", "branch_admin"]),
+  authorizeUser(["management", "branch_admin", "accountant"]),
   getMemberBookings
 );
 adminRoutes.post(
@@ -360,7 +360,7 @@ adminRoutes.delete(
 adminRoutes.get(
   "/scans/:source/:parentId/:rowId",
   authenticateUser,
-  authorizeUser(["management", "branch_admin"]),
+  authorizeUser(["management", "branch_admin", "accountant"]),
   getScanRow
 );
 
@@ -395,14 +395,14 @@ adminRoutes.post(
 adminRoutes.get(
   "/openGym/dropInPrice",
   authenticateUser,
-  authorizeUser(["management", "branch_admin"]),
+  authorizeUser(["management", "branch_admin", "accountant"]),
   getOpenGymDropInPrice
 );
 
 adminRoutes.get(
   "/openGym/dropInPrices",
   authenticateUser,
-  authorizeUser(["management", "branch_admin"]),
+  authorizeUser(["management", "branch_admin", "accountant"]),
   listOpenGymDropInPrices
 );
 
@@ -430,14 +430,14 @@ adminRoutes.post(
 adminRoutes.get(
   "/pt/dropInPrice",
   authenticateUser,
-  authorizeUser(["management", "branch_admin"]),
+  authorizeUser(["management", "branch_admin", "accountant"]),
   getPtDropInPrice
 );
 
 adminRoutes.get(
   "/pt/dropInPrices",
   authenticateUser,
-  authorizeUser(["management", "branch_admin"]),
+  authorizeUser(["management", "branch_admin", "accountant"]),
   listPtDropInPrices
 );
 
@@ -451,7 +451,7 @@ adminRoutes.patch(
 adminRoutes.get(
   "/pt/coachDropInPrices",
   authenticateUser,
-  authorizeUser(["management", "branch_admin"]),
+  authorizeUser(["management", "branch_admin", "accountant"]),
   listPtCoachDropInPrices
 );
 
@@ -479,7 +479,7 @@ adminRoutes.post(
 adminRoutes.get(
   "/nonUserBooking",
   authenticateUser,
-  authorizeUser(["management", "branch_admin"]),
+  authorizeUser(["management", "branch_admin", "accountant"]),
   getNonUserBookings
 )
 
@@ -556,7 +556,7 @@ adminRoutes.post(
 adminRoutes.get(
   "/nonUserPackage",
   authenticateUser,
-  authorizeUser(["management", "branch_admin"]),
+  authorizeUser(["management", "branch_admin", "accountant"]),
   getNonUserPackages
 )
 
@@ -564,7 +564,7 @@ adminRoutes.get(
 adminRoutes.get(
   "/packages",
   authenticateUser,
-  authorizeUser(["management", "branch_admin"]),
+  authorizeUser(["management", "branch_admin", "accountant"]),
   getPackage
 );
 adminRoutes.post(
@@ -692,7 +692,7 @@ adminRoutes.get(
 adminRoutes.get(
   "/coaches",
   authenticateUser,
-  authorizeUser(["management", "branch_admin"]),
+  authorizeUser(["management", "branch_admin", "accountant"]),
   getCoaches
 );
 adminRoutes.post(

@@ -1503,6 +1503,8 @@ export class BookingsService {
         undefined,
         undefined,
         locationId,
+        coachId,
+        coachName,
       );
       await DailyAttendance.recordPtAttendance(
         uid,
@@ -1583,6 +1585,8 @@ export class BookingsService {
         name,
         phoneNumber,
         locationId,
+        coachId,
+        coachName,
       );
       await DailyAttendance.recordPtGuestAttendance(
         name,

@@ -11,6 +11,7 @@ import Location from "../models/location";
 import DeductionLog from "../models/deductionLog";
 import NonUserBooking from "../models/nonUserBookings";
 import NonUserPackage from "../models/nonUserPackage";
+import DailyAttendance from "../models/dailyAttendance";
 import { NotFoundError } from "../core/ApiError";
 import { locationIdScalarQuery } from "../utils/location-scope";
 import { isPackageExpired } from "../utils/timezone";
@@ -177,7 +178,7 @@ const branchName = (lookups: Lookups, id: string | null | undefined) =>
 // ---------------------------------------------------------------------------
 
 const PAYMENT_FIELDS =
-  "uid nonMemberName nonMemberPhone amount paymentMethod paymentTime orderId merchantReferenceId purpose scid pkgId note isRefunded refundReason locationId";
+  "uid nonMemberName nonMemberPhone amount paymentMethod paymentTime orderId merchantReferenceId purpose scid pkgId note isRefunded refundReason locationId coachId coachName";
 
 async function fetchPayments(range: FinanceRange, extra: Record<string, unknown> = {}) {
   return (await Payment.find(
@@ -301,14 +302,119 @@ function paginate<T>(rows: T[], page: number, limit: number) {
 // Sessions (classes + PT)
 // ---------------------------------------------------------------------------
 
+const COACH_ALIAS_GROUPS: string[][] = [
+  ["Youssef", "Youssef Khaled"],
+  ["Hana Minisy", "Hana Minissy", "Hana Elmeneisy"],
+  ["Salma", "Salma Ghazzawi"],
+  ["Omar El Alamy", "Omar ElAlamy", "Omar Alamy"],
+];
+
+export function isPtDropInPayment(p: AnyDoc): boolean {
+  const note = (p.note || "").trim();
+  if (note && /^(?:Personal training (?:guest )?drop-?in|PT drop-?in|PT with)/i.test(note)) {
+    return true;
+  }
+  if (p.purpose === "DROPIN" && p.coachId && /PT/i.test(note)) {
+    return true;
+  }
+  return false;
+}
+
+export function extractCoachNameFromNote(note?: string): string | null {
+  if (!note) return null;
+  const trimmed = note.trim();
+  const m = trimmed.match(
+    /^(?:Personal training (?:guest )?drop-?in with|PT drop-?in with|PT with)\s+([^;]+)/i,
+  );
+  if (m) return m[1].trim();
+  return null;
+}
+
+export function normalizeCoachName(n: string): string {
+  return n
+    .toLowerCase()
+    .replace(/^(?:captain|coach|c\/)\s+/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function findCoachIdByName(name: string, lookups: Lookups): string | null {
+  const norm = normalizeCoachName(name);
+  if (!norm) return null;
+
+  // 1. Exact match
+  for (const [id, cName] of lookups.coaches.entries()) {
+    if (normalizeCoachName(cName) === norm) return id;
+  }
+
+  // 2. Alias group match
+  for (const group of COACH_ALIAS_GROUPS) {
+    const matchesGroup = group.some((alias) => normalizeCoachName(alias) === norm);
+    if (matchesGroup) {
+      for (const [id, cName] of lookups.coaches.entries()) {
+        const cNorm = normalizeCoachName(cName);
+        if (group.some((alias) => normalizeCoachName(alias) === cNorm)) {
+          return id;
+        }
+      }
+    }
+  }
+
+  // 3. Prefix or first-name match (min 3 chars)
+  if (norm.length >= 3) {
+    for (const [id, cName] of lookups.coaches.entries()) {
+      const cNorm = normalizeCoachName(cName);
+      if (cNorm.startsWith(norm) || norm.startsWith(cNorm)) return id;
+      const cFirst = cNorm.split(" ")[0];
+      const nFirst = norm.split(" ")[0];
+      if (cFirst && nFirst && cFirst === nFirst && cFirst.length >= 3) return id;
+    }
+  }
+
+  return null;
+}
+
+export function resolveCoachFromPtDropIn(
+  payment: AnyDoc,
+  lookups: Lookups,
+  attendanceCoachMap?: Map<string, string>,
+): string | null {
+  if (payment.coachId) {
+    const cid = idStr(payment.coachId);
+    if (lookups.coaches.has(cid)) return cid;
+  }
+
+  const rawCoachName = payment.coachName || extractCoachNameFromNote(payment.note);
+  if (rawCoachName) {
+    const match = findCoachIdByName(rawCoachName, lookups);
+    if (match) return match;
+  }
+
+  if (attendanceCoachMap) {
+    const memKey = idStr(payment.uid) || payment.nonMemberPhone || payment.nonMemberName;
+    if (memKey) {
+      const dayKey = cairoKey(new Date(payment.paymentTime));
+      const fromAtt = attendanceCoachMap.get(`${memKey}|${dayKey}`);
+      if (fromAtt && lookups.coaches.has(fromAtt)) return fromAtt;
+    }
+  }
+
+  return null;
+}
+
 interface PtSession {
+  id?: string;
   date: Date;
   memberId: string;
   pkgId: string;
   coachId: string | null;
   locationId: string | null;
-  source: "SCAN" | "COACH_DEDUCTION";
+  source: "SCAN" | "COACH_DEDUCTION" | "PT_DROPIN";
   reason?: string;
+  isDropIn?: boolean;
+  dropInPrice?: number;
+  memberName?: string;
+  phone?: string;
 }
 
 async function loadPtSessions(range: FinanceRange, lookups: Lookups): Promise<PtSession[]> {
@@ -318,12 +424,48 @@ async function loadPtSessions(range: FinanceRange, lookups: Lookups): Promise<Pt
       .map((p) => p.id),
   );
 
-  const [members, logs] = await Promise.all([
+  const [members, logs, dailyDocs, dropInPayments] = await Promise.all([
     Member.find({ ptAttendance: { $elemMatch: { attendanceTime: { $gte: range.start, $lt: range.end } } } })
       .select("uid ptAttendance packages.pkgId packages.locationId")
       .lean(),
     DeductionLog.find({ sessionDate: { $gte: range.start, $lt: range.end } }).lean(),
+    DailyAttendance.find({
+      date: { $gte: range.start, $lt: range.end },
+      "ptAttendance.0": { $exists: true },
+    })
+      .select("date ptAttendance")
+      .lean(),
+    Payment.find(
+      withLocation(
+        {
+          paymentTime: { $gte: range.start, $lt: range.end },
+          paymentMethod: { $nin: NON_REVENUE_METHODS },
+          isRefunded: { $ne: true },
+          $or: [
+            { purpose: "DROPIN" },
+            { note: { $regex: /^(?:Personal training (?:guest )?drop-?in|PT drop-?in|PT with)/i } },
+          ],
+        },
+        range.locationId,
+      ),
+    )
+      .select(PAYMENT_FIELDS)
+      .lean(),
   ]);
+
+  const attendanceCoachMap = new Map<string, string>();
+  for (const doc of dailyDocs as AnyDoc[]) {
+    for (const entry of doc.ptAttendance ?? []) {
+      if (entry.status !== "SUCCESS") continue;
+      const cid = entry.coachId ? idStr(entry.coachId) : null;
+      if (!cid) continue;
+      const time = new Date(entry.time);
+      const day = cairoKey(time);
+      if (entry.uid) attendanceCoachMap.set(`${idStr(entry.uid)}|${day}`, cid);
+      if (entry.guestPhone) attendanceCoachMap.set(`${entry.guestPhone}|${day}`, cid);
+      if (entry.guestName) attendanceCoachMap.set(`${entry.guestName}|${day}`, cid);
+    }
+  }
 
   const sessions: PtSession[] = [];
   for (const m of members as AnyDoc[]) {
@@ -357,6 +499,69 @@ async function loadPtSessions(range: FinanceRange, lookups: Lookups): Promise<Pt
       source: "COACH_DEDUCTION",
       reason: log.reason,
     });
+  }
+
+  // Load PT drop-ins from payments
+  const ptPayments = (dropInPayments as AnyDoc[]).filter(isPtDropInPayment);
+  const seenDropInDayKeys = new Set<string>();
+
+  for (const p of ptPayments) {
+    const time = new Date(p.paymentTime);
+    const coachId = resolveCoachFromPtDropIn(p, lookups, attendanceCoachMap);
+    const memId = idStr(p.uid) || p.nonMemberPhone || p.nonMemberName || "guest";
+    const dayKey = `${memId}|${cairoKey(time)}`;
+    seenDropInDayKeys.add(dayKey);
+
+    sessions.push({
+      id: `pt-dropin:${idStr(p._id)}`,
+      date: time,
+      memberId: memId,
+      memberName: p.nonMemberName,
+      phone: p.nonMemberPhone,
+      pkgId: "",
+      coachId,
+      locationId: p.locationId ? idStr(p.locationId) : null,
+      source: "PT_DROPIN",
+      isDropIn: true,
+      dropInPrice: Number(p.amount) || 0,
+      reason: p.note,
+    });
+  }
+
+  // Also include any DailyAttendance PT drop-ins that didn't have a matching payment in range
+  for (const doc of dailyDocs as AnyDoc[]) {
+    for (const entry of doc.ptAttendance ?? []) {
+      if (entry.status !== "SUCCESS") continue;
+      const method = (entry.method || "").toLowerCase();
+      const isDropIn =
+        !entry.pkgId &&
+        (method.includes("dropin") || method.includes("drop-in") || method.includes("drop in"));
+      if (!isDropIn) continue;
+      const time = new Date(entry.time);
+      if (time < range.start || time >= range.end) continue;
+      const memId = idStr(entry.uid) || entry.guestPhone || entry.guestName || "guest";
+      const dayKey = `${memId}|${cairoKey(time)}`;
+      if (seenDropInDayKeys.has(dayKey)) continue;
+      seenDropInDayKeys.add(dayKey);
+
+      const coachId = entry.coachId
+        ? idStr(entry.coachId)
+        : findCoachIdByName(entry.method || "", lookups);
+      sessions.push({
+        id: `pt-dropin-att:${idStr(entry._id || doc._id)}`,
+        date: time,
+        memberId: memId,
+        memberName: entry.guestName,
+        phone: entry.guestPhone,
+        pkgId: "",
+        coachId: coachId && lookups.coaches.has(coachId) ? coachId : null,
+        locationId: entry.locationId ? idStr(entry.locationId) : null,
+        source: "PT_DROPIN",
+        isDropIn: true,
+        dropInPrice: 0,
+        reason: entry.method,
+      });
+    }
   }
 
   return sessions
@@ -825,13 +1030,19 @@ export class FinanceService {
         if (!pt.coachId) continue;
         const row = rowFor(pt.coachId);
         row.ptSessions += 1;
-        row.packageUses += 1;
-        row.attendedPackageUses += 1;
-        row.packageValue += perSessionValue(lookups.packages.get(pt.pkgId)) ?? 0;
-        row.members.add(pt.memberId);
+        if (pt.isDropIn) {
+          row.dropIns += 1;
+          row.dropInRevenue += pt.dropInPrice ?? 0;
+        } else {
+          row.packageUses += 1;
+          row.attendedPackageUses += 1;
+          row.packageValue += perSessionValue(lookups.packages.get(pt.pkgId)) ?? 0;
+        }
+        if (pt.memberId) row.members.add(pt.memberId);
       }
 
       for (const p of ptPayments) {
+        if (p.isRefunded) continue;
         const pkg = lookups.packages.get(idStr(p.pkgId));
         if (!pkg?.coachId) continue;
         rowFor(pkg.coachId).ptRevenue += Number(p.amount) || 0;
@@ -1089,31 +1300,57 @@ export class FinanceService {
         });
       }
       pt.forEach((s, i) => {
-        const pkg = lookups.packages.get(s.pkgId);
-        const user = users.get(s.memberId);
-        const worth = sessionWorth(s.memberId, pkg, s.date);
-        entries.push({
-          id: `pt:${i}:${s.memberId}:${s.date.getTime()}`,
-          date: s.date,
-          type: "PT",
-          source: s.source === "SCAN" ? "PT check-in" : "Coach deduction",
-          sessionId: null,
-          classTitle: "Personal training",
-          category: "PERSONAL_TRAINING",
-          memberId: s.memberId,
-          memberName: user?.name ?? "Unknown member",
-          phone: user?.phone ?? "",
-          packageName: pkg?.name ?? "Unknown package",
-          packageCategory: pkg?.category ?? "PERSONAL_TRAINING",
-          coachCount: 1,
-          valueSource: worth.source,
-          packagePrice: worth.packagePrice,
-          packageSessions: worth.packageSessions,
-          isDropIn: false,
-          attended: true,
-          sessionValue: worth.value,
-          branch: branchName(lookups, s.locationId),
-        });
+        if (s.isDropIn) {
+          const user = s.memberId && Types.ObjectId.isValid(s.memberId) ? users.get(s.memberId) : undefined;
+          entries.push({
+            id: s.id || `pt-dropin:${i}:${s.memberId}:${s.date.getTime()}`,
+            date: s.date,
+            type: "PT",
+            source: "PT drop-in",
+            sessionId: null,
+            classTitle: "Personal training",
+            category: "PERSONAL_TRAINING",
+            memberId: s.memberId && Types.ObjectId.isValid(s.memberId) ? s.memberId : null,
+            memberName: s.memberName || user?.name || "Walk-in customer",
+            phone: s.phone || user?.phone || "",
+            packageName: "PT drop-in",
+            packageCategory: "PERSONAL_TRAINING",
+            coachCount: 1,
+            valueSource: s.dropInPrice !== null && s.dropInPrice !== undefined ? "paid" : null,
+            packagePrice: null,
+            packageSessions: null,
+            isDropIn: true,
+            attended: true,
+            sessionValue: s.dropInPrice ?? null,
+            branch: branchName(lookups, s.locationId),
+          });
+        } else {
+          const pkg = lookups.packages.get(s.pkgId);
+          const user = users.get(s.memberId);
+          const worth = sessionWorth(s.memberId, pkg, s.date);
+          entries.push({
+            id: `pt:${i}:${s.memberId}:${s.date.getTime()}`,
+            date: s.date,
+            type: "PT",
+            source: s.source === "SCAN" ? "PT check-in" : "Coach deduction",
+            sessionId: null,
+            classTitle: "Personal training",
+            category: "PERSONAL_TRAINING",
+            memberId: s.memberId,
+            memberName: user?.name ?? "Unknown member",
+            phone: user?.phone ?? "",
+            packageName: pkg?.name ?? "Unknown package",
+            packageCategory: pkg?.category ?? "PERSONAL_TRAINING",
+            coachCount: 1,
+            valueSource: worth.source,
+            packagePrice: worth.packagePrice,
+            packageSessions: worth.packageSessions,
+            isDropIn: false,
+            attended: true,
+            sessionValue: worth.value,
+            branch: branchName(lookups, s.locationId),
+          });
+        }
       });
       entries.sort((a, b) => b.date.getTime() - a.date.getTime());
 
@@ -1189,7 +1426,12 @@ export class FinanceService {
           ),
           uniqueMembers: new Set(entries.map((e) => e.memberId ?? `${e.phone}|${e.memberName}`)).size,
           uniquePackages: byPackage.size,
-          estimatedValue: round2(attendedPackage.reduce((sum, e) => sum + (e.sessionValue ?? 0), 0)),
+          estimatedValue: round2(
+            attendedPackage.reduce((sum, e) => sum + (e.sessionValue ?? 0), 0) +
+              entries
+                .filter((e) => e.isDropIn && e.type === "PT" && e.attended)
+                .reduce((sum, e) => sum + (e.sessionValue ?? 0), 0),
+          ),
         },
         coCoaches,
         byPackage: [...byPackage.values()]
@@ -1211,20 +1453,27 @@ export class FinanceService {
       const ptIds = ptPackages.map((p) => p.id);
       const ptIdSet = new Set(ptIds);
 
-      const [sessions, members, payments] = await Promise.all([
+      const [sessions, members, candidatePayments] = await Promise.all([
         loadPtSessions(range, lookups),
         ptIds.length
           ? Member.find({ "packages.pkgId": { $in: ptIds.map((id) => new Types.ObjectId(id)) } })
               .select("uid packages")
               .lean()
           : Promise.resolve([]),
-        ptIds.length
-          ? fetchPayments(range, {
-              pkgId: { $in: ptIds.map((id) => new Types.ObjectId(id)) },
-              paymentMethod: { $nin: NON_REVENUE_METHODS },
-            })
-          : Promise.resolve([] as AnyDoc[]),
+        fetchPayments(range, {
+          paymentMethod: { $nin: NON_REVENUE_METHODS },
+          isRefunded: { $ne: true },
+          $or: [
+            ...(ptIds.length ? [{ pkgId: { $in: ptIds.map((id) => new Types.ObjectId(id)) } }] : []),
+            { purpose: "DROPIN" },
+            { note: { $regex: /^(?:Personal training (?:guest )?drop-?in|PT drop-?in|PT with)/i } },
+          ],
+        }),
       ]);
+
+      const payments = candidatePayments.filter(
+        (p) => (p.pkgId && ptIdSet.has(idStr(p.pkgId))) || isPtDropInPayment(p),
+      );
 
       // Renewal = the member had paid for a PT package before this payment.
       const payerIds = [...new Set(payments.map((p) => idStr(p.uid)).filter(Boolean))];
@@ -1288,8 +1537,9 @@ export class FinanceService {
       for (const s of sessions) {
         const row = rowFor(s.coachId);
         row.sessions += 1;
-        if (s.source === "SCAN") row.scanSessions += 1;
-        else row.deductionSessions += 1;
+        if (s.source === "COACH_DEDUCTION") row.deductionSessions += 1;
+        else row.scanSessions += 1;
+        if (s.memberId) row.clients.add(s.memberId);
         const t = trend.get(cairoKey(s.date, range.granularity));
         if (t) t.sessions += 1;
       }
@@ -1297,12 +1547,22 @@ export class FinanceService {
       let newSales = 0;
       let renewals = 0;
       for (const p of payments) {
-        const pkg = lookups.packages.get(idStr(p.pkgId));
-        const row = rowFor(pkg?.coachId ?? null);
+        if (p.isRefunded) continue;
+        let coachId: string | null = null;
+        if (isPtDropInPayment(p)) {
+          coachId = resolveCoachFromPtDropIn(p, lookups);
+        } else {
+          const pkg = lookups.packages.get(idStr(p.pkgId));
+          coachId = pkg?.coachId ?? null;
+        }
+        const row = rowFor(coachId);
         const amount = Number(p.amount) || 0;
         row.revenue += amount;
         row.sales += 1;
-        const first = firstPayment.get(idStr(p.uid));
+        if (p.uid) {
+          row.clients.add(idStr(p.uid));
+        }
+        const first = p.uid ? firstPayment.get(idStr(p.uid)) : null;
         const isRenewal = Boolean(first && first < new Date(p.paymentTime));
         if (isRenewal) {
           row.renewals += 1;
@@ -1377,7 +1637,7 @@ export class FinanceService {
         range: { startDate: range.startKey, endDate: range.endKey, granularity: range.granularity },
         totals: {
           sessions: sessions.length,
-          scanSessions: sessions.filter((s) => s.source === "SCAN").length,
+          scanSessions: sessions.filter((s) => s.source === "SCAN" || s.source === "PT_DROPIN").length,
           deductionSessions: sessions.filter((s) => s.source === "COACH_DEDUCTION").length,
           activeClients: coaches.reduce((sum, c) => sum + c.activeClients, 0),
           activePackages,
