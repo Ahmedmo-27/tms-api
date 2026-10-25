@@ -974,14 +974,14 @@ adminRoutes.patch(
 adminRoutes.get(
   "/sheet",
   authenticateUser,
-  authorizeUser(["management", "branch_admin"]),
+  authorizeUser(["management", "branch_admin", "accountant"]),
   getSheetDay
 );
 
 adminRoutes.get(
   "/sheet/member-eligibility",
   authenticateUser,
-  authorizeUser(["management", "branch_admin"]),
+  authorizeUser(["management", "branch_admin", "accountant"]),
   getSheetMemberEligibility
 );
 
