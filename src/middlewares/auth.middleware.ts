@@ -34,7 +34,9 @@ type UserRole =
   | "coach"
   | "managing_coach"
   | "mailer"
-  | "accountant";
+  | "accountant"
+  | "sales"
+  | "sales_manager";
 
 const ADMIN_ROLE_ALIASES: UserRole[] = ["admin", "management", "branch_admin"];
 

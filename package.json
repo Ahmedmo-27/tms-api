@@ -11,6 +11,10 @@
     "exec": "npx ts-node ./src/index.ts"
   },
   "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test:unit": "jest --runInBand --testPathIgnorePatterns \"/node_modules/\" \"src/tests/integration/\"",
+    "test:integration": "jest --runInBand --testPathPattern \"src/tests/integration\"",
+    "create-sales-user": "npx ts-node ./src/scripts/create-sales-user.ts",
     "sync-db": "npx ts-node ./src/scripts/sync-prod-to-test.ts",
     "generate-docs": "npx ts-node ./src/scripts/generate-docs.ts",
     "test": "jest --runInBand --changedSince=master",

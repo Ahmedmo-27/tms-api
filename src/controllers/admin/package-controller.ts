@@ -400,6 +400,7 @@ export const subMemberToPackage = asyncHandler(async function (
     note,
     pendingDeduction,
     previousSessionDates,
+    soldBy,
   } = req.body;
   const targetLocationId = resolveLocationIdForWrite(req);
   const io = req.app.get("io");
@@ -415,6 +416,7 @@ export const subMemberToPackage = asyncHandler(async function (
     targetLocationId,
     pendingDeduction === true || pendingDeduction === "true",
     previousSessionDates,
+    typeof soldBy === "string" && soldBy ? soldBy : null,
   );
   new SuccessResponse("Package Added!").send(res);
 });

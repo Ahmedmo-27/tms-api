@@ -9,7 +9,9 @@ coverage/
 logs/
 launch.json
 x.json
-src/tests
+# NOTE: `src/tests` used to be listed here, which meant src/tests/setup.ts —
+# the file jest.config.js points setupFilesAfterEnv at — was never committed,
+# so `npm test` could not start on a fresh clone.
 migration/
 dev.env
 prod.env

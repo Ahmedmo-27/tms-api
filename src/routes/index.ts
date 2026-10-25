@@ -10,6 +10,7 @@ import financeRoutes from "./finance-routes";
 import { handleCoacheraIntake } from "../controllers/external/coachera-controller";
 import { verifyCoacheraSignature } from "../middlewares/coachera-auth.middleware";
 import { defaultLimiter } from "../config/rateLimiter";
+import salesRoutes from "./sales-routes";
 
 const router = Router();
 
@@ -30,6 +31,7 @@ router.post(
   handleCoacheraIntake
 );
 
+router.use("/sales", salesRoutes);
 // /api/coach is available via app.use("/api", router) → /api/coach (no double mount)
 
 export default router;
