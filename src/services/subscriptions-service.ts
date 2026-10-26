@@ -53,6 +53,7 @@ export interface PreviousSessionInputRecord {
 }
 
 export type PreviousSessionInput = string | PreviousSessionInputRecord;
+import { SalesService } from "./sales-service";
 
 export class SubscriptionsService {
   static normalizePreviousSessionInputs(
@@ -507,6 +508,7 @@ export class SubscriptionsService {
     locationId?: string,
     pendingDeduction = false,
     previousSessionDates?: Array<string | PreviousSessionInputRecord>,
+    soldBy?: string | null,
   ) {
     if (!uid) {
       throw new BadRequestError("MEMBER_ID_REQUIRED", "Member ID is required");
@@ -605,6 +607,9 @@ export class SubscriptionsService {
     }
     const packageId = new Types.ObjectId(pkgId);
     const endDate = getPackageEndDate(startDate, pkg).toISOString();
+    // Sales attribution is optional at the point of sale and can be set or
+    // corrected later from the sales dashboard.
+    const salesAccountId = await SalesService.resolveSalesAccountId(soldBy);
 
     let restrictions: IClassRestrictionRecord[];
 
@@ -696,7 +701,8 @@ export class SubscriptionsService {
         endDate,
         session,
         restrictions,
-        locationId
+        locationId,
+        salesAccountId ? salesAccountId.toString() : null
       );
 
       if (remainingClasses === 0 && !isUnlimitedSpaceAccess(pkg.category)) {
