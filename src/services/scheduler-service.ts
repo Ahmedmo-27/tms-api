@@ -222,6 +222,8 @@ export class SchedulerService {
             position: entry.position ?? (waitlistMap.get(sid)!.length + 1),
             addedAt: entry.joinedAt,
             isManual: Boolean(entry.isManual),
+            reservationExpiresAt: entry.reservationExpiresAt,
+            notifiedAt: entry.notifiedAt,
           });
         }
       }

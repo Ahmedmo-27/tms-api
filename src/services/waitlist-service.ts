@@ -3,6 +3,8 @@ import ScheduledClass from "../models/scheduledClass";
 import WaitlistEntry from "../models/waitlistEntry";
 import Reservation from "../models/reservation";
 import User from "../models/user";
+import Package from "../models/package";
+import Member from "../models/member";
 import { NotificationsService } from "./notifications-service";
 import {
   NotFoundError,
@@ -15,11 +17,68 @@ import {
   assertMatchaSessionForPendingUser,
   isPendingMember,
 } from "../utils/matcha-branch";
+import { getIO } from "../config/socket";
+import {
+  selectEligiblePackage,
+  type EligibilityPackage,
+} from "../utils/package-eligibility";
 
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
 
 export class WaitlistService {
+  static async checkMemberPackageEligibility(
+    userId: string | Types.ObjectId,
+    classId: string | Types.ObjectId,
+    sessionTime: Date
+  ): Promise<boolean> {
+    try {
+      const cidStr = classId.toString();
+      const allowedPkgs = await Package.find({
+        opensClasses: new Types.ObjectId(cidStr),
+      })
+        .select("_id")
+        .lean();
+      const allowedPkgIds = allowedPkgs.map((p: any) => p._id.toString());
+
+      const memberDoc = await Member.findOne({
+        uid: new Types.ObjectId(userId),
+      }).lean();
+
+      if (
+        !memberDoc ||
+        !Array.isArray(memberDoc.packages) ||
+        memberDoc.packages.length === 0
+      ) {
+        return false;
+      }
+
+      const eligibilityInput: EligibilityPackage[] = memberDoc.packages.map(
+        (p: any) => ({
+          pkgId: p.pkgId?.toString(),
+          name: p.name,
+          status: p.status,
+          pkgStartDate: p.pkgStartDate,
+          pkgEndDate: p.pkgEndDate,
+          remainingClasses: p.remainingClasses ?? 0,
+          classRestrictionsRecord: p.classRestrictionsRecord,
+        })
+      );
+
+      const result = selectEligiblePackage({
+        packages: eligibilityInput,
+        allowedPkgIds,
+        cid: cidStr,
+        now: sessionTime,
+      });
+
+      return result.ok;
+    } catch (err) {
+      logger.warn("checkMemberPackageEligibility failed (non-fatal):", err);
+      return false;
+    }
+  }
+
   static async joinWaitlist(uid: string, scid: string) {
     if (!scid || !Types.ObjectId.isValid(scid)) {
       throw new NotFoundError("CLASS_NOT_FOUND", "Scheduled Class not found");
@@ -34,7 +93,10 @@ export class WaitlistService {
     }
 
     if (scheduledClass.availableSlots > 0) {
-      throw new BadRequestError("SLOTS_AVAILABLE", "Cannot join waitlist when slots are available");
+      throw new BadRequestError(
+        "SLOTS_AVAILABLE",
+        "Cannot join waitlist when slots are available"
+      );
     }
 
     const user = await User.findById(uid);
@@ -47,7 +109,10 @@ export class WaitlistService {
     });
 
     if (existingEntry) {
-      throw new ConflictError("ALREADY_IN_WAITLIST", "User is already in the waitlist");
+      throw new ConflictError(
+        "ALREADY_IN_WAITLIST",
+        "User is already in the waitlist"
+      );
     }
 
     const count = await WaitlistEntry.countDocuments({
@@ -68,7 +133,10 @@ export class WaitlistService {
 
   static async leaveWaitlist(uid: string, scid: string) {
     if (!scid || !Types.ObjectId.isValid(scid)) {
-      throw new NotFoundError("WAITLIST_ENTRY_NOT_FOUND", "Waitlist entry not found");
+      throw new NotFoundError(
+        "WAITLIST_ENTRY_NOT_FOUND",
+        "Waitlist entry not found"
+      );
     }
     const entry = await WaitlistEntry.findOneAndUpdate(
       {
@@ -83,7 +151,10 @@ export class WaitlistService {
     );
 
     if (!entry) {
-      throw new NotFoundError("WAITLIST_ENTRY_NOT_FOUND", "Waitlist entry not found");
+      throw new NotFoundError(
+        "WAITLIST_ENTRY_NOT_FOUND",
+        "Waitlist entry not found"
+      );
     }
 
     // If they were NOTIFIED, they held a reservation. Expire it.
@@ -125,7 +196,9 @@ export class WaitlistService {
       status: "ACTIVE",
     });
     if (activeReservation) {
-      logger.info(`Active reservation already exists for class ${scid}. Waitlist paused.`);
+      logger.info(
+        `Active reservation already exists for class ${scid}. Waitlist paused.`
+      );
       return;
     }
 
@@ -150,7 +223,8 @@ export class WaitlistService {
 
     // Calculate Dynamic Reservation Window
     let dynamicWindow = 0;
-    const clamp = (val: number, min: number, max: number) => Math.min(Math.max(val, min), max);
+    const clamp = (val: number, min: number, max: number) =>
+      Math.min(Math.max(val, min), max);
 
     if (remainingTime <= 6 * HOUR) {
       dynamicWindow = clamp(remainingTime * 0.15, 10 * MINUTE, 45 * MINUTE);
@@ -182,11 +256,18 @@ export class WaitlistService {
       await selectedEntry.save({ session });
     });
 
-    // Notify User (best-effort — notification failure must not roll back the reservation)
+    // Notify User / Branch Admin (best-effort — notification failure must not roll back the reservation)
     try {
       const user = await User.findById(selectedEntry.userId);
+      const classTitle = (scheduledClass.cid as any)?.title || "Class";
+      const formattedTime = scheduledClass.startTime.toLocaleTimeString("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+      });
+      const windowMinutes = Math.max(1, Math.round(reservationWindow / MINUTE));
+
       if (user && user.fcmTokens && user.fcmTokens.length > 0) {
-        const classTitle = (scheduledClass.cid as any).title || "Class";
         await NotificationsService.notifyWaitlistUser(
           (user._id as Types.ObjectId).toString(),
           user.fcmTokens,
@@ -194,6 +275,73 @@ export class WaitlistService {
           scheduledClass.startTime.getDay(),
           expiresAt
         );
+      }
+
+      // If this entry was added manually, check package eligibility
+      if (selectedEntry.isManual) {
+        const classId = scheduledClass.cid?._id
+          ? scheduledClass.cid._id.toString()
+          : scheduledClass.cid.toString();
+
+        const hasEligiblePackage =
+          await WaitlistService.checkMemberPackageEligibility(
+            selectedEntry.userId,
+            classId,
+            scheduledClass.startTime
+          );
+
+        if (!hasEligiblePackage) {
+          logger.info(
+            `Manual waitlist turn assigned to user ${selectedEntry.userId} without eligible package. Alerting branch admins for location ${scheduledClass.locationId}. Dynamic window: ${windowMinutes}m.`
+          );
+
+          // Find branch admins for this class location
+          const branchAdmins = await User.find({
+            role: "branch_admin",
+            locationId: scheduledClass.locationId,
+          }).select("_id");
+
+          const branchAdminIds = branchAdmins.map((u) =>
+            (u._id as Types.ObjectId).toString()
+          );
+          const memberName = user?.name || "Member";
+
+          if (branchAdminIds.length > 0) {
+            await NotificationsService.notifyUsers(
+              branchAdminIds,
+              "⚠️ Waitlist Action: Contact Member",
+              `Manual waitlist member ${memberName} for ${classTitle} (${formattedTime}) has NO active package! You have ${windowMinutes} mins to contact them before the spot passes to the next person.`,
+              {
+                type: "WAITLIST_MANUAL_NO_PACKAGE",
+                scid: scid.toString(),
+                userId: selectedEntry.userId.toString(),
+                memberName,
+                phone: user?.phoneNumber || "",
+                classTitle,
+                expiresAt: expiresAt.toISOString(),
+                windowMinutes: String(windowMinutes),
+              }
+            );
+          }
+
+          // Emit real-time Socket event to dashboard
+          const io = getIO();
+          if (io) {
+            io.emit("waitlist:manual_action_required", {
+              scid: scid.toString(),
+              locationId: scheduledClass.locationId
+                ? scheduledClass.locationId.toString()
+                : undefined,
+              userId: selectedEntry.userId.toString(),
+              memberName,
+              phone: user?.phoneNumber || "",
+              classTitle,
+              startTime: scheduledClass.startTime,
+              expiresAt: expiresAt.toISOString(),
+              windowMinutes,
+            });
+          }
+        }
       }
     } catch (notifyErr) {
       logger.warn("Waitlist notification failed (non-fatal):", notifyErr);
@@ -224,8 +372,10 @@ export class WaitlistService {
           );
         });
 
-        logger.info(`Expired reservation for user ${res.userId} on class ${res.sessionId}`);
-        
+        logger.info(
+          `Expired reservation for user ${res.userId} on class ${res.sessionId}`
+        );
+
         // Process next waitlist member
         await WaitlistService.processWaitlist(res.sessionId.toString());
       }

@@ -46,7 +46,9 @@
     "sync-coaches-users": "npx ts-node ./src/scripts/sync-coaches-users.ts",
     "sync-coaches-users:apply": "npx ts-node ./src/scripts/sync-coaches-users.ts --apply",
     "notify:run": "npx ts-node ./src/scripts/send-run-announcement-notification.ts",
-    "notify:run:apply": "npx ts-node ./src/scripts/send-run-announcement-notification.ts --apply"
+    "notify:run:apply": "npx ts-node ./src/scripts/send-run-announcement-notification.ts --apply",
+    "audit:walkins": "npx ts-node ./src/scripts/audit-unpaid-waitlist-walkins.ts",
+    "audit:manual-waitlist": "npx ts-node ./src/scripts/audit-manual-waitlist-promotions.ts"
   },
   "repository": {
     "type": "git",
