@@ -974,28 +974,28 @@ adminRoutes.patch(
 adminRoutes.get(
   "/sheet",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "accountant"]),
+  authorizeUser(["management", "accountant"]),
   getSheetDay
 );
 
 adminRoutes.get(
   "/sheet/member-eligibility",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "accountant"]),
+  authorizeUser(["management", "accountant"]),
   getSheetMemberEligibility
 );
 
 adminRoutes.post(
   "/sheet/commit",
   authenticateUser,
-  authorizeUser(["management", "branch_admin"]),
+  authorizeUser(["management"]),
   commitSheetRows
 );
 
 adminRoutes.post(
   "/sheet/import",
   authenticateUser,
-  authorizeUser(["management", "branch_admin"]),
+  authorizeUser(["management"]),
   importSheetDay
 );
 
