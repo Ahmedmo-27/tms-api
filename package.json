@@ -15,6 +15,10 @@
     "test:unit": "jest --runInBand --testPathIgnorePatterns \"/node_modules/\" \"src/tests/integration/\"",
     "test:integration": "jest --runInBand --testPathPattern \"src/tests/integration\"",
     "create-sales-user": "npx ts-node ./src/scripts/create-sales-user.ts",
+    "insert-sales-team": "npx ts-node ./src/scripts/insert-sales-team.ts",
+    "insert-sales-team:apply": "npx ts-node ./src/scripts/insert-sales-team.ts --apply",
+    "insert-sales-team:prod": "npx ts-node ./src/scripts/insert-sales-team.ts --prod",
+    "insert-sales-team:prod:apply": "npx ts-node ./src/scripts/insert-sales-team.ts --prod --apply",
     "sync-db": "npx ts-node ./src/scripts/sync-prod-to-test.ts",
     "generate-docs": "npx ts-node ./src/scripts/generate-docs.ts",
     "test": "jest --runInBand --changedSince=master",
@@ -48,7 +52,9 @@
     "notify:run": "npx ts-node ./src/scripts/send-run-announcement-notification.ts",
     "notify:run:apply": "npx ts-node ./src/scripts/send-run-announcement-notification.ts --apply",
     "audit:walkins": "npx ts-node ./src/scripts/audit-unpaid-waitlist-walkins.ts",
-    "audit:manual-waitlist": "npx ts-node ./src/scripts/audit-manual-waitlist-promotions.ts"
+    "audit:manual-waitlist": "npx ts-node ./src/scripts/audit-manual-waitlist-promotions.ts",
+    "merge-hana-abaza": "npx ts-node ./src/scripts/merge-duplicate-coach-hana-abaza.ts",
+    "merge-hana-abaza:apply": "npx ts-node ./src/scripts/merge-duplicate-coach-hana-abaza.ts --apply"
   },
   "repository": {
     "type": "git",

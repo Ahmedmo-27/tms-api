@@ -316,7 +316,8 @@ export const loginUser = asyncHandler(
             { coachId: { $in: stringIds } },
           ],
         });
-        hasScheduledClasses = scheduledClassesCount > 0;
+        const extraCategories = await CoachService.getCoachExtraScansCategories(coachDocId, coachUserId);
+        hasScheduledClasses = scheduledClassesCount > 0 || extraCategories.length > 0;
       }
       responseData.hasPtSessions = hasPtSessions;
       responseData.hasScheduledClasses = hasScheduledClasses;

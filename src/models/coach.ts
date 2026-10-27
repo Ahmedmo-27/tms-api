@@ -5,6 +5,7 @@ export interface ICoach extends Document {
     phoneNumber: string;
     userId?: Types.ObjectId;
     ptDropInPrice?: number | null;
+    scansCategories?: string[];
 }
 
 const CoachSchema: Schema<ICoach> = new Schema({
@@ -25,6 +26,11 @@ const CoachSchema: Schema<ICoach> = new Schema({
     ptDropInPrice: {
         type: Number,
         default: null,
+        required: false,
+    },
+    scansCategories: {
+        type: [String],
+        default: undefined,
         required: false,
     },
 });

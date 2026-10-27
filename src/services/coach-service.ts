@@ -1020,7 +1020,7 @@ export class CoachService {
         .filter(Boolean);
       const allCoachNames = coaches.map((c: any) => c.name).join(", ");
       const matchingCoach = coaches.find((c: any) => assignedIds.has(c.id));
-      const sessionCoachName = matchingCoach ? matchingCoach.name : (viewerCoachName || (coaches[0]?.name ?? "Coach"));
+      const sessionCoachName = matchingCoach ? matchingCoach.name : (allCoachNames || coaches[0]?.name || viewerCoachName || "Coach");
 
       const totalBookedCount = scheduledClass.bookedMembers.length + classNonUserBookings.length;
       const totalCapacity = scheduledClass.availableSlots + totalBookedCount;
@@ -1072,7 +1072,84 @@ export class CoachService {
    * each with its full scan list (member name, phone, time, method, status, including Walk-Ins).
    * Supports multi-coach sessions: all assigned coaches see the same session.
    */
-  static async getScans(coachDocId: Types.ObjectId, date: Date): Promise<any[]> {
+  /**
+   * Returns extra class categories that this coach is authorized to view in the scans monitor.
+   *
+   * Priority:
+   * 1. scansCategories array in Coach document or User document if explicitly configured in DB.
+   * 2. Default code mapping for managing coaches:
+   *    - Hana Abaza: ["FUNCTIONAL_TRAINING"]
+   *    - Hana Rashwan: ["STUDIO"]
+   */
+  static async getCoachExtraScansCategories(
+    coachDocId: Types.ObjectId,
+    coachUserId?: Types.ObjectId
+  ): Promise<string[]> {
+    const coachDoc = await Coach.findById(coachDocId);
+    let userDoc: any = null;
+    const resolvedUserId = coachUserId || coachDoc?.userId;
+    if (resolvedUserId) {
+      userDoc = await User.findById(resolvedUserId);
+    }
+
+    if (Array.isArray(coachDoc?.scansCategories) && coachDoc.scansCategories.length > 0) {
+      return coachDoc.scansCategories;
+    }
+    if (Array.isArray(userDoc?.scansCategories) && userDoc.scansCategories.length > 0) {
+      return userDoc.scansCategories;
+    }
+
+    const names = [
+      coachDoc?.coachName,
+      userDoc?.name,
+    ].filter(Boolean).map((n) => n!.toLowerCase().trim().replace(/\s+/g, " "));
+
+    const emails = [
+      userDoc?.email,
+      userDoc?.tmsEmail,
+    ].filter(Boolean).map((e) => e!.toLowerCase().trim());
+
+    const phones = [
+      coachDoc?.phoneNumber,
+      userDoc?.phoneNumber,
+    ].filter(Boolean).map((p) => p!.replace(/\D/g, ""));
+
+    const idStrings = new Set<string>();
+    if (coachDocId) idStrings.add(coachDocId.toString());
+    if (resolvedUserId) idStrings.add(resolvedUserId.toString());
+    if (coachDoc?.userId) idStrings.add(coachDoc.userId.toString());
+
+    const isHanaAbaza =
+      names.some((n) => n === "hana abaza" || n.includes("abaza")) ||
+      emails.some((e) => e === "hhanaabaza@gmail.com") ||
+      phones.some((p) => p.endsWith("1222161664")) ||
+      idStrings.has("6a2e4ab4df68bd7a2cf2163a") ||
+      idStrings.has("69e6764f28c5113f3b4e6f51") ||
+      idStrings.has("6aa83752f491eb785ab39653");
+
+    if (isHanaAbaza) {
+      return ["FUNCTIONAL_TRAINING"];
+    }
+
+    const isHanaRashwan =
+      names.some((n) => n === "hana rashwan" || n.includes("rashwan")) ||
+      emails.some((e) => e === "hanarashwan@aucegypt.edu") ||
+      phones.some((p) => p.endsWith("1001061010")) ||
+      idStrings.has("69e88f6554d83d6549339c53") ||
+      idStrings.has("69e6765128c5113f3b4e6f69");
+
+    if (isHanaRashwan) {
+      return ["STUDIO"];
+    }
+
+    return [];
+  }
+
+  static async getScans(
+    coachDocId: Types.ObjectId,
+    date: Date,
+    coachUserId?: Types.ObjectId
+  ): Promise<any[]> {
     // Resolve all coach lookup IDs (handles multi-coach and composite coach docs)
     const { objectIds, stringIds } = await this.getCoachLookupIds(coachDocId);
     const assignedIds = new Set([
@@ -1086,11 +1163,33 @@ export class CoachService {
     const dayStart = startOfDateCairo(date);
     const dayEnd   = endOfDateCairo(date);
 
+    // Resolve extra categories for managing coaches (e.g. Hana Abaza -> FUNCTIONAL_TRAINING, Hana Rashwan -> STUDIO)
+    const extraCategories = await this.getCoachExtraScansCategories(coachDocId, coachUserId);
+    let extraClassIds: Types.ObjectId[] = [];
+    if (extraCategories.length > 0) {
+      const categoryFilters = extraCategories.map((cat) => {
+        if (/^functional/i.test(cat)) {
+          return /^(FUNCTIONAL_TRAINING|FUNCTIONAL TRAINING)$/i;
+        }
+        if (/^studio/i.test(cat)) {
+          return /^STUDIO$/i;
+        }
+        return new RegExp(`^${escapeRegex(cat)}$`, "i");
+      });
+      const matchingClasses = await Class.find({ category: { $in: categoryFilters } }).select("_id");
+      extraClassIds = matchingClasses.map((c) => c._id as Types.ObjectId);
+    }
+
+    const orClauses: any[] = [
+      { coachId: { $in: objectIds } },
+      { coachId: { $in: stringIds } },
+    ];
+    if (extraClassIds.length > 0) {
+      orClauses.push({ cid: { $in: extraClassIds } });
+    }
+
     const scheduledClasses = await ScheduledClass.find({
-      $or: [
-        { coachId: { $in: objectIds } },
-        { coachId: { $in: stringIds } },
-      ],
+      $or: orClauses,
       startTime: { $gte: dayStart, $lt: dayEnd },
     })
       .populate<{ "scans.uid": any }>("scans.uid")
@@ -1187,7 +1286,7 @@ export class CoachService {
         .filter(Boolean) as { id: string; name: string }[];
       const allCoachNames = coaches.map((c) => c.name).join(", ");
       const matchingCoach = coaches.find((c) => assignedIds.has(c.id));
-      const sessionCoachName = matchingCoach ? matchingCoach.name : (viewerCoachName || (coaches[0]?.name ?? "Coach"));
+      const sessionCoachName = matchingCoach ? matchingCoach.name : (allCoachNames || coaches[0]?.name || viewerCoachName || "Coach");
 
       const totalBookedCount = sc.bookedMembers.length + classNonUserBookings.length;
       const totalCapacity = sc.availableSlots + totalBookedCount;
@@ -1256,7 +1355,22 @@ export class CoachService {
     const isAssigned = (scheduledClass.coachId || []).some(
       (id) => assignedIds.has(id.toString())
     );
-    if (!isAssigned) {
+
+    // Check if coach is a managing coach with extra category access for this class
+    const extraCategories = await this.getCoachExtraScansCategories(coachDocId, confirmedByUserId);
+    let hasCategoryAccess = false;
+    if (extraCategories.length > 0 && scheduledClass.cid) {
+      const cls = await Class.findById(scheduledClass.cid);
+      if (cls && cls.category) {
+        hasCategoryAccess = extraCategories.some((cat) => {
+          if (/^functional/i.test(cat)) return /^(FUNCTIONAL_TRAINING|FUNCTIONAL TRAINING)$/i.test(cls.category);
+          if (/^studio/i.test(cat)) return /^STUDIO$/i.test(cls.category);
+          return cat.toLowerCase() === cls.category.toLowerCase();
+        });
+      }
+    }
+
+    if (!isAssigned && !hasCategoryAccess) {
       throw new ForbiddenError(
         "COACH_NOT_ASSIGNED",
         "You are not assigned to this scheduled class"
@@ -1484,6 +1598,8 @@ export class CoachService {
     const { query: ptPkgQuery, objectIds, stringIds } =
       await this.buildCoachPtPackageQuery(coachDocId, coachUserId);
 
+    const extraCategories = await this.getCoachExtraScansCategories(coachDocId, coachUserId);
+
     const [ptCount, classCount] = await Promise.all([
       Package.countDocuments(ptPkgQuery),
       ScheduledClass.countDocuments({
@@ -1502,7 +1618,8 @@ export class CoachService {
       branchName,
       branchLocation,
       hasPtSessions: ptCount > 0,
-      hasScheduledClasses: classCount > 0,
+      hasScheduledClasses: classCount > 0 || extraCategories.length > 0,
+      scansCategories: extraCategories,
     };
   }
 
@@ -1519,7 +1636,7 @@ export class CoachService {
     const [schedule, scans, ptScans, openTicketCount, unreadNotifications, ptAlerts] =
       await Promise.all([
         this.getSchedule(coachDocId, weekStart),
-        this.getScans(coachDocId, todayUtc),
+        this.getScans(coachDocId, todayUtc, coachUserId),
         this.getPtAttendance(coachDocId, todayUtc),
         Ticket.countDocuments({
           createdBy: coachUserId,
