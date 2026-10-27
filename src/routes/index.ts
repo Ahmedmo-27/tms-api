@@ -7,6 +7,7 @@ import exposedRoutes from "./exposed-routes";
 import feedRoutes from "./feed-routes"
 import coachRoutes from "./coach-routes"
 import financeRoutes from "./finance-routes";
+import salesRoutes from "./sales-routes";
 
 const router = Router();
 
@@ -18,6 +19,7 @@ router.use("/feed", feedRoutes)
 router.use("/external", exposedRoutes);
 router.use("/coach", coachRoutes);
 router.use("/finance", financeRoutes);
+router.use("/sales", salesRoutes);
 // /api/coach is available via app.use("/api", router) → /api/coach (no double mount)
 
 export default router;

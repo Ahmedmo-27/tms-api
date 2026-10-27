@@ -651,7 +651,8 @@ adminRoutes.delete(
 adminRoutes.get(
   "/locations",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "accountant"]),
+  // sales_manager reads branches to filter sold packages by branch.
+  authorizeUser(["management", "branch_admin", "accountant", "sales_manager"]),
   getLocation
 );
 adminRoutes.post(

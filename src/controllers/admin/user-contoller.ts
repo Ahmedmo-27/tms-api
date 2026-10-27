@@ -209,6 +209,8 @@ export const createUser = asyncHandler(
       "managing_coach",
       "mailer",
       "accountant",
+      "sales",
+      "sales_manager",
     ];
     if (!validRoles.includes(role)) {
       throw new BadRequestError("INVALID_ROLE", `Role '${role}' is not valid`);
@@ -410,6 +412,8 @@ export const updateUser = asyncHandler(
         "managing_coach",
         "mailer",
         "accountant",
+        "sales",
+        "sales_manager",
       ];
       if (!validRoles.includes(role)) {
         throw new BadRequestError("INVALID_ROLE", `Role '${role}' is not valid`);

@@ -101,6 +101,12 @@ export interface IMemberPackageData {
   adjustmentHistory?: IAdjustmentRecord[];
   freezeInfo?: IFreezeInfo;
   locationId?: Types.ObjectId;
+  /** Sales account (User with role "sales"/"sales_manager") credited with this sale. */
+  soldBy?: Types.ObjectId | null;
+  /** When the sales attribution was last set or cleared. */
+  soldByAssignedAt?: Date | null;
+  /** Staff account that set the current attribution; null when set at sale time. */
+  soldByAssignedBy?: Types.ObjectId | null;
 }
 
 export interface IMemberBookings {
@@ -195,7 +201,8 @@ interface IMemberstatics {
     endDate: string,
     session: ClientSession,
     classRestrictions?: IClassRestrictionRecord[],
-    locationId?: string
+    locationId?: string,
+    soldBy?: string | null
   ): Promise<void>;
   /**
    * Idempotent package attach for staged/transfer flows.
@@ -210,7 +217,8 @@ interface IMemberstatics {
     endDate: string,
     session: ClientSession,
     classRestrictions?: IClassRestrictionRecord[],
-    locationId?: string
+    locationId?: string,
+    soldBy?: string | null
   ): Promise<boolean>;
   hasPackageOnStartDay(
     uid: string,
@@ -370,6 +378,21 @@ const MemberPackageSchema: Schema = new Schema({
     ref: "Location",
     default: null,
   },
+  // Sales attribution — who sold this package to the member.
+  soldBy: {
+    type: Schema.Types.ObjectId,
+    ref: "User",
+    default: null,
+  },
+  soldByAssignedAt: {
+    type: Date,
+    default: null,
+  },
+  soldByAssignedBy: {
+    type: Schema.Types.ObjectId,
+    ref: "User",
+    default: null,
+  },
 });
 
 const BookingSchema = new Schema({
@@ -415,6 +438,8 @@ const MemberSchema: Schema<IMember, IMemberModel, IMemberMethods> = new Schema({
 });
 
 MemberSchema.index({ uid: 1 }, { unique: true });
+// Sales attribution addresses a single sold package by its subdocument id.
+MemberSchema.index({ "packages._id": 1 });
 
 MemberSchema.static(
   "saveDropIn",
@@ -1786,7 +1811,8 @@ MemberSchema.static(
     endDate: string,
     session: ClientSession,
     classRestrictions?: IClassRestrictionRecord[],
-    locationId?: string
+    locationId?: string,
+    soldBy?: string | null
   ): Promise<void> {
     const added = await (this as IMemberModel).addPackageIfAbsent(
       uid,
@@ -1797,7 +1823,8 @@ MemberSchema.static(
       endDate,
       session,
       classRestrictions,
-      locationId
+      locationId,
+      soldBy
     );
     if (!added) {
       throw new ConflictError("PACKAGE_ALREADY_ADDED", "Package already added");
@@ -1839,7 +1866,8 @@ MemberSchema.static(
     endDate: string,
     session: ClientSession,
     classRestrictions?: IClassRestrictionRecord[],
-    locationId?: string
+    locationId?: string,
+    soldBy?: string | null
   ): Promise<boolean> {
     const catalogPkg = await Package.findById(pkgId).session(session || null);
     const allowedFreezeDays = catalogPkg ? resolvePackageAllowedFreezeDays(catalogPkg) : 0;
@@ -1869,6 +1897,8 @@ MemberSchema.static(
             remainingClasses: numberOfSessions,
             classRestrictionsRecord: classRestrictions,
             locationId: locationId ? new Types.ObjectId(locationId) : null,
+            soldBy: soldBy ? new Types.ObjectId(soldBy) : null,
+            soldByAssignedAt: soldBy ? new Date() : null,
             freezeInfo: {
               isFrozen: false,
               allowedFreezeDays,

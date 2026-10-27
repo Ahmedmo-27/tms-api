@@ -396,6 +396,7 @@ export const subMemberToPackage = asyncHandler(async function (
     amount,
     note,
     pendingDeduction,
+    soldBy,
   } = req.body;
   const targetLocationId = resolveLocationIdForWrite(req);
   const io = req.app.get("io");
@@ -410,6 +411,7 @@ export const subMemberToPackage = asyncHandler(async function (
     io,
     targetLocationId,
     pendingDeduction === true || pendingDeduction === "true",
+    typeof soldBy === "string" && soldBy ? soldBy : null,
   );
   new SuccessResponse("Package Added!").send(res);
 });

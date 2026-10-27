@@ -29,6 +29,7 @@ import {
 } from "../utils/matcha-branch";
 import { resolveAppPackageLocationId } from "../utils/app-package-location";
 import Payment from "../models/payment";
+import { SalesService } from "./sales-service";
 
 export class SubscriptionsService {
   /** Same catalog package + Cairo start day already on the member. */
@@ -103,6 +104,7 @@ export class SubscriptionsService {
     io?: SocketIOServer,
     locationId?: string,
     pendingDeduction = false,
+    soldBy?: string | null,
   ) {
     if (!uid) {
       throw new BadRequestError("MEMBER_ID_REQUIRED", "Member ID is required");
@@ -167,6 +169,9 @@ export class SubscriptionsService {
     }
     const packageId = new Types.ObjectId(pkgId);
     const endDate = getPackageEndDate(startDate, pkg).toISOString();
+    // Sales attribution is optional at the point of sale and can be set or
+    // corrected later from the sales dashboard.
+    const salesAccountId = await SalesService.resolveSalesAccountId(soldBy);
 
     let restrictions: IClassRestrictionRecord[];
 
@@ -239,7 +244,8 @@ export class SubscriptionsService {
         endDate,
         session,
         restrictions,
-        locationId
+        locationId,
+        salesAccountId ? salesAccountId.toString() : null
       );
       if (pendingDeduction) {
         await Member.pushAdjustmentRecord(
