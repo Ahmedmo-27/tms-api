@@ -110,7 +110,7 @@ export const getScans = asyncHandler(async (req: Request, res: Response) => {
     date = new Date();
   }
 
-  const scans = await CoachService.getScans(coachReq.coachDocId, date);
+  const scans = await CoachService.getScans(coachReq.coachDocId, date, coachReq.coachId);
   return new SuccessResponse("Scans fetched", scans).send(res);
 });
 

@@ -718,7 +718,8 @@ adminRoutes.delete(
 adminRoutes.get(
   "/locations",
   authenticateUser,
-  authorizeUser(["management", "branch_admin", "accountant"]),
+  // sales_manager reads branches to filter sold packages by branch.
+  authorizeUser(["management", "branch_admin", "accountant", "sales_manager"]),
   getLocation
 );
 adminRoutes.post(
@@ -974,28 +975,28 @@ adminRoutes.patch(
 adminRoutes.get(
   "/sheet",
   authenticateUser,
-  authorizeUser(["management", "branch_admin"]),
+  authorizeUser(["management", "accountant"]),
   getSheetDay
 );
 
 adminRoutes.get(
   "/sheet/member-eligibility",
   authenticateUser,
-  authorizeUser(["management", "branch_admin"]),
+  authorizeUser(["management", "accountant"]),
   getSheetMemberEligibility
 );
 
 adminRoutes.post(
   "/sheet/commit",
   authenticateUser,
-  authorizeUser(["management", "branch_admin"]),
+  authorizeUser(["management"]),
   commitSheetRows
 );
 
 adminRoutes.post(
   "/sheet/import",
   authenticateUser,
-  authorizeUser(["management", "branch_admin"]),
+  authorizeUser(["management"]),
   importSheetDay
 );
 

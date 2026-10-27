@@ -2228,8 +2228,21 @@ export class BookingsService {
       await ScheduledClass.removeMemberFromWaitlist(scid, uid);
     }
     if (waitlistEntry) {
+      const wasNotified = waitlistEntry.status === "NOTIFIED";
       waitlistEntry.status = "CANCELLED";
       await waitlistEntry.save();
+
+      if (wasNotified) {
+        await Reservation.updateMany(
+          {
+            sessionId: new Types.ObjectId(scid),
+            userId: new Types.ObjectId(uid),
+            status: "ACTIVE",
+          },
+          { status: "CANCELLED" }
+        );
+        await WaitlistService.processWaitlist(scid);
+      }
     }
   }
 
@@ -2258,23 +2271,25 @@ export class BookingsService {
     }
 
     const seenUids = new Set<string>();
-    const result: any[] = [];
+    const intermediateList: any[] = [];
 
     if (Array.isArray(waitlistEntries)) {
       for (const entry of waitlistEntries) {
         const u = entry.userId as any;
         const uidStr = u?._id ? u._id.toString() : (entry.userId ? entry.userId.toString() : "");
         if (uidStr) seenUids.add(uidStr);
-        result.push({
+        intermediateList.push({
           _id: entry._id ? entry._id.toString() : uidStr,
           uid: uidStr,
           name: u?.name || "Unknown Member",
           phone: u?.phoneNumber || u?.phone || "",
           phoneNumber: u?.phoneNumber || u?.phone || "",
           status: entry.status || "WAITING",
-          position: entry.position ?? result.length + 1,
+          position: entry.position ?? intermediateList.length + 1,
           addedAt: entry.joinedAt,
           isManual: Boolean(entry.isManual),
+          reservationExpiresAt: entry.reservationExpiresAt,
+          notifiedAt: entry.notifiedAt,
         });
       }
     }
@@ -2285,20 +2300,43 @@ export class BookingsService {
         const uidStr = u?._id ? u._id.toString() : (typeof m.uid === "string" ? m.uid : m.uid?.toString?.() || "");
         if (uidStr && !seenUids.has(uidStr)) {
           seenUids.add(uidStr);
-          result.push({
+          intermediateList.push({
             _id: (m as any)._id ? (m as any)._id.toString() : uidStr,
             uid: uidStr,
             name: u?.name || "Unknown Member",
             phone: u?.phoneNumber || u?.phone || "",
             phoneNumber: u?.phoneNumber || u?.phone || "",
             status: "WAITING",
-            position: result.length + 1,
+            position: intermediateList.length + 1,
             addedAt: m.addedAt,
             isManual: Boolean((m as any).isManual ?? true),
+            reservationExpiresAt: undefined,
+            notifiedAt: undefined,
           });
         }
       }
     }
+
+    const classId = scheduledClass.cid?._id
+      ? scheduledClass.cid._id.toString()
+      : scheduledClass.cid.toString();
+
+    const result = await Promise.all(
+      intermediateList.map(async (item) => {
+        let hasEligiblePackage = false;
+        if (item.uid) {
+          hasEligiblePackage = await WaitlistService.checkMemberPackageEligibility(
+            item.uid,
+            classId,
+            scheduledClass.startTime
+          );
+        }
+        return {
+          ...item,
+          hasEligiblePackage,
+        };
+      })
+    );
 
     return result;
   }

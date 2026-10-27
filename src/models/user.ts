@@ -26,6 +26,7 @@ export interface IUser extends Document {
   hasRamadanPackage?: boolean;
   tmsEmail?: string;
   sendAsName?: string;
+  scansCategories?: string[];
   createdAt: Date;
 }
 
@@ -99,7 +100,7 @@ const UserSchema: Schema<IUser, UserModel, IUserMethods> = new Schema({
     type: String,
     required: true,
     enum: {
-      values: ["member", "user", "admin", "management", "branch_admin", "coach", "managing_coach", "mailer", "accountant"],
+      values: ["member", "user", "admin", "management", "branch_admin", "coach", "managing_coach", "mailer", "accountant", "sales", "sales_manager"],
       message: "{VALUE} is not a valid role",
     },
   },
@@ -132,6 +133,11 @@ const UserSchema: Schema<IUser, UserModel, IUserMethods> = new Schema({
     trim: true,
     lowercase: true,
     sparse: true,
+  },
+  scansCategories: {
+    type: [String],
+    default: undefined,
+    required: false,
   },
   sendAsName: {
     type: String,

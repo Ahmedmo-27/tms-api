@@ -74,7 +74,7 @@ const processLocations = async (locationsRaw: any) => {
 
 export const addClass = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
-    const { title, category, price, locations, location, points, allowDropIn } = req.body;
+    const { title, category, price, locations, location, points, allowDropIn, defaultDuration } = req.body;
     const finalLocationsRaw = locations !== undefined ? locations : location;
     if (
       finalLocationsRaw === undefined ||
@@ -91,7 +91,27 @@ export const addClass = asyncHandler(
         "LOCATION_REQUIRED",
         "At least one location is required",
       );
-    const cls = new Class({ title, category, price, locations: finalLocations, points, allowDropIn });
+
+    const parsedDefaultDuration =
+      defaultDuration !== undefined && defaultDuration !== null && defaultDuration !== ""
+        ? Number(defaultDuration)
+        : undefined;
+    if (parsedDefaultDuration !== undefined && (isNaN(parsedDefaultDuration) || parsedDefaultDuration <= 0)) {
+      throw new BadRequestError(
+        "INVALID_DURATION",
+        "Default duration must be a positive number of minutes"
+      );
+    }
+
+    const cls = new Class({
+      title,
+      category,
+      price,
+      locations: finalLocations,
+      points,
+      allowDropIn,
+      defaultDuration: parsedDefaultDuration,
+    });
     await cls.save();
     clearFinanceCache();
     new SuccessResponse("Class Added!", cls).send(res);
@@ -146,8 +166,8 @@ export const updateClass = asyncHandler(async function (
   res: Response
 ): Promise<void> {
   const cid = req.params.cid;
-  const { title, category, price, location, locations, points, allowDropIn } = req.body;
-  const validUpdates = ["title", "category", "price", "location", "locations", "points", "allowDropIn"];
+  const { title, category, price, location, locations, points, allowDropIn, defaultDuration } = req.body;
+  const validUpdates = ["title", "category", "price", "location", "locations", "points", "allowDropIn", "defaultDuration"];
   const updates = Object.keys(req.body);
   const isValidUpdate = updates.every((update) =>
     validUpdates.includes(update)
@@ -166,12 +186,24 @@ export const updateClass = asyncHandler(async function (
     throw new BadRequestError("INVALID_PRICE", "Price must be a valid number");
   }
 
+  const parsedDefaultDuration =
+    defaultDuration !== undefined && defaultDuration !== null && defaultDuration !== ""
+      ? Number(defaultDuration)
+      : undefined;
+  if (parsedDefaultDuration !== undefined && (isNaN(parsedDefaultDuration) || parsedDefaultDuration <= 0)) {
+    throw new BadRequestError(
+      "INVALID_DURATION",
+      "Default duration must be a positive number of minutes"
+    );
+  }
+
   const updateData: any = {
     title,
     category,
     price: parsedPrice,
     points: points !== undefined && points !== null && points !== "" ? Number(points) : undefined,
     allowDropIn: allowDropIn !== undefined ? Boolean(allowDropIn) : undefined,
+    defaultDuration: parsedDefaultDuration,
   };
   if (finalLocations !== undefined) {
     updateData.locations = finalLocations;

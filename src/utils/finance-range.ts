@@ -127,6 +127,7 @@ export type SalesSegment =
   | "FUNCTIONAL_TRAINING"
   | "STUDIO"
   | "PERSONAL_TRAINING"
+  | "ONLINE_PERSONAL_TRAINING"
   | "PRE_POST_NATAL"
   | "MIXED"
   | "SPACE_MEMBERSHIP"
@@ -142,6 +143,7 @@ export const SALES_SEGMENTS: SalesSegment[] = [
   "FUNCTIONAL_TRAINING",
   "STUDIO",
   "PERSONAL_TRAINING",
+  "ONLINE_PERSONAL_TRAINING",
   "PRE_POST_NATAL",
   "MIXED",
   "SPACE_MEMBERSHIP",
@@ -154,13 +156,28 @@ export const SALES_SEGMENTS: SalesSegment[] = [
   "OTHER",
 ];
 
+/**
+ * Packages carry no online/offline flag, so online PT is recognised the same
+ * way the daily sheet does it: by "online" in the package name
+ * (e.g. "1 month online PT with Salma").
+ */
+export function isOnlinePackageName(packageName?: string | null): boolean {
+  return String(packageName ?? "").toLowerCase().includes("online");
+}
+
 export function paymentSegment(
   purpose: string,
   packageCategory?: string | null,
+  packageName?: string | null,
 ): SalesSegment {
   switch (purpose) {
     case "PACKAGE":
     case "NON_USER_PACKAGE":
+      if (packageCategory === "PERSONAL_TRAINING") {
+        return isOnlinePackageName(packageName)
+          ? "ONLINE_PERSONAL_TRAINING"
+          : "PERSONAL_TRAINING";
+      }
       return (packageCategory &&
       (SALES_SEGMENTS as string[]).includes(packageCategory)
         ? packageCategory

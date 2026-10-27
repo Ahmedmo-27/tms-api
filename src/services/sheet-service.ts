@@ -1072,7 +1072,7 @@ export class SheetService {
 
     const isReformer =
       /reformer/i.test(catalog.title || "") || /reformer/i.test(block.title || "");
-    const durationMinutes = isReformer ? 50 : 60;
+    const durationMinutes = (catalog as any).defaultDuration ?? (isReformer ? 50 : 60);
     const { start, end } = classSessionTimes(
       dateKey,
       parsed.hours,

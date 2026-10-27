@@ -76,6 +76,7 @@ export interface PtAchievementReport {
     expiringSoon: number;
   };
   coaches: CoachAchievementRow[];
+  expiringSoonPackages?: ExpiringPackageItem[];
   selectedCoach?: {
     coachId: string;
     coachName: string;
@@ -83,6 +84,22 @@ export interface PtAchievementReport {
     deliveredSessions: DeliveredSessionItem[];
     activeClients: ClientBalanceItem[];
   };
+}
+
+export interface ExpiringPackageItem {
+  memberId: string;
+  memberName: string;
+  phone: string;
+  coachId: string;
+  coachName: string;
+  packageName: string;
+  packageId: string;
+  remainingSessions: number;
+  pkgEndDate: string;
+  daysUntilExpiry: number;
+  isLowBalance: boolean;
+  isExpiringSoon: boolean;
+  status: string;
 }
 
 export interface CoachAchievementRow {
@@ -313,6 +330,8 @@ export class PtAchievementService {
 
     // 4. In-memory aggregation
     const coachRows: CoachAchievementRow[] = [];
+    const rawExpiringPackages: ExpiringPackageItem[] = [];
+    const seenExpiringKey = new Set<string>();
     const globalActiveMemberIds = new Set<string>();
     const globalLowBalanceMemberIds = new Set<string>();
     const globalExpiringSoonMemberIds = new Set<string>();
@@ -412,6 +431,28 @@ export class PtAchievementService {
           if (isExp && uidStr) {
             coachExpiringSoonMemberUids.add(uidStr);
             globalExpiringSoonMemberIds.add(uidStr);
+          }
+
+          if (uidStr && (isLow || isExp)) {
+            const expKey = `${uidStr}_${pkg._id ? pkg._id.toString() : pkg.pkgId.toString()}_${cm.coachDocIdStr}`;
+            if (!seenExpiringKey.has(expKey)) {
+              seenExpiringKey.add(expKey);
+              rawExpiringPackages.push({
+                memberId: uidStr,
+                memberName: "",
+                phone: "",
+                coachId: cm.coachDocIdStr,
+                coachName: cm.coach.coachName,
+                packageId: pkg.pkgId.toString(),
+                packageName: pkg.name || ptPkgMap.get(pkg.pkgId.toString())?.name || "PT Package",
+                remainingSessions: rem,
+                pkgEndDate: cairoDateKey(pkg.pkgEndDate),
+                daysUntilExpiry: daysUntil,
+                isLowBalance: isLow,
+                isExpiringSoon: isExp,
+                status: pkg.status,
+              });
+            }
           }
 
           if (isSelected && uidStr) {
@@ -563,6 +604,38 @@ export class PtAchievementService {
       }
     }
 
+    // Filter and enrich expiring soon packages
+    const expiringPackagesToReturn = isSingleCoachRequest
+      ? rawExpiringPackages.filter((item) => item.coachId === params.coachId)
+      : rawExpiringPackages;
+
+    const neededExpiringUserIds = new Set<string>();
+    for (const item of expiringPackagesToReturn) {
+      if (item.memberId) neededExpiringUserIds.add(item.memberId);
+    }
+
+    if (neededExpiringUserIds.size > 0) {
+      const expiringUsers = await User.find({
+        _id: { $in: Array.from(neededExpiringUserIds).map((id) => new Types.ObjectId(id)) },
+      }).select("name phoneNumber").lean();
+      const expUserMap = new Map<string, { name: string; phoneNumber: string }>();
+      for (const u of expiringUsers as any[]) {
+        expUserMap.set(u._id.toString(), {
+          name: u.name || "",
+          phoneNumber: u.phoneNumber || "",
+        });
+      }
+      for (const item of expiringPackagesToReturn) {
+        const u = expUserMap.get(item.memberId);
+        item.memberName = u?.name || "Unknown";
+        item.phone = u?.phoneNumber || "";
+      }
+    }
+
+    expiringPackagesToReturn.sort(
+      (a, b) => a.daysUntilExpiry - b.daysUntilExpiry || a.remainingSessions - b.remainingSessions
+    );
+
     // Sort coaches by total sessions delivered desc, then revenue desc
     coachRows.sort((a, b) => b.sessions - a.sessions || b.boughtRevenue - a.boughtRevenue);
 
@@ -584,6 +657,7 @@ export class PtAchievementService {
         expiringSoon: globalExpiringSoonMemberIds.size,
       },
       coaches: coachRows,
+      expiringSoonPackages: expiringPackagesToReturn,
       ...(selectedCoachDetails ? { selectedCoach: selectedCoachDetails } : {}),
     };
 

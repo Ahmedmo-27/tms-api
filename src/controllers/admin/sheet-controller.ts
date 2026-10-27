@@ -1,7 +1,9 @@
 import { Request, Response } from "express";
+import { Types } from "mongoose";
 import asyncHandler from "../../utils/asyncHandler";
 import { SuccessResponse } from "../../core/ApiResponse";
 import { BadRequestError } from "../../core/ApiError";
+import Location from "../../models/location";
 import {
   resolveLocationFilter,
   resolveLocationIdForWrite,
@@ -14,7 +16,16 @@ export const getSheetDay = asyncHandler(async function (
   res: Response,
 ): Promise<void> {
   const date = (req.query.date as string) || cairoDateKey(new Date());
-  const locationId = resolveLocationFilter(req);
+  let locationId = resolveLocationFilter(req);
+  if (!locationId && req.query.locationId !== "all") {
+    const cairoBranch =
+      (await Location.findOne({ branchName: { $regex: /^cairo$/i } })) ||
+      (await Location.findOne({ branchName: { $regex: /cairo/i } })) ||
+      (await Location.findOne({ location: { $regex: /cairo/i } }));
+    if (cairoBranch) {
+      locationId = (cairoBranch._id as Types.ObjectId).toString();
+    }
+  }
   const data = await SheetService.getDay(date, locationId);
   new SuccessResponse("Sheet day loaded", data).send(res);
 });

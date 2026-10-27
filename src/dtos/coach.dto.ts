@@ -129,6 +129,7 @@ export interface CoachMeDto {
   branchLocation: string | null;
   hasPtSessions: boolean;
   hasScheduledClasses: boolean;
+  scansCategories?: string[];
 }
 
 export interface TodaySessionSummaryDto {

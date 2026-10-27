@@ -4,6 +4,7 @@ import Member from "../../models/member";
 import User from "../../models/user";
 import DeductionLog from "../../models/deductionLog";
 import DailyAttendance from "../../models/dailyAttendance";
+import Payment from "../../models/payment";
 import { isUnlimitedSpaceAccess } from "../../models/package";
 import { BadRequestError, ConflictError, NotFoundError } from "../../core/ApiError";
 import { SuccessResponse } from "../../core/ApiResponse";
@@ -169,7 +170,7 @@ export const getMember = asyncHandler(async function (
     .map((m) => (m.uid as any)?._id)
     .filter((id): id is Types.ObjectId => Boolean(id));
 
-  const [deductionLogs, dailyDocs] =
+  const [deductionLogs, dailyDocs, memberPayments] =
     fetchedUids.length > 0
       ? await Promise.all([
           DeductionLog.find({ memberId: { $in: fetchedUids } })
@@ -181,8 +182,11 @@ export const getMember = asyncHandler(async function (
               { "openGymAttendance.uid": { $in: fetchedUids } },
             ],
           }).lean(),
+          Payment.find({ uid: { $in: fetchedUids }, purpose: "PACKAGE", isRefunded: { $ne: true } })
+            .select("uid pkgId amount paymentTime")
+            .lean(),
         ])
-      : [[], []];
+      : [[], [], []];
 
   const logsByMember = new Map<string, any[]>();
   for (const log of deductionLogs) {
@@ -191,6 +195,16 @@ export const getMember = asyncHandler(async function (
     const list = logsByMember.get(key) ?? [];
     list.push(log);
     logsByMember.set(key, list);
+  }
+
+  // Group package payments by member uid
+  const paymentsByMember = new Map<string, any[]>();
+  for (const pay of memberPayments) {
+    const key = pay.uid?.toString();
+    if (!key) continue;
+    const list = paymentsByMember.get(key) ?? [];
+    list.push(pay);
+    paymentsByMember.set(key, list);
   }
 
   const dailyPtByMember = new Map<string, any[]>();
@@ -683,6 +697,33 @@ export const getMember = asyncHandler(async function (
     );
     // Exclude group classes from ptAttendance; classes belong to package attendance and member bookings/attendance
     m.ptAttendance = ptList.filter((a: any) => a?.type !== "CLASS");
+
+    // Attach the actual paid amount from payment records to each package
+    const memberPaymentList = paymentsByMember.get(memberUidStr) ?? [];
+    for (const p of pkgs) {
+      const pPkgIdStr = getPkgIdStr(p);
+      const startMs = p.pkgStartDate ? new Date(p.pkgStartDate).getTime() : NaN;
+      // Find all payments for this package catalog id
+      const candidates = memberPaymentList.filter(
+        (pay: any) => pay.pkgId?.toString() === pPkgIdStr
+      );
+      if (candidates.length === 0) continue;
+      // Pick the payment whose paymentTime is closest to (and not after) pkgStartDate + 7 days
+      let best: any = null;
+      let bestDiff = Infinity;
+      const windowMs = 7 * 24 * 60 * 60 * 1000; // 7 days
+      for (const pay of candidates) {
+        const payMs = new Date(pay.paymentTime).getTime();
+        const diff = isNaN(startMs) ? Math.abs(payMs - Date.now()) : Math.abs(payMs - startMs);
+        if (diff < bestDiff && (isNaN(startMs) || payMs <= startMs + windowMs)) {
+          bestDiff = diff;
+          best = pay;
+        }
+      }
+      if (best) {
+        p.paidAmount = best.amount;
+      }
+    }
 
     return m;
   });

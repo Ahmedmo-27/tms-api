@@ -222,6 +222,8 @@ export class SchedulerService {
             position: entry.position ?? (waitlistMap.get(sid)!.length + 1),
             addedAt: entry.joinedAt,
             isManual: Boolean(entry.isManual),
+            reservationExpiresAt: entry.reservationExpiresAt,
+            notifiedAt: entry.notifiedAt,
           });
         }
       }
@@ -389,8 +391,9 @@ export class SchedulerService {
         },
       );
 
-    const isReformer = /reformer/i.test(cls.title || "");
-    const defaultDurationMs = (isReformer ? 50 : 60) * 60 * 1000;
+    const defaultDurationMinutes =
+      cls.defaultDuration ?? (/reformer/i.test(cls.title || "") ? 50 : 60);
+    const defaultDurationMs = defaultDurationMinutes * 60 * 1000;
     const resolvedEndTime =
       endTime ||
       new Date(new Date(startTime).getTime() + defaultDurationMs).toISOString();

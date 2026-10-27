@@ -98,16 +98,29 @@ export function isManagementRole(role: string | undefined): boolean {
   return normalizeRole(role) === "management";
 }
 
-/** Roles that can read data across all branches (accountant is read-only). */
+export function isSalesManagerRole(role: string | undefined): boolean {
+  return normalizeRole(role) === "sales_manager";
+}
+
+/**
+ * Roles that can read data across all branches.
+ * accountant is read-only; sales_manager reads sold packages across branches
+ * and may only write the sales attribution on them.
+ */
 export function canViewAllBranches(role: string | undefined): boolean {
   const normalized = normalizeRole(role);
-  return normalized === "management" || normalized === "accountant";
+  return (
+    normalized === "management" ||
+    normalized === "accountant" ||
+    normalized === "sales_manager"
+  );
 }
 
 /**
  * Resolves location filter for list/query endpoints.
  * branch_admin: always forced to their user.locationId (client cannot override).
- * management / accountant: optional ?locationId= or body.locationId; null = all branches.
+ * management / accountant / sales_manager: optional ?locationId= or body.locationId;
+ * null = all branches.
  */
 export function resolveLocationFilter(req: Request): string | null {
   const user = (req as any).user;

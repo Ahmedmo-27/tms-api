@@ -66,6 +66,21 @@ describe("paymentSegment", () => {
     expect(paymentSegment("WALKIN")).toBe("WALKIN");
     expect(paymentSegment("SOMETHING")).toBe("OTHER");
   });
+
+  it("splits personal training into offline and online by package name", () => {
+    expect(paymentSegment("PACKAGE", "PERSONAL_TRAINING", "10 PT with Salma")).toBe(
+      "PERSONAL_TRAINING",
+    );
+    expect(
+      paymentSegment("PACKAGE", "PERSONAL_TRAINING", "1 month online PT with Salma"),
+    ).toBe("ONLINE_PERSONAL_TRAINING");
+    expect(
+      paymentSegment("NON_USER_PACKAGE", "PERSONAL_TRAINING", "8 Online Personal Training"),
+    ).toBe("ONLINE_PERSONAL_TRAINING");
+    expect(paymentSegment("PACKAGE", "PERSONAL_TRAINING")).toBe("PERSONAL_TRAINING");
+    // "online" on a non-PT package stays in its own category.
+    expect(paymentSegment("PACKAGE", "STUDIO", "Online Studio")).toBe("STUDIO");
+  });
 });
 
 describe("helpers", () => {
