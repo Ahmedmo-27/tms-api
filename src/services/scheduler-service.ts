@@ -391,8 +391,9 @@ export class SchedulerService {
         },
       );
 
-    const isReformer = /reformer/i.test(cls.title || "");
-    const defaultDurationMs = (isReformer ? 50 : 60) * 60 * 1000;
+    const defaultDurationMinutes =
+      cls.defaultDuration ?? (/reformer/i.test(cls.title || "") ? 50 : 60);
+    const defaultDurationMs = defaultDurationMinutes * 60 * 1000;
     const resolvedEndTime =
       endTime ||
       new Date(new Date(startTime).getTime() + defaultDurationMs).toISOString();

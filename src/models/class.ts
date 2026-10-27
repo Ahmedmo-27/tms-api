@@ -7,8 +7,8 @@ export interface IClass extends Document {
   locations: Types.ObjectId[];
   points?: number;
   allowDropIn: boolean;
+  defaultDuration?: number;
 }
-
 
 const ClassSchema = new Schema({
   title: {
@@ -40,6 +40,11 @@ const ClassSchema = new Schema({
   allowDropIn: {
     type: Boolean,
     default: true,
+  },
+  defaultDuration: {
+    type: Number,
+    required: false,
+    min: 1,
   },
 });
 
