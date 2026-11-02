@@ -118,6 +118,8 @@ export interface IMemberBookings {
   paymentId?: Types.ObjectId;
   /** Set once the "missed session" push notification has been claimed/sent */
   missedNotifiedAt?: Date;
+  pkgId?: Types.ObjectId;
+  pkgStartDate?: Date;
 }
 
 export interface IMember extends Document {
@@ -187,7 +189,9 @@ interface IMemberstatics {
     cid?: string,
     month?: string,
     source?: "MEMBER_CANCELLATION" | "FRONTDESK_CANCELLATION",
-    className?: string
+    className?: string,
+    points?: number,
+    attendanceDate?: Date
   ): Promise<void>;
   removeDropIn(
     uid: string,
@@ -416,6 +420,13 @@ const BookingSchema = new Schema({
     ref: "Payment",
   },
   missedNotifiedAt: {
+    type: Date,
+  },
+  pkgId: {
+    type: Schema.Types.ObjectId,
+    ref: "Package",
+  },
+  pkgStartDate: {
     type: Date,
   },
 });
@@ -694,9 +705,10 @@ MemberSchema.static(
         continue;
       }
 
-      if (pkg.remainingClasses <= 0) {
+      const requiredPoints = !isFree && !isWorkSpace ? Number(points) : 0;
+      if (pkg.remainingClasses < requiredPoints || pkg.remainingClasses <= 0) {
         skipReasons.push("remaining");
-        if (!isSpace) {
+        if (!isSpace && pkg.remainingClasses <= 0) {
           await this.updateOne(
             {
               uid,
@@ -742,10 +754,19 @@ MemberSchema.static(
       }
 
       if (!isFree && !isWorkSpace) {
-        await this.updateOne(
+        const updateRes = await this.updateOne(
           {
             uid,
             "bookings.scid": { $ne: new Types.ObjectId(scid) },
+            packages: {
+              $elemMatch: {
+                pkgId: new Types.ObjectId(pkg.pkgId),
+                pkgStartDate: new Date(pkg.pkgStartDate),
+                status: "ACTIVE",
+                pkgEndDate: { $gte: activeEndDateBound() },
+                remainingClasses: { $gte: points },
+              },
+            },
           },
           {
             $push: {
@@ -753,6 +774,8 @@ MemberSchema.static(
                 scid: new Types.ObjectId(scid),
                 bookingTime: new Date(),
                 isDropIn: false,
+                pkgId: new Types.ObjectId(pkg.pkgId),
+                pkgStartDate: new Date(pkg.pkgStartDate),
               },
             },
             $inc: { "packages.$[pkg].remainingClasses": -points },
@@ -770,11 +793,24 @@ MemberSchema.static(
             session,
           }
         );
+        if (updateRes.modifiedCount === 0) {
+          skipReasons.push("remaining");
+          continue;
+        }
       } else {
-        await this.updateOne(
+        const updateRes = await this.updateOne(
           {
             uid,
             "bookings.scid": { $ne: new Types.ObjectId(scid) },
+            packages: {
+              $elemMatch: {
+                pkgId: new Types.ObjectId(pkg.pkgId),
+                pkgStartDate: new Date(pkg.pkgStartDate),
+                status: "ACTIVE",
+                pkgEndDate: { $gte: activeEndDateBound() },
+                remainingClasses: { $gt: 0 },
+              },
+            },
           },
           {
             $push: {
@@ -782,6 +818,8 @@ MemberSchema.static(
                 scid: new Types.ObjectId(scid),
                 bookingTime: new Date(),
                 isDropIn: false,
+                pkgId: new Types.ObjectId(pkg.pkgId),
+                pkgStartDate: new Date(pkg.pkgStartDate),
               },
             },
           },
@@ -798,6 +836,10 @@ MemberSchema.static(
             session,
           }
         );
+        if (updateRes.modifiedCount === 0) {
+          skipReasons.push("remaining");
+          continue;
+        }
       }
       // deduct class from restriction record
       if (deductedRestriction) {
@@ -868,7 +910,8 @@ MemberSchema.static(
             packages: {
               $elemMatch: {
                 pkgId: new Types.ObjectId(pkg.pkgId),
-                remainingClasses: 0,
+                pkgStartDate: new Date(pkg.pkgStartDate),
+                remainingClasses: { $lte: 0 },
               },
             },
           },
@@ -881,7 +924,8 @@ MemberSchema.static(
             arrayFilters: [
               {
                 "pkg.pkgId": new Types.ObjectId(pkg.pkgId),
-                "pkg.remainingClasses": 0,
+                "pkg.pkgStartDate": new Date(pkg.pkgStartDate),
+                "pkg.remainingClasses": { $lte: 0 },
               },
             ],
             session,
@@ -954,7 +998,9 @@ MemberSchema.static(
     cid?: string,
     month?: string,
     source: "MEMBER_CANCELLATION" | "FRONTDESK_CANCELLATION" = "MEMBER_CANCELLATION",
-    className?: string
+    className?: string,
+    points: number = 1,
+    attendanceDate?: Date
   ): Promise<void> {
     logger.info("Removing booking from member", {
       uid,
@@ -1006,65 +1052,162 @@ MemberSchema.static(
         return;
       }
 
+      const memberDoc = await this.findOne({ uid }).session(session);
+      if (!memberDoc) return;
+
+      const targetBooking = memberDoc.bookings.find(
+        (b) => b.scid.toString() === scid
+      );
+
+      let chargedPkg: IMember["packages"][number] | undefined;
+
+      // 1. Direct identification from booking metadata
+      if (targetBooking?.pkgId && targetBooking?.pkgStartDate) {
+        chargedPkg = memberDoc.packages.find(
+          (p) =>
+            p.pkgId.toString() === targetBooking.pkgId!.toString() &&
+            new Date(p.pkgStartDate).getTime() ===
+              new Date(targetBooking.pkgStartDate!).getTime()
+        );
+      }
+
+      // 2. Deduction audit log matching
+      if (!chargedPkg) {
+        let latest = -Infinity;
+        for (const p of memberDoc.packages) {
+          if (!validPkgIds.includes(p.pkgId.toString())) continue;
+          for (const r of p.adjustmentHistory ?? []) {
+            const matches =
+              r.source === "BOOKING" &&
+              r.type === "DEDUCT" &&
+              (
+                (attendanceDate && r.attendanceDate && new Date(r.attendanceDate).getTime() === new Date(attendanceDate).getTime()) ||
+                (className && r.className === className)
+              );
+            if (matches && r.date) {
+              const t = new Date(r.date).getTime();
+              if (t > latest) {
+                latest = t;
+                chargedPkg = p;
+              }
+            }
+          }
+        }
+      }
+
+      // 3. Fallback to newest non-expired matching package
+      if (!chargedPkg) {
+        const activeCandidates = memberDoc.packages
+          .filter(
+            (p) =>
+              validPkgIds.includes(p.pkgId.toString()) &&
+              p.status !== "DELETED" &&
+              !isPackageExpired(p.pkgEndDate)
+          )
+          .sort(
+            (a, b) =>
+              new Date(b.pkgStartDate).getTime() - new Date(a.pkgStartDate).getTime()
+          );
+        chargedPkg = activeCandidates[0];
+      }
+
+      // 4. Ultimate fallback to newest matching package
+      if (!chargedPkg) {
+        const anyCandidates = memberDoc.packages
+          .filter(
+            (p) =>
+              validPkgIds.includes(p.pkgId.toString()) &&
+              p.status !== "DELETED"
+          )
+          .sort(
+            (a, b) =>
+              new Date(b.pkgStartDate).getTime() - new Date(a.pkgStartDate).getTime()
+          );
+        chargedPkg = anyCandidates[0];
+      }
+
+      if (!chargedPkg) {
+        // No package to refund, just remove the booking
+        await this.updateOne(
+          {
+            uid,
+            "bookings.scid": { $eq: new Types.ObjectId(scid) },
+          },
+          {
+            $pull: { bookings: { scid: new Types.ObjectId(scid) } },
+          },
+          {
+            session,
+          }
+        );
+        return;
+      }
+
+      const refundPoints = Number(points) > 0 ? Number(points) : 1;
+      const targetStartDate = new Date(chargedPkg.pkgStartDate);
+      const shouldReactivate =
+        chargedPkg.status !== "FROZEN" &&
+        !Boolean((chargedPkg as any).freezeInfo?.isFrozen) &&
+        !isPackageExpired(chargedPkg.pkgEndDate);
+
+      const updateOps: any = {
+        $pull: { bookings: { scid: new Types.ObjectId(scid) } },
+        $inc: { "packages.$[pkg].remainingClasses": refundPoints },
+      };
+      if (shouldReactivate) {
+        updateOps.$set = { "packages.$[pkg].status": "ACTIVE" };
+      }
+
       const member = await this.findOneAndUpdate(
         {
           uid,
           "bookings.scid": { $eq: new Types.ObjectId(scid) },
         },
-        {
-          $pull: { bookings: { scid: new Types.ObjectId(scid) } },
-          $inc: { "packages.$[pkg].remainingClasses": 1 },
-          $set: { "packages.$[pkg].status": "ACTIVE" },
-        },
+        updateOps,
         {
           arrayFilters: [
             {
-              "pkg.pkgId": {
-                $in: validPkgIds.map((id) => new Types.ObjectId(id)),
-              },
+              "pkg.pkgId": new Types.ObjectId(chargedPkg.pkgId),
+              "pkg.pkgStartDate": targetStartDate,
             },
           ],
           session,
           new: true,
         }
       );
-      // Push a cancellation refund record on each affected package
+
+      // Push cancellation refund record exclusively on the refunded package
       if (member) {
-        for (const pkgId of validPkgIds) {
-          const pkg = member.packages.find(
-            (p) => p.pkgId.toString() === pkgId
-          );
-          if (pkg) {
-            const cancellationLabel =
-              source === "FRONTDESK_CANCELLATION"
-                ? "Front-desk cancellation"
-                : "Member cancellation";
-            const refundReason = className
-              ? `${cancellationLabel}: ${className}`
-              : cancellationLabel;
-            await this.pushAdjustmentRecord(
-              uid,
-              pkgId,
-              pkg.pkgStartDate,
-              {
-                date: new Date(),
-                source,
-                type: "ADD",
-                amount: 1,
-                reason: refundReason,
-                className,
-              },
-              session
-            );
-          }
-        }
+        const cancellationLabel =
+          source === "FRONTDESK_CANCELLATION"
+            ? "Front-desk cancellation"
+            : "Member cancellation";
+        const refundReason = className
+          ? `${cancellationLabel}: ${className}`
+          : cancellationLabel;
+        await this.pushAdjustmentRecord(
+          uid,
+          chargedPkg.pkgId.toString(),
+          targetStartDate,
+          {
+            date: new Date(),
+            source,
+            type: "ADD",
+            amount: refundPoints,
+            reason: refundReason,
+            className,
+          },
+          session
+        );
       }
 
       // Check if a restriction exists and refund the class on the monthly record
-      // RESTRICTIONS ARE REFUNDED TO ACTIVE PACKAGES ONLY TO PREVENT BYPASSING MONTHLY LIMITS
       let updatedRestriction = false;
       member?.packages.forEach((pkg) => {
-        if (pkg.status === "ACTIVE") {
+        if (
+          pkg.pkgId.toString() === chargedPkg!.pkgId.toString() &&
+          new Date(pkg.pkgStartDate).getTime() === targetStartDate.getTime()
+        ) {
           pkg.classRestrictionsRecord?.forEach((cls) => {
             if (cls.cid.toString() === cid) {
               cls.record?.forEach((m) => {
