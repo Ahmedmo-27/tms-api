@@ -151,11 +151,16 @@ export class SubscriptionsService {
     }
 
     const isPtPackage = pkg.category === "PERSONAL_TRAINING" || Boolean(pkg.coachId);
-    const targetCoachId = pkg.coachId?.toString();
+    const targetCoachId = pkg.coachId
+      ? (pkg.coachId._id || pkg.coachId).toString()
+      : undefined;
+
+    const extractSessionCoachId = (coachId: any) =>
+      (coachId?._id || coachId)?.toString();
 
     if (isPtPackage && targetCoachId) {
       const otherCoachOwed = pendingOwed.filter(
-        (s) => s.coachId.toString() !== targetCoachId
+        (s) => extractSessionCoachId(s.coachId) !== targetCoachId
       );
       if (otherCoachOwed.length > 0) {
         const coachName = otherCoachOwed[0].coachName || "a different trainer";
@@ -165,7 +170,7 @@ export class SubscriptionsService {
           {
             owedSessions: otherCoachOwed.map((s) => ({
               id: String(s._id),
-              coachId: s.coachId.toString(),
+              coachId: extractSessionCoachId(s.coachId),
               coachName: s.coachName,
               date: s.attendanceDate,
               amount: s.amount,
@@ -175,7 +180,7 @@ export class SubscriptionsService {
       }
 
       const matchingOwed = pendingOwed.filter(
-        (s) => s.coachId.toString() === targetCoachId
+        (s) => extractSessionCoachId(s.coachId) === targetCoachId
       );
       const toDeduct = matchingOwed.slice(0, pkg.numberOfSessions);
 
@@ -209,7 +214,7 @@ export class SubscriptionsService {
         {
           owedSessions: pendingOwed.map((s) => ({
             id: String(s._id),
-            coachId: s.coachId.toString(),
+            coachId: extractSessionCoachId(s.coachId),
             coachName: s.coachName,
             date: s.attendanceDate,
             amount: s.amount,
