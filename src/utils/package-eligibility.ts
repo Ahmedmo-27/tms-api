@@ -61,6 +61,7 @@ export function selectEligiblePackage(input: {
   cid?: string;
   month?: string;
   now?: Date;
+  points?: number;
 }): EligibilityResult {
   const now = input.now ?? new Date();
   const allowed = new Set(input.allowedPkgIds.map((id) => String(id)));
@@ -181,7 +182,8 @@ export function selectEligiblePackage(input: {
       lastSkippedPkg = pkg;
       continue;
     }
-    if (Number(pkg.remainingClasses) <= 0) {
+    const requiredPoints = input.points ?? 1;
+    if (Number(pkg.remainingClasses) < requiredPoints || Number(pkg.remainingClasses) <= 0) {
       skipReasons.push("remaining");
       lastSkippedPkg = pkg;
       continue;

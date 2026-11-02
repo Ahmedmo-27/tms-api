@@ -437,6 +437,7 @@ export class SchedulerService {
     const classTitle =
       (scheduledClass as { className?: string }).className ??
       (scheduledClass.cid as { title?: string }).title;
+    const points = (scheduledClass.cid as any)?.points ?? 1;
     await runInTransaction(async (session: ClientSession) => {
       for (const bookedMember of scheduledClass.bookedMembers) {
         const member = await Member.findOne({ uid: bookedMember.uid }).session(
@@ -457,6 +458,8 @@ export class SchedulerService {
           undefined,
           "FRONTDESK_CANCELLATION",
           classTitle,
+          points,
+          scheduledClass.startTime,
         );
       }
       await Schedule.cancelClass(scid, session);

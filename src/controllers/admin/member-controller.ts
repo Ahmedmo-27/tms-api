@@ -634,20 +634,39 @@ export const getMember = asyncHandler(async function (
             type: "CLASS",
             className: classTitle,
             packageName: targetPkg ? getPkgName(targetPkg) : methodStr || "Class",
+            memberPackageId: targetPkg?._id?.toString(),
           });
         }
       }
     }
 
     // 5. Build per-package attendance list from PT attendance + attendance-based adjustmentHistory
+    const nowMs = Date.now();
     for (const p of pkgs) {
       const pIdStr = getPkgIdStr(p);
       const pName = getPkgName(p);
+      const pSubDocIdStr = p._id?.toString() ?? "";
+      const pStartMs = p.pkgStartDate
+        ? new Date(p.pkgStartDate).getTime() - 86400000
+        : NaN;
+      const pEndMs = p.pkgEndDate
+        ? new Date(p.pkgEndDate).getTime() + 86400000
+        : NaN;
       const seenAtt = new Set<string>();
       const bundledAtt: { className: string; attendanceDate: any }[] = [];
 
       const addAtt = (className: string, attendanceDate: any) => {
         if (!attendanceDate) return;
+        const attMs = new Date(attendanceDate).getTime();
+        if (isNaN(attMs)) return;
+
+        // Attendance can never be in the future
+        if (attMs > nowMs) return;
+
+        // Attendance must fall within the package date window (with 1-day buffer)
+        if (!isNaN(pStartMs) && attMs < pStartMs) return;
+        if (!isNaN(pEndMs) && attMs > pEndMs) return;
+
         const dKey = safeDayKey(attendanceDate);
         const key = `${dKey}:${(className || pName).toLowerCase().trim()}`;
         if (seenAtt.has(key)) return;
@@ -662,7 +681,11 @@ export const getMember = asyncHandler(async function (
         if (!rec) continue;
         const recPkgId =
           rec.pkgId?._id?.toString() ?? rec.pkgId?.toString() ?? "";
-        if (recPkgId === pIdStr) {
+        const recMemberPkgId = rec.memberPackageId;
+        if (recMemberPkgId && pSubDocIdStr && recMemberPkgId !== pSubDocIdStr) {
+          continue;
+        }
+        if (recPkgId === pIdStr || (recMemberPkgId && recMemberPkgId === pSubDocIdStr)) {
           addAtt(
             rec.className ?? rec.pkgId?.name ?? pName,
             rec.attendanceTime ?? rec.date
@@ -677,7 +700,6 @@ export const getMember = asyncHandler(async function (
           adj.source === "PT_ATTENDANCE" ||
           adj.source === "ATTENDANCE" ||
           adj.source === "SPACE_WALK" ||
-          adj.source === "BOOKING" ||
           ((adj.source === "COACH" || adj.source === "ADMIN") &&
             (reasonLower.startsWith("completed session") ||
               reasonLower.startsWith("makeup") ||
@@ -699,8 +721,8 @@ export const getMember = asyncHandler(async function (
 
       p.adjustmentHistory.sort(
         (a: any, b: any) =>
-          new Date(b.attendanceDate ?? b.date).getTime() -
-          new Date(a.attendanceDate ?? a.date).getTime()
+          new Date(b.date ?? b.attendanceDate).getTime() -
+          new Date(a.date ?? a.attendanceDate).getTime()
       );
     }
 

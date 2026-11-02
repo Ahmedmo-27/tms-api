@@ -371,6 +371,7 @@ export class BookingsService {
     const className = (scheduledClass.cid as any).title as string | undefined;
     const source =
       cancelledBy === "staff" ? "FRONTDESK_CANCELLATION" : "MEMBER_CANCELLATION";
+    const points = (scheduledClass.cid as any)?.points ?? 1;
 
     await runInTransaction(async (session: ClientSession) => {
       await Member.removeBooking(
@@ -383,6 +384,8 @@ export class BookingsService {
         monthString,
         source,
         className,
+        points,
+        scheduledClass.startTime,
       );
       if (decision.lateCancellation) {
         await BookingsService.recordLateCancellation(
