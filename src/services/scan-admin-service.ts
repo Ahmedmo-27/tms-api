@@ -6,9 +6,12 @@ import Package, { isUnlimitedSpaceAccess } from "../models/package";
 import User from "../models/user";
 import NonUserBooking from "../models/nonUserBookings";
 import Payment from "../models/payment";
+import Coach from "../models/coach";
+import OwedPtSession from "../models/owedPtSession";
 import { BadRequestError, ConflictError, NotFoundError } from "../core/ApiError";
 import { runInTransaction } from "../utils/transaction";
 import { cairoDateKey } from "../utils/timezone";
+import { normalizePhoneNumber } from "../utils/phone";
 import { resolvePackageStatus } from "./package-status-service";
 import logger from "../config/logger";
 
@@ -50,11 +53,13 @@ export interface ScanRowChanges {
   /** Corrected check-in timestamp. */
   time?: string | Date;
   status?: "SUCCESS" | "FAILED" | "WILL_PAY" | "FOC";
-  /** Guest rows (open gym or class walk-in) — these store their own name and phone. */
+  /** Guest rows (open gym or class walk-in or PT guest) — these store their own name and phone. */
   guestName?: string;
   guestPhone?: string;
   name?: string;
   phoneNumber?: string;
+  /** Coach for PT rows */
+  coachId?: string;
   /** Move this scan to a new scheduled class (for false QR code scans). */
   targetScid?: string;
 }
@@ -69,6 +74,8 @@ export interface ScanRowView {
   guestName?: string;
   guestPhone?: string;
   pkgId?: string;
+  coachId?: string;
+  coachName?: string;
   method: string;
   time: Date;
   status: "SUCCESS" | "FAILED" | "WILL_PAY" | "FOC";
@@ -566,6 +573,14 @@ export class ScanAdminService {
         );
       }
 
+      if (ref.source === "pt") {
+        await OwedPtSession.deleteOne({
+          dailyAttendanceId: parent._id,
+          attendanceRowId: new Types.ObjectId(ref.rowId),
+          status: "PENDING",
+        }).session(session);
+      }
+
       (parent[arrayPath] as any).pull({ _id: new Types.ObjectId(ref.rowId) });
       await parent.save({ session });
     });
@@ -607,13 +622,6 @@ export class ScanAdminService {
         name: changes.name,
         phoneNumber: changes.phoneNumber,
       });
-    }
-
-    if (ref.source === "pt" && (changes.guestName || changes.guestPhone)) {
-      throw new BadRequestError(
-        "GUEST_FIELDS_NOT_SUPPORTED",
-        "Guest name and phone can only be set on open gym or class walk-in rows",
-      );
     }
 
     await runInTransaction(async (session: ClientSession) => {
@@ -795,6 +803,13 @@ export class ScanAdminService {
         return;
       }
 
+      if (ref.source === "class" && (changes.guestName || changes.guestPhone)) {
+        throw new BadRequestError(
+          "GUEST_FIELDS_NOT_SUPPORTED",
+          "Guest name and phone can only be set on open gym, PT, or walk-in rows",
+        );
+      }
+
       const statusBefore = readStatus(ref.source, row, false);
       const before: ScanEffect = {
         uid: row.uid?.toString(),
@@ -917,6 +932,102 @@ export class ScanAdminService {
       if (changes.status) writeStatus(ref.source, row, after.status, false);
       if (changes.guestName !== undefined) row.guestName = changes.guestName;
       if (changes.guestPhone !== undefined) row.guestPhone = changes.guestPhone;
+
+      if (ref.source === "pt") {
+        if (changes.coachId) {
+          const coachObjectId = toObjectId(changes.coachId, "coachId");
+          const coachDoc = await Coach.findById(coachObjectId).select("coachName").session(session);
+          if (!coachDoc) throw new NotFoundError("COACH_NOT_FOUND", "Coach not found");
+          row.coachId = coachDoc._id;
+          if (row.method?.startsWith("PT with") || row.method?.startsWith("PT dropin with")) {
+            row.method = `PT with ${coachDoc.coachName}`;
+          }
+        }
+
+        const finalStatus = after.status;
+        if (finalStatus === "WILL_PAY") {
+          let phone = row.guestPhone;
+          let name = row.guestName;
+          let memberUid = row.uid;
+          if (memberUid) {
+            const user = await User.findById(memberUid).select("name phoneNumber").session(session);
+            if (user) {
+              phone = user.phoneNumber || phone;
+              name = user.name || name;
+            }
+          }
+          if (changes.guestPhone) phone = changes.guestPhone;
+          if (changes.guestName) name = changes.guestName;
+
+          const effectiveCoachId = row.coachId?.toString();
+          let coachName = "";
+          if (effectiveCoachId) {
+            const c = await Coach.findById(effectiveCoachId).select("coachName").session(session);
+            coachName = c?.coachName || "";
+          }
+
+          if (phone && effectiveCoachId) {
+            await OwedPtSession.findOneAndUpdate(
+              {
+                dailyAttendanceId: parent._id,
+                attendanceRowId: new Types.ObjectId(ref.rowId),
+              },
+              {
+                phoneNumber: normalizePhoneNumber(phone),
+                uid: memberUid ? new Types.ObjectId(memberUid) : undefined,
+                clientName: name || "Guest",
+                coachId: new Types.ObjectId(effectiveCoachId),
+                coachName,
+                locationId: row.locationId || undefined,
+                dailyAttendanceId: parent._id,
+                attendanceRowId: new Types.ObjectId(ref.rowId),
+                attendanceDate: after.time,
+                status: "PENDING",
+              },
+              { upsert: true, new: true, session }
+            );
+          }
+        } else if (before.status === "WILL_PAY") {
+          if (finalStatus === "FAILED") {
+            await OwedPtSession.deleteOne({
+              dailyAttendanceId: parent._id,
+              attendanceRowId: new Types.ObjectId(ref.rowId),
+              status: "PENDING",
+            }).session(session);
+          } else if (finalStatus === "SUCCESS") {
+            await OwedPtSession.updateMany(
+              {
+                dailyAttendanceId: parent._id,
+                attendanceRowId: new Types.ObjectId(ref.rowId),
+                status: "PENDING",
+              },
+              {
+                $set: {
+                  status: after.pkgId ? "DEDUCTED" : "PAID",
+                  settledPackageId: after.pkgId ? new Types.ObjectId(after.pkgId) : undefined,
+                  settledAt: new Date(),
+                },
+              },
+              { session }
+            );
+          } else if (finalStatus === "FOC") {
+            await OwedPtSession.updateMany(
+              {
+                dailyAttendanceId: parent._id,
+                attendanceRowId: new Types.ObjectId(ref.rowId),
+                status: "PENDING",
+              },
+              {
+                $set: {
+                  status: "FOC",
+                  settledAt: new Date(),
+                },
+              },
+              { session }
+            );
+          }
+        }
+      }
 
       await parent.save({ session });
     });
@@ -1402,6 +1513,13 @@ export class ScanAdminService {
     const guestName = isNonUserBooking ? row.name : row.guestName;
     const guestPhone = isNonUserBooking ? row.phoneNumber : row.guestPhone;
 
+    let coachName: string | undefined;
+    const coachId = row.coachId?.toString();
+    if (coachId) {
+      const coach = await Coach.findById(coachId).select("coachName");
+      coachName = coach?.coachName;
+    }
+
     return {
       source: ref.source,
       parentId: ref.parentId,
@@ -1412,6 +1530,8 @@ export class ScanAdminService {
       guestName,
       guestPhone,
       pkgId: row.pkgId?.toString(),
+      coachId,
+      coachName,
       method: isNonUserBooking ? (row.status === "FOC" ? "FOC" : "Walk In") : row.method,
       time: readTime(ref.source, row, isNonUserBooking),
       status: readStatus(ref.source, row, isNonUserBooking),

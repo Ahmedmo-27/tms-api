@@ -26,6 +26,8 @@ import { resolveLegacyOpenGymLocationId } from "../utils/open-gym-location";
 import { SCAN_ERROR_MESSAGES } from "../utils/error-messages";
 import { BOOKING_ERROR_MESSAGES } from "../utils/booking-package-errors";
 import NonUserBooking, { INonUserBooking } from "../models/nonUserBookings";
+import OwedPtSession from "../models/owedPtSession";
+import { normalizePhoneNumber } from "../utils/phone";
 import { sendPaymentToRentalSystem } from "./egygap-erp-service";
 import { NotificationsService } from "./notifications-service";
 import { WaitlistService } from "./waitlist-service";
@@ -1487,40 +1489,69 @@ export class BookingsService {
     const paymentNote = note ? `${defaultNote}; ${note}` : defaultNote;
     const method = coachName ? `PT dropin with ${coachName}` : "PT dropin";
 
+    const isWillPay = paymentMethod === "WILL_PAY";
+    const status = isWillPay ? "WILL_PAY" : "SUCCESS";
+
     await runInTransaction(async (session: ClientSession) => {
-      await PaymentsService.savePayment(
-        uid,
-        price,
-        paymentMethod,
-        "DROPIN",
-        session,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        parsedPaymentDate,
-        paymentNote,
-        undefined,
-        undefined,
-        locationId,
-        coachId,
-        coachName,
-      );
-      await DailyAttendance.recordPtAttendance(
+      if (!isWillPay) {
+        await PaymentsService.savePayment(
+          uid,
+          price,
+          paymentMethod,
+          "DROPIN",
+          session,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          parsedPaymentDate,
+          paymentNote,
+          undefined,
+          undefined,
+          locationId,
+          coachId,
+          coachName,
+        );
+      }
+      const attRes = (await DailyAttendance.recordPtAttendance(
         uid,
         method,
         session,
-        "SUCCESS",
+        status,
         io,
         locationId,
         coachId,
         parsedPaymentDate ? new Date(parsedPaymentDate) : undefined,
-      );
+      )) || { dayId: "", rowId: "" };
+      const { dayId, rowId } = attRes;
+      if (isWillPay) {
+        const cleanPhone = normalizePhoneNumber((member.uid as any)?.phoneNumber || "");
+        await OwedPtSession.create(
+          [
+            {
+              phoneNumber: cleanPhone,
+              uid: new Types.ObjectId(uid),
+              clientName: (member.uid as any)?.name || "Member",
+              coachId: new Types.ObjectId(coachId),
+              coachName,
+              locationId: locationId ? new Types.ObjectId(locationId) : undefined,
+              dailyAttendanceId: new Types.ObjectId(dayId),
+              attendanceRowId: new Types.ObjectId(rowId),
+              attendanceDate: parsedPaymentDate ? new Date(parsedPaymentDate) : new Date(),
+              amount: price,
+              status: "PENDING",
+              note: paymentNote,
+            },
+          ],
+          { session }
+        );
+      }
       io.emit("SUCCESS-SCAN", {
         code: "PT_DROP_IN",
-        message: "Success",
+        message: isWillPay ? "Will Pay Recorded" : "Success",
         member: (member.uid as any).name,
         method,
+        ...(isWillPay ? { status: "WILL_PAY" } : {}),
         ...(coachName ? { coach: coachName } : {}),
         ...(locationId ? { locationId } : {}),
       });
@@ -1568,42 +1599,69 @@ export class BookingsService {
       : "PT dropin";
     const paymentNote = note ? `${defaultNote}; ${note}` : defaultNote;
     const method = coachName ? `PT dropin with ${coachName}` : "PT dropin";
+    const isWillPay = paymentMethod === "WILL_PAY";
+    const status = isWillPay ? "WILL_PAY" : "SUCCESS";
+    const cleanPhone = normalizePhoneNumber(phoneNumber);
 
     await runInTransaction(async (session: ClientSession) => {
-      await PaymentsService.savePayment(
-        undefined,
-        price,
-        paymentMethod,
-        "DROPIN",
-        session,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        parsedPaymentDate,
-        paymentNote,
-        name,
-        phoneNumber,
-        locationId,
-        coachId,
-        coachName,
-      );
-      await DailyAttendance.recordPtGuestAttendance(
+      if (!isWillPay) {
+        await PaymentsService.savePayment(
+          undefined,
+          price,
+          paymentMethod,
+          "DROPIN",
+          session,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          parsedPaymentDate,
+          paymentNote,
+          name,
+          phoneNumber,
+          locationId,
+          coachId,
+          coachName,
+        );
+      }
+      const attRes = (await DailyAttendance.recordPtGuestAttendance(
         name,
         phoneNumber,
         method,
         session,
-        "SUCCESS",
+        status,
         io,
         locationId,
         coachId,
         parsedPaymentDate ? new Date(parsedPaymentDate) : undefined,
-      );
+      )) || { dayId: "", rowId: "" };
+      const { dayId, rowId } = attRes;
+      if (isWillPay) {
+        await OwedPtSession.create(
+          [
+            {
+              phoneNumber: cleanPhone,
+              clientName: name,
+              coachId: new Types.ObjectId(coachId),
+              coachName,
+              locationId: locationId ? new Types.ObjectId(locationId) : undefined,
+              dailyAttendanceId: new Types.ObjectId(dayId),
+              attendanceRowId: new Types.ObjectId(rowId),
+              attendanceDate: parsedPaymentDate ? new Date(parsedPaymentDate) : new Date(),
+              amount: price,
+              status: "PENDING",
+              note: paymentNote,
+            },
+          ],
+          { session }
+        );
+      }
       io.emit("SUCCESS-SCAN", {
         code: "PT_DROP_IN",
-        message: "Success",
+        message: isWillPay ? "Will Pay Recorded" : "Success",
         member: name,
         method,
+        ...(isWillPay ? { status: "WILL_PAY" } : {}),
         ...(coachName ? { coach: coachName } : {}),
         ...(locationId ? { locationId } : {}),
       });

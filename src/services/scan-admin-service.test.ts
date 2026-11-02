@@ -22,6 +22,16 @@ jest.mock("../models/package", () => {
   };
 });
 jest.mock("../models/user");
+jest.mock("../models/owedPtSession", () => ({
+  __esModule: true,
+  default: {
+    deleteOne: jest.fn().mockReturnValue({ session: jest.fn().mockResolvedValue({}) }),
+    findOneAndUpdate: jest.fn().mockReturnValue({ session: jest.fn().mockResolvedValue({}) }),
+    updateMany: jest.fn().mockReturnValue({ session: jest.fn().mockResolvedValue({}) }),
+    findOne: jest.fn().mockReturnValue({ session: jest.fn().mockResolvedValue(null) }),
+    create: jest.fn().mockResolvedValue([]),
+  },
+}));
 jest.mock("../utils/transaction", () => ({
   runInTransaction: jest.fn(async (fn: (s: unknown) => Promise<unknown>) =>
     fn({} as unknown),
@@ -362,13 +372,29 @@ describe("ScanAdminService.updateScanRow", () => {
     expect(Member.findOne).not.toHaveBeenCalled();
   });
 
-  it("rejects guest fields on a non-open-gym row", async () => {
+  it("rejects guest fields on a regular class member row", async () => {
     await expect(
       ScanAdminService.updateScanRow(
-        { source: "pt", parentId: dayId, rowId },
+        { source: "class", parentId: scid, rowId },
         { guestName: "Walk In" },
       ),
-    ).rejects.toThrow(/open gym/i);
+    ).rejects.toThrow(/open gym, PT, or walk-in/i);
+  });
+
+  it("allows guest fields on a PT row", async () => {
+    const row = ptRow();
+    const day = makeDay("ptAttendance", row);
+    (DailyAttendance.findById as jest.Mock).mockReturnValue({
+      session: jest.fn().mockResolvedValue(day),
+    });
+
+    await ScanAdminService.updateScanRow(
+      { source: "pt", parentId: dayId, rowId },
+      { guestName: "Walk In Guest", guestPhone: "01000000000" },
+    );
+
+    expect((row as any).guestName).toBe("Walk In Guest");
+    expect((row as any).guestPhone).toBe("01000000000");
   });
 
   it("moving a class check-in to another member returns session to original member and charges the new one", async () => {

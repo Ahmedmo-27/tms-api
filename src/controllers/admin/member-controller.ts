@@ -5,6 +5,7 @@ import User from "../../models/user";
 import DeductionLog from "../../models/deductionLog";
 import DailyAttendance from "../../models/dailyAttendance";
 import Payment from "../../models/payment";
+import OwedPtSession from "../../models/owedPtSession";
 import { isUnlimitedSpaceAccess } from "../../models/package";
 import { BadRequestError, ConflictError, NotFoundError } from "../../core/ApiError";
 import { SuccessResponse } from "../../core/ApiResponse";
@@ -170,7 +171,7 @@ export const getMember = asyncHandler(async function (
     .map((m) => (m.uid as any)?._id)
     .filter((id): id is Types.ObjectId => Boolean(id));
 
-  const [deductionLogs, dailyDocs, memberPayments] =
+  const [deductionLogs, dailyDocs, memberPayments, owedPtDocs] =
     fetchedUids.length > 0
       ? await Promise.all([
           DeductionLog.find({ memberId: { $in: fetchedUids } })
@@ -185,8 +186,21 @@ export const getMember = asyncHandler(async function (
           Payment.find({ uid: { $in: fetchedUids }, purpose: "PACKAGE", isRefunded: { $ne: true } })
             .select("uid pkgId amount paymentTime")
             .lean(),
+          OwedPtSession.find({ uid: { $in: fetchedUids }, status: "PENDING" })
+            .populate("coachId", "coachName")
+            .sort({ attendanceDate: -1 })
+            .lean(),
         ])
-      : [[], [], []];
+      : [[], [], [], []];
+
+  const owedByMember = new Map<string, any[]>();
+  for (const owed of owedPtDocs) {
+    const key = owed.uid?.toString();
+    if (!key) continue;
+    const list = owedByMember.get(key) ?? [];
+    list.push(owed);
+    owedByMember.set(key, list);
+  }
 
   const logsByMember = new Map<string, any[]>();
   for (const log of deductionLogs) {
@@ -724,6 +738,8 @@ export const getMember = asyncHandler(async function (
         p.paidAmount = best.amount;
       }
     }
+
+    (m as any).owedPtSessions = owedByMember.get(memberUidStr) ?? [];
 
     return m;
   });
