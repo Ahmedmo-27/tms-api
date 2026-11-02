@@ -1,8 +1,6 @@
 import mongoose from "mongoose";
-import dotenv from "dotenv";
 import User from "../models/user";
-
-dotenv.config();
+import { describeMongoTarget, resolveScriptMongoUri } from "./script-db";
 
 /**
  * Creates (or converts) a sales account.
@@ -32,7 +30,8 @@ async function main() {
     process.exit(1);
   }
 
-  const mongoUri = process.env.MONGO_URI || "mongodb://localhost:27017/tms_test";
+  const mongoUri = resolveScriptMongoUri();
+  console.log(`Connecting to ${describeMongoTarget(mongoUri)}...`);
   await mongoose.connect(mongoUri);
 
   try {

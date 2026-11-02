@@ -55,7 +55,7 @@ export const updateScanRow = asyncHandler(async function (
   const ref = readRef(req);
   await assertRowAccess(req, ref);
 
-  const { uid, pkgId, time, status, guestName, guestPhone, name, phoneNumber, targetScid } = req.body ?? {};
+  const { uid, pkgId, time, status, guestName, guestPhone, name, phoneNumber, coachId, targetScid } = req.body ?? {};
   if (targetScid && targetScid !== ref.parentId) {
     if (targetScid === "open-gym" || targetScid === "none") {
       const row = await ScanAdminService.moveScanToOpenGym(ref, {
@@ -124,6 +124,7 @@ export const updateScanRow = asyncHandler(async function (
   const effectivePhone = guestPhone ?? phoneNumber;
   if (effectiveName !== undefined) changes.guestName = effectiveName;
   if (effectivePhone !== undefined) changes.guestPhone = effectivePhone;
+  if (coachId !== undefined) changes.coachId = coachId;
 
   if (Object.keys(changes).length === 0) {
     throw new BadRequestError("NO_CHANGES", "No fields to update");

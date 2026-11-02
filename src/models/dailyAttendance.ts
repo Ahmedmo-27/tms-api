@@ -38,24 +38,24 @@ type DailyAttendanceModel = Model<IDailyAttendance> & {
     uid: string,
     method: string,
     session: ClientSession | null | undefined,
-    status: "SUCCESS" | "FAILED",
+    status: "SUCCESS" | "FAILED" | "WILL_PAY" | "FOC",
     io: Server,
     locationId?: string,
     coachId?: string,
     at?: Date,
     pkgId?: string,
-  ): Promise<void>;
+  ): Promise<{ dayId: string; rowId: string }>;
   recordPtGuestAttendance(
     guestName: string,
     guestPhone: string,
     method: string,
     session: ClientSession | null | undefined,
-    status: "SUCCESS" | "FAILED",
+    status: "SUCCESS" | "FAILED" | "WILL_PAY" | "FOC",
     io: Server,
     locationId?: string,
     coachId?: string,
     at?: Date,
-  ): Promise<void>;
+  ): Promise<{ dayId: string; rowId: string }>;
   recordOpenGymAttendance(
     uid: string,
     method: string,
@@ -135,13 +135,13 @@ DailyAttendanceSchema.static(
     uid: string,
     method: string,
     session: ClientSession | null | undefined,
-    status: "SUCCESS" | "FAILED",
+    status: "SUCCESS" | "FAILED" | "WILL_PAY" | "FOC",
     io: Server,
     locationId?: string,
     coachId?: string,
     at?: Date,
     pkgId?: string,
-  ): Promise<void> {
+  ): Promise<{ dayId: string; rowId: string }> {
     const recordedAt = at ?? new Date();
     const { start: startOfDay, end: endOfDay } = utcDayBounds(recordedAt);
     const sessionOpts = session ? { session } : {};
@@ -157,7 +157,7 @@ DailyAttendanceSchema.static(
       day = new DailyAttendance({ date: startOfDay });
       await day.save(sessionOpts);
     }
-    // add status and save attendance
+    const newRowId = new mongoose.Types.ObjectId();
     const attendance = await this.findOneAndUpdate(
       {
         _id: day._id,
@@ -165,6 +165,7 @@ DailyAttendanceSchema.static(
       {
         $push: {
           ptAttendance: {
+            _id: newRowId,
             uid: new mongoose.Types.ObjectId(uid),
             method,
             time: recordedAt,
@@ -191,6 +192,7 @@ DailyAttendanceSchema.static(
         "Class already in attendance record"
       );
     }
+    return { dayId: String(day._id), rowId: newRowId.toString() };
   }
 );
 
@@ -201,12 +203,12 @@ DailyAttendanceSchema.static(
     guestPhone: string,
     method: string,
     session: ClientSession | null | undefined,
-    status: "SUCCESS" | "FAILED",
+    status: "SUCCESS" | "FAILED" | "WILL_PAY" | "FOC",
     io: Server,
     locationId?: string,
     coachId?: string,
     at?: Date,
-  ): Promise<void> {
+  ): Promise<{ dayId: string; rowId: string }> {
     const recordedAt = at ?? new Date();
     const { start: startOfDay, end: endOfDay } = utcDayBounds(recordedAt);
     const sessionOpts = session ? { session } : {};
@@ -221,11 +223,13 @@ DailyAttendanceSchema.static(
       await day.save(sessionOpts);
     }
 
+    const newRowId = new mongoose.Types.ObjectId();
     const attendance = await this.findOneAndUpdate(
       { _id: day._id },
       {
         $push: {
           ptAttendance: {
+            _id: newRowId,
             guestName,
             guestPhone,
             method,
@@ -252,6 +256,7 @@ DailyAttendanceSchema.static(
         "Failed to record guest attendance"
       );
     }
+    return { dayId: String(day._id), rowId: newRowId.toString() };
   }
 );
 

@@ -78,7 +78,11 @@ import {
   deleteCoach,
 } from "../controllers/admin/coach-controller";
 import { addMember, getMember, updateMember } from "../controllers/admin/member-controller";
-import { getAttendanceHistory } from "../controllers/admin/attendance-controller";
+import {
+  getAttendanceHistory,
+  getOwedPtSessions,
+  settleOwedPtSession,
+} from "../controllers/admin/attendance-controller";
 import {
   deleteScanRow,
   getScanRow,
@@ -474,6 +478,20 @@ adminRoutes.post(
   authenticateUser,
   authorizeUser(["management", "branch_admin"]),
   recordPtGuestDropIn
+);
+
+adminRoutes.get(
+  "/pt/owed-sessions",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  getOwedPtSessions
+);
+
+adminRoutes.post(
+  "/pt/settle-session",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  settleOwedPtSession
 );
 
 adminRoutes.get(

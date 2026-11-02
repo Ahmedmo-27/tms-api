@@ -24,6 +24,8 @@ import { sendPaymentToRentalSystem } from "./egygap-erp-service";
 import { IClassRestrictionRecord } from "../models/member";
 import { ChallengeService } from "./challenge-service";
 import User from "../models/user";
+import Coach from "../models/coach";
+import OwedPtSession from "../models/owedPtSession";
 import { Server as SocketIOServer } from "socket.io";
 import { resolveOpenGymPaymentNote } from "../utils/open-gym-payment-purpose";
 import { normalizePhoneNumber } from "../utils/phone";
@@ -81,6 +83,140 @@ export class SubscriptionsService {
       }
     }
     return normalized;
+  }
+
+  static async linkGuestRecordsToMember(
+    uid: string,
+    phoneNumber: string,
+    session?: ClientSession,
+  ): Promise<void> {
+    const cleanPhone = normalizePhoneNumber(phoneNumber);
+    if (!cleanPhone || !uid) return;
+
+    try {
+      const DailyAttendance = (await import("../models/dailyAttendance")).default;
+      await DailyAttendance.updateMany(
+        { "openGymAttendance.guestPhone": cleanPhone },
+        { $set: { "openGymAttendance.$[elem].uid": new Types.ObjectId(uid) } },
+        { arrayFilters: [{ "elem.guestPhone": cleanPhone }], ...(session ? { session } : {}) }
+      );
+      await DailyAttendance.updateMany(
+        { "ptAttendance.guestPhone": cleanPhone },
+        { $set: { "ptAttendance.$[elem].uid": new Types.ObjectId(uid) } },
+        { arrayFilters: [{ "elem.guestPhone": cleanPhone }], ...(session ? { session } : {}) }
+      );
+      await OwedPtSession.updateMany(
+        { phoneNumber: cleanPhone, uid: { $exists: false } },
+        { $set: { uid: new Types.ObjectId(uid) } },
+        session ? { session } : {}
+      );
+    } catch (err) {
+      logger.warn("Failed to link guest records to member:", err);
+    }
+  }
+
+  static async checkAndProcessPtDebtOnSubscription({
+    uid,
+    phoneNumber,
+    pkg,
+    session,
+  }: {
+    uid?: string;
+    phoneNumber?: string;
+    pkg: any;
+    session: ClientSession;
+  }): Promise<{
+    deductCount: number;
+    deductedSessions: any[];
+  }> {
+    const cleanPhone = phoneNumber ? normalizePhoneNumber(phoneNumber) : undefined;
+    const queryConditions: any[] = [];
+    if (uid && Types.ObjectId.isValid(uid)) {
+      queryConditions.push({ uid: new Types.ObjectId(uid) });
+    }
+    if (cleanPhone) {
+      queryConditions.push({ phoneNumber: cleanPhone });
+    }
+    if (queryConditions.length === 0) {
+      return { deductCount: 0, deductedSessions: [] };
+    }
+
+    const pendingOwed = await OwedPtSession.find({
+      $or: queryConditions,
+      status: "PENDING",
+    }).session(session);
+
+    if (pendingOwed.length === 0) {
+      return { deductCount: 0, deductedSessions: [] };
+    }
+
+    const isPtPackage = pkg.category === "PERSONAL_TRAINING" || Boolean(pkg.coachId);
+    const targetCoachId = pkg.coachId?.toString();
+
+    if (isPtPackage && targetCoachId) {
+      const otherCoachOwed = pendingOwed.filter(
+        (s) => s.coachId.toString() !== targetCoachId
+      );
+      if (otherCoachOwed.length > 0) {
+        const coachName = otherCoachOwed[0].coachName || "a different trainer";
+        throw new BadRequestError(
+          "UNPAID_PT_SESSION_WITH_OTHER_COACH",
+          `Client has ${otherCoachOwed.length} unpaid PT session(s) with ${coachName}. Please settle payment for this session before subscribing to a package with a different trainer.`,
+          {
+            owedSessions: otherCoachOwed.map((s) => ({
+              id: String(s._id),
+              coachId: s.coachId.toString(),
+              coachName: s.coachName,
+              date: s.attendanceDate,
+              amount: s.amount,
+            })),
+          }
+        );
+      }
+
+      const matchingOwed = pendingOwed.filter(
+        (s) => s.coachId.toString() === targetCoachId
+      );
+      const toDeduct = matchingOwed.slice(0, pkg.numberOfSessions);
+
+      for (const owed of toDeduct) {
+        owed.status = "DEDUCTED";
+        owed.settledPackageId = pkg._id;
+        owed.settledAt = new Date();
+        await owed.save({ session });
+
+        await DailyAttendance.updateOne(
+          { _id: owed.dailyAttendanceId, "ptAttendance._id": owed.attendanceRowId },
+          {
+            $set: {
+              "ptAttendance.$.status": "SUCCESS",
+              "ptAttendance.$.pkgId": pkg._id,
+            },
+          },
+          { session }
+        );
+      }
+
+      return {
+        deductCount: toDeduct.length,
+        deductedSessions: toDeduct,
+      };
+    } else {
+      const coachName = pendingOwed[0].coachName || "a trainer";
+      throw new BadRequestError(
+        "UNPAID_PT_SESSION_WITH_OTHER_COACH",
+        `Client has ${pendingOwed.length} unpaid PT session(s) with ${coachName}. Please settle payment for this session before subscribing.`,
+        {
+          owedSessions: pendingOwed.map((s) => ({
+            id: String(s._id),
+            coachId: s.coachId.toString(),
+            coachName: s.coachName,
+            date: s.attendanceDate,
+            amount: s.amount,
+          })),
+        }
+      );
+    }
   }
 
   static async recordSinglePreviousSessionAttendance({
@@ -682,15 +818,24 @@ export class SubscriptionsService {
         locationId
       );
       createdPayment = payment;
+
+      const ptDebtResult = await SubscriptionsService.checkAndProcessPtDebtOnSubscription({
+        uid,
+        phoneNumber: user?.phoneNumber,
+        pkg,
+        session,
+      });
+
       const previousDeductCount =
         normalizedPreviousDates.length > 0
           ? normalizedPreviousDates.length
           : pendingDeduction
           ? 1
           : 0;
+      const totalDeductions = previousDeductCount + ptDebtResult.deductCount;
       const remainingClasses = Math.max(
         0,
-        pkg.numberOfSessions - previousDeductCount
+        pkg.numberOfSessions - totalDeductions
       );
       await Member.addPackage(
         uid,
@@ -714,6 +859,24 @@ export class SubscriptionsService {
           },
           { $set: { "packages.$.status": "COMPLETED" } },
           { session }
+        );
+      }
+
+      for (const owed of ptDebtResult.deductedSessions) {
+        await Member.pushAdjustmentRecord(
+          uid,
+          pkg._id.toString(),
+          new Date(startDate),
+          {
+            date: new Date(),
+            attendanceDate: owed.attendanceDate,
+            source: "ADMIN",
+            type: "DEDUCT",
+            amount: 1,
+            className: pkg.name,
+            reason: `Deducted for owed PT session attended on ${format(new Date(owed.attendanceDate), "dd-MM-yyyy")} with Coach ${owed.coachName || pkg.name}`,
+          },
+          session,
         );
       }
 
@@ -1368,22 +1531,8 @@ export class SubscriptionsService {
         { role: "member" },
         session ? { session } : {}
       );
-      try {
-        const DailyAttendance = (await import("../models/dailyAttendance")).default;
-        await DailyAttendance.updateMany(
-          { "openGymAttendance.guestPhone": cleanPhone },
-          { $set: { "openGymAttendance.$[elem].uid": new Types.ObjectId(uid) } },
-          { arrayFilters: [{ "elem.guestPhone": cleanPhone }], ...(session ? { session } : {}) }
-        );
-        await DailyAttendance.updateMany(
-          { "ptAttendance.guestPhone": cleanPhone },
-          { $set: { "ptAttendance.$[elem].uid": new Types.ObjectId(uid) } },
-          { arrayFilters: [{ "elem.guestPhone": cleanPhone }], ...(session ? { session } : {}) }
-        );
-      } catch (attendanceErr) {
-        logger.warn("Failed to link guest attendance to member:", attendanceErr);
-      }
     }
+    await SubscriptionsService.linkGuestRecordsToMember(uid, phoneNumber, session);
   }
 
   static async addNonUserPackage(
@@ -1501,20 +1650,40 @@ export class SubscriptionsService {
         paymentId: payment._id,
         amount: payment.amount,
       });
+
+      const ptDebtResult = await SubscriptionsService.checkAndProcessPtDebtOnSubscription({
+        uid: matchedUser?._id?.toString(),
+        phoneNumber,
+        pkg,
+        session,
+      });
+
+      const previousDeductCount = pendingDeduction ? 1 : 0;
+      const totalDeductions = previousDeductCount + ptDebtResult.deductCount;
+      const remainingClasses = Math.max(
+        0,
+        (pkg as any).numberOfSessions - totalDeductions
+      );
+
       const nonUserPackage = new NonUserPackage({
         name,
         pkgId,
         phoneNumber,
         pkgStartDate,
         pkgEndDate: endDate,
-        remainingClasses: pendingDeduction
-          ? (pkg as any).numberOfSessions - 1
-          : (pkg as any).numberOfSessions,
+        remainingClasses,
         paymentId: payment._id,
         createdAt: new Date(),
         ...(nationalId ? { nationalId } : {}),
       });
       await nonUserPackage.save(session ? { session } : {});
+      if (matchedUser?._id) {
+        await SubscriptionsService.linkGuestRecordsToMember(
+          matchedUser._id.toString(),
+          phoneNumber,
+          session
+        );
+      }
       if (pkg.category !== "PERSONAL_TRAINING") {
         await sendPaymentToRentalSystem(payment);
       }
