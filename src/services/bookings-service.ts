@@ -1490,10 +1490,15 @@ export class BookingsService {
     const method = coachName ? `PT dropin with ${coachName}` : "PT dropin";
 
     const isWillPay = paymentMethod === "WILL_PAY";
-    const status = isWillPay ? "WILL_PAY" : "SUCCESS";
+    const isFoc = paymentMethod === "FOC";
+    const status: "SUCCESS" | "FAILED" | "WILL_PAY" | "FOC" = isWillPay
+      ? "WILL_PAY"
+      : isFoc
+      ? "FOC"
+      : "SUCCESS";
 
     await runInTransaction(async (session: ClientSession) => {
-      if (!isWillPay) {
+      if (!isWillPay && !isFoc) {
         await PaymentsService.savePayment(
           uid,
           price,
@@ -1515,7 +1520,7 @@ export class BookingsService {
       }
       const attRes = (await DailyAttendance.recordPtAttendance(
         uid,
-        method,
+        isFoc ? "FOC" : method,
         session,
         status,
         io,
@@ -1548,10 +1553,10 @@ export class BookingsService {
       }
       io.emit("SUCCESS-SCAN", {
         code: "PT_DROP_IN",
-        message: isWillPay ? "Will Pay Recorded" : "Success",
+        message: isWillPay ? "Will Pay Recorded" : isFoc ? "FOC Recorded" : "Success",
         member: (member.uid as any).name,
-        method,
-        ...(isWillPay ? { status: "WILL_PAY" } : {}),
+        method: isFoc ? "FOC" : method,
+        ...(isWillPay ? { status: "WILL_PAY" } : isFoc ? { status: "FOC" } : {}),
         ...(coachName ? { coach: coachName } : {}),
         ...(locationId ? { locationId } : {}),
       });
@@ -1600,11 +1605,16 @@ export class BookingsService {
     const paymentNote = note ? `${defaultNote}; ${note}` : defaultNote;
     const method = coachName ? `PT dropin with ${coachName}` : "PT dropin";
     const isWillPay = paymentMethod === "WILL_PAY";
-    const status = isWillPay ? "WILL_PAY" : "SUCCESS";
+    const isFoc = paymentMethod === "FOC";
+    const status: "SUCCESS" | "FAILED" | "WILL_PAY" | "FOC" = isWillPay
+      ? "WILL_PAY"
+      : isFoc
+      ? "FOC"
+      : "SUCCESS";
     const cleanPhone = normalizePhoneNumber(phoneNumber);
 
     await runInTransaction(async (session: ClientSession) => {
-      if (!isWillPay) {
+      if (!isWillPay && !isFoc) {
         await PaymentsService.savePayment(
           undefined,
           price,
@@ -1627,7 +1637,7 @@ export class BookingsService {
       const attRes = (await DailyAttendance.recordPtGuestAttendance(
         name,
         phoneNumber,
-        method,
+        isFoc ? "FOC" : method,
         session,
         status,
         io,
@@ -1658,10 +1668,10 @@ export class BookingsService {
       }
       io.emit("SUCCESS-SCAN", {
         code: "PT_DROP_IN",
-        message: isWillPay ? "Will Pay Recorded" : "Success",
+        message: isWillPay ? "Will Pay Recorded" : isFoc ? "FOC Recorded" : "Success",
         member: name,
-        method,
-        ...(isWillPay ? { status: "WILL_PAY" } : {}),
+        method: isFoc ? "FOC" : method,
+        ...(isWillPay ? { status: "WILL_PAY" } : isFoc ? { status: "FOC" } : {}),
         ...(coachName ? { coach: coachName } : {}),
         ...(locationId ? { locationId } : {}),
       });
