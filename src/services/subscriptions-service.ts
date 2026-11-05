@@ -1528,6 +1528,13 @@ export class SubscriptionsService {
         { added: true },
         session ? { session } : {}
       );
+      if (savedPkg.paymentId) {
+        await Payment.findByIdAndUpdate(
+          savedPkg.paymentId,
+          { uid: new Types.ObjectId(uid) },
+          session ? { session } : {}
+        );
+      }
     }
 
     if (savedPkgs.length > 0) {
@@ -1635,7 +1642,7 @@ export class SubscriptionsService {
           ? Number(amount)
           : (pkg as any).price;
       const payment = await PaymentsService.savePayment(
-        undefined,
+        matchedUser?._id,
         resolvedAmount,
         paymentMethod,
         "NON_USER_PACKAGE",
@@ -1683,11 +1690,32 @@ export class SubscriptionsService {
       });
       await nonUserPackage.save(session ? { session } : {});
       if (matchedUser?._id) {
-        await SubscriptionsService.linkGuestRecordsToMember(
-          matchedUser._id.toString(),
-          phoneNumber,
-          session
+        let member = await Member.findOne({ uid: matchedUser._id }).session(
+          session ?? null
         );
+        if (!member && matchedUser.role === "member") {
+          member = new Member({
+            uid: matchedUser._id,
+            packages: [],
+            bookings: [],
+            attendance: [],
+            isActive: true,
+          });
+          await member.save(session ? { session } : {});
+        }
+        if (member) {
+          await SubscriptionsService.transferStagedPackagesToMember(
+            matchedUser._id.toString(),
+            phoneNumber,
+            session
+          );
+        } else {
+          await SubscriptionsService.linkGuestRecordsToMember(
+            matchedUser._id.toString(),
+            phoneNumber,
+            session
+          );
+        }
       }
       if (pkg.category !== "PERSONAL_TRAINING") {
         await sendPaymentToRentalSystem(payment);
