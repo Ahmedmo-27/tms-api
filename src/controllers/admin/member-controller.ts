@@ -225,14 +225,14 @@ export const getMember = asyncHandler(async function (
   const dailyOgByMember = new Map<string, any[]>();
   for (const doc of dailyDocs) {
     for (const entry of doc.ptAttendance ?? []) {
-      if (entry.status !== "SUCCESS" || !entry.uid) continue;
+      if ((entry.status !== "SUCCESS" && entry.status !== "WILL_PAY" && entry.status !== "FOC") || !entry.uid) continue;
       const key = entry.uid.toString();
       const list = dailyPtByMember.get(key) ?? [];
       list.push(entry);
       dailyPtByMember.set(key, list);
     }
     for (const entry of doc.openGymAttendance ?? []) {
-      if (entry.status !== "SUCCESS" || !entry.uid) continue;
+      if ((entry.status !== "SUCCESS" && entry.status !== "WILL_PAY" && entry.status !== "FOC") || !entry.uid) continue;
       const key = entry.uid.toString();
       const list = dailyOgByMember.get(key) ?? [];
       list.push(entry);
@@ -408,6 +408,9 @@ export const getMember = asyncHandler(async function (
 
     for (const pt of ptList) {
       if (!pt) continue;
+      if (!pt.status) {
+        pt.status = "SUCCESS";
+      }
       const ptPkgId = pt.pkgId?._id?.toString() ?? pt.pkgId?.toString() ?? "";
       const attTime = pt.attendanceTime ?? pt.date;
       const dayKey = safeDayKey(attTime);
@@ -449,17 +452,20 @@ export const getMember = asyncHandler(async function (
     for (const entry of dailyPtEntries) {
       const method = (entry.method || "").trim();
       const methodLower = method.toLowerCase();
-      if (
-        !method ||
-        methodLower === "no active package" ||
+      const isWillPay = entry.status === "WILL_PAY";
+      const isFoc = entry.status === "FOC";
+      const isDropIn =
         methodLower.includes("drop in") ||
         methodLower.includes("drop-in") ||
-        methodLower.includes("dropin")
-      ) {
+        methodLower.includes("dropin");
+
+      if (!method || (!isWillPay && !isFoc && methodLower === "no active package")) {
         continue;
       }
       const dayKey = safeDayKey(entry.time);
-      const targetPkg = findMatchingPkg(undefined, undefined, entry.time, method);
+      const targetPkg = (!isWillPay && !isFoc && !isDropIn)
+        ? findMatchingPkg(undefined, undefined, entry.time, method)
+        : undefined;
       const pkgName = targetPkg ? getPkgName(targetPkg) : method;
       const dedupeKey = `${dayKey}:${pkgName.toLowerCase().trim()}`;
 
@@ -469,10 +475,15 @@ export const getMember = asyncHandler(async function (
           pkgId: targetPkg?.pkgId ?? { name: pkgName },
           attendanceTime: entry.time,
           date: dayKey,
+          status: entry.status || "SUCCESS",
+          coachId: entry.coachId,
         });
       }
 
       if (
+        !isWillPay &&
+        !isFoc &&
+        !isDropIn &&
         targetPkg &&
         dayKey &&
         !hasDeductionOnDay(targetPkg, dayKey, [
@@ -491,6 +502,26 @@ export const getMember = asyncHandler(async function (
           type: "DEDUCT",
           source: "PT_ATTENDANCE",
           reason: `PT attendance: ${pkgName}`,
+        });
+      }
+    }
+
+    const memberOwedSessions = owedByMember.get(memberUidStr) ?? [];
+    for (const owed of memberOwedSessions) {
+      const attTime = owed.attendanceDate;
+      const dayKey = safeDayKey(attTime);
+      const coachName = owed.coachId?.coachName || owed.coachName || "";
+      const pkgName = coachName ? `PT with Coach ${coachName}` : "PT Session";
+      const dedupeKey = `${dayKey}:${pkgName.toLowerCase().trim()}`;
+      if (dayKey && !seenPtDayPkg.has(dedupeKey)) {
+        seenPtDayPkg.add(dedupeKey);
+        ptList.push({
+          pkgId: { name: pkgName },
+          attendanceTime: attTime,
+          date: dayKey,
+          status: "WILL_PAY",
+          coachName,
+          amount: owed.amount,
         });
       }
     }

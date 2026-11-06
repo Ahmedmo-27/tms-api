@@ -2154,7 +2154,7 @@ export class CoachService {
         if (!entry) continue;
         const entryUidStr = (entry.uid?._id ?? entry.uid)?.toString() ?? "";
         if (entryUidStr !== memberId) continue;
-        if (entry.status !== "SUCCESS") continue;
+        if (entry.status !== "SUCCESS" && entry.status !== "WILL_PAY" && entry.status !== "FOC") continue;
 
         const entryMethod = entry.method || "PT Session";
         const entryMethodLower = entryMethod.toLowerCase().trim();
@@ -2193,7 +2193,8 @@ export class CoachService {
           type: "PT",
           title: entryMethod,
           date: entryTime.toISOString(),
-          method: isDropIn
+          status: entry.status || "SUCCESS",
+          method: entry.status === "WILL_PAY" ? "Will Pay" : isDropIn
             ? "PT Drop-In"
             : matchingLog
             ? "Coach Deduction"
