@@ -52,6 +52,7 @@ export interface PreviousSessionInputRecord {
   classId?: string;
   className?: string;
   scid?: string;
+  isOpenGym?: boolean;
 }
 
 export type PreviousSessionInput = string | PreviousSessionInputRecord;
@@ -73,11 +74,18 @@ export class SubscriptionsService {
       } else if (typeof item === "object") {
         const rawDate = String((item as any).date || "").trim();
         if (rawDate) {
+          const rawClassId = (item as any).classId ? String((item as any).classId).trim() : undefined;
+          const rawClassName = (item as any).className ? String((item as any).className).trim() : undefined;
+          const isOpenGym =
+            (item as any).isOpenGym === true ||
+            rawClassId === "OPEN_GYM" ||
+            rawClassName?.toLowerCase() === "open gym";
           normalized.push({
             date: rawDate,
-            classId: (item as any).classId ? String((item as any).classId).trim() : undefined,
-            className: (item as any).className ? String((item as any).className).trim() : undefined,
+            classId: rawClassId,
+            className: rawClassName,
             scid: (item as any).scid ? String((item as any).scid).trim() : undefined,
+            isOpenGym,
           });
         }
       }
@@ -249,7 +257,58 @@ export class SubscriptionsService {
     const opensClasses = packageDoc.opensClasses || [];
     const hasClasses = Array.isArray(opensClasses) && opensClasses.length > 0;
 
-    if (hasClasses) {
+    const isOpenGymSession =
+      Boolean(item.isOpenGym) ||
+      item.classId === "OPEN_GYM" ||
+      item.className?.trim().toLowerCase() === "open gym" ||
+      (!hasClasses && !isPtPackage);
+
+    if (isOpenGymSession) {
+      try {
+        await DailyAttendance.recordOpenGymAttendance(
+          uid,
+          packageDoc.name,
+          session,
+          "SUCCESS",
+          io,
+          (packageDoc as any).locationId?.toString() || targetLocationId,
+          pastDate,
+          packageDoc._id.toString()
+        );
+      } catch (err: any) {
+        if (
+          err?.code === "ATTENDANCE_ALREADY_RECORDED" ||
+          (err instanceof ConflictError &&
+            (err as any).code === "ATTENDANCE_ALREADY_RECORDED")
+        ) {
+          // Already recorded for this date, ignore duplicate error
+        } else {
+          throw err;
+        }
+      }
+
+      const displayClassName =
+        item.className?.trim() ||
+        (hasClasses ? "Open Gym" : packageDoc.name);
+
+      await Member.pushAdjustmentRecord(
+        uid,
+        packageDoc._id.toString(),
+        new Date(pkgStartDate),
+        {
+          date: new Date(),
+          attendanceDate: pastDate,
+          source: "ADMIN",
+          type: "DEDUCT",
+          amount: 1,
+          className: displayClassName,
+          reason:
+            reason?.trim() ||
+            `Previous session: ${displayClassName} (${format(pastDate, "dd-MM-yyyy")})`,
+        },
+        session
+      );
+    } else if (hasClasses) {
       let resolvedClassId = item.classId;
       if (!resolvedClassId && item.scid) {
         const scls = await ScheduledClass.findById(item.scid).session(session);
@@ -833,7 +892,14 @@ export class SubscriptionsService {
 
       const previousDeductCount =
         normalizedPreviousDates.length > 0
-          ? normalizedPreviousDates.length
+          ? (pkg.category === "MIXED"
+              ? normalizedPreviousDates.filter(
+                  (d) =>
+                    !d.isOpenGym &&
+                    d.classId !== "OPEN_GYM" &&
+                    d.className?.toLowerCase() !== "open gym"
+                ).length
+              : normalizedPreviousDates.length)
           : pendingDeduction
           ? 1
           : 0;

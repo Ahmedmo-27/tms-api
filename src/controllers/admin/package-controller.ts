@@ -648,7 +648,18 @@ export const recordMemberPreviousSessions = asyncHandler(async function (
     });
   }
 
-  if (normalizedDates.length > pkg.remainingClasses) {
+  const packageDoc = await Package.findById(pkgId);
+  const isMixed = packageDoc?.category === "MIXED";
+  const sessionsToDeduct = isMixed
+    ? normalizedDates.filter(
+        (d) =>
+          !d.isOpenGym &&
+          d.classId !== "OPEN_GYM" &&
+          d.className?.toLowerCase() !== "open gym"
+      ).length
+    : normalizedDates.length;
+
+  if (sessionsToDeduct > pkg.remainingClasses) {
     throw new BadRequestError(
       "INSUFFICIENT_CLASSES",
       `Cannot record ${normalizedDates.length} sessions. Only ${pkg.remainingClasses} classes remaining.`
@@ -669,8 +680,7 @@ export const recordMemberPreviousSessions = asyncHandler(async function (
     }
   }
 
-  const packageDoc = await Package.findById(pkgId);
-  const newClasses = pkg.remainingClasses - normalizedDates.length;
+  const newClasses = pkg.remainingClasses - sessionsToDeduct;
   const targetLocationId = resolveLocationFilter(req);
   const io = req.app.get("io");
 
