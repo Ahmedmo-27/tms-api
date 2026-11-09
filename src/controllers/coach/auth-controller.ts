@@ -54,12 +54,17 @@ export const coachLogin = asyncHandler(
       hasScheduledClasses = scheduledClassesCount > 0 || extraCategories.length > 0;
     }
 
+    const canViewPtReports =
+      user.role === "managing_coach" &&
+      Boolean(user.canViewPtReports || coachDoc?.canViewPtReports);
+
     new SuccessResponse("Login successful", {
       token,
       coachId: coachDoc ? (coachDoc._id as Types.ObjectId).toString() : (user._id as Types.ObjectId).toString(),
       name: user.name,
       hasPtSessions,
       hasScheduledClasses,
+      canViewPtReports,
     }).send(res);
   }
 );

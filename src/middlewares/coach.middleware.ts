@@ -93,13 +93,29 @@ export const coachGuard = asyncHandler(
 
 export const requireManagingCoach = asyncHandler(
   async (req: Request, _res: Response, next: NextFunction) => {
-    const user = await User.findById((req as CoachAuthRequest).coachId).select("role");
+    const user = await User.findById((req as CoachAuthRequest).coachId).select("role canViewPtReports");
     if (!user || user.role !== "managing_coach") {
       throw new ForbiddenError(
         "INSUFFICIENT_PERMISSIONS",
         "This endpoint is restricted to managing coaches",
       );
     }
+
+    let hasPtPrivilege = Boolean(user.canViewPtReports);
+    if (!hasPtPrivilege && (req as CoachAuthRequest).coachDocId) {
+      const coachDoc = await Coach.findById((req as CoachAuthRequest).coachDocId);
+      if (coachDoc?.canViewPtReports) {
+        hasPtPrivilege = true;
+      }
+    }
+
+    if (!hasPtPrivilege) {
+      throw new ForbiddenError(
+        "INSUFFICIENT_PERMISSIONS",
+        "PT Reports are not enabled for your account",
+      );
+    }
+
     next();
   }
 );

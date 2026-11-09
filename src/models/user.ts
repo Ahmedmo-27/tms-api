@@ -27,6 +27,7 @@ export interface IUser extends Document {
   tmsEmail?: string;
   sendAsName?: string;
   scansCategories?: string[];
+  canViewPtReports?: boolean;
   createdAt: Date;
 }
 
@@ -142,6 +143,11 @@ const UserSchema: Schema<IUser, UserModel, IUserMethods> = new Schema({
   sendAsName: {
     type: String,
     trim: true,
+  },
+  canViewPtReports: {
+    type: Boolean,
+    default: false,
+    required: false,
   },
   createdAt: {
     type: Date,

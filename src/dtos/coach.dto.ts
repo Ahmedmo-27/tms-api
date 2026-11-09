@@ -130,6 +130,7 @@ export interface CoachMeDto {
   hasPtSessions: boolean;
   hasScheduledClasses: boolean;
   scansCategories?: string[];
+  canViewPtReports?: boolean;
 }
 
 export interface TodaySessionSummaryDto {
