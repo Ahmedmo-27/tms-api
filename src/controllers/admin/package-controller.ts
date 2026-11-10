@@ -792,7 +792,13 @@ export const getNonUserPackages = asyncHandler(async function (
     query.createdAt = { $gte: new Date(date as string) };
   }
   query.added = { $ne: true };
-  let packages = await NonUserPackage.find(query).populate({ path: "pkgId" });
+  const page = Math.max(parseInt(String(req.query.page ?? ""), 10) || 1, 1);
+  const limit = Math.min(Math.max(parseInt(String(req.query.limit ?? ""), 10) || 10, 1), 100);
+  let packages = await NonUserPackage.find(query)
+    .sort({ createdAt: -1 })
+    .skip((page - 1) * limit)
+    .limit(limit)
+    .populate({ path: "pkgId" });
   if (!packages || packages.length === 0)
     throw new NotFoundError("PACKAGES_NOT_FOUND", "Packages not found");
   new SuccessResponse("Packages Found!", packages).send(res);
