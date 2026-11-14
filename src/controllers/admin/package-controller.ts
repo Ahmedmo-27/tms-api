@@ -39,9 +39,20 @@ function validatePackagePayload(
     coachId?: unknown;
     opensClasses?: unknown;
     classRestrictions?: unknown;
+    maxBooked?: unknown;
   },
   isUpdate = false,
 ) {
+  if (payload.maxBooked !== undefined && payload.maxBooked !== null) {
+    const num = Number(payload.maxBooked);
+    if (!Number.isInteger(num) || num <= 0) {
+      throw new BadRequestError(
+        "INVALID_MAX_BOOKED",
+        "Maximum booked classes must be a positive integer",
+      );
+    }
+  }
+
   if (!isUpdate || payload.name !== undefined) {
     const trimmed = typeof payload.name === "string" ? payload.name.trim() : "";
     if (!trimmed) {
@@ -211,6 +222,7 @@ export const addPackage = asyncHandler(
       expiryPeriod,
       numberOfSessions,
       notes,
+      maxBooked,
     } = req.body;
 
     validatePackagePayload({
@@ -222,6 +234,7 @@ export const addPackage = asyncHandler(
       coachId,
       opensClasses,
       classRestrictions,
+      maxBooked,
     });
 
     const targetLocationId =
@@ -255,6 +268,7 @@ export const addPackage = asyncHandler(
       coachId,
       opensClasses,
       classRestrictions,
+      ...(maxBooked !== undefined ? { maxBooked: maxBooked !== null ? Number(maxBooked) : null } : {}),
       ...(trimmedNotes !== undefined ? { notes: trimmedNotes } : {}),
       ...(targetLocationId
         ? { locationId: new Types.ObjectId(targetLocationId) }
@@ -318,6 +332,7 @@ export const updatePackage = asyncHandler(
       "locationId",
       "coachId",
       "notes",
+      "maxBooked",
     ];
     const updates = Object.keys(req.body);
     const isValidUpdate = updates.every((update) =>

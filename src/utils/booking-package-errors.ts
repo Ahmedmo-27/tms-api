@@ -1,4 +1,4 @@
-export type BookingPackageSkipReason = "expired" | "remaining" | "restricted" | "future";
+export type BookingPackageSkipReason = "expired" | "remaining" | "restricted" | "max_booked" | "future";
 
 export type BookingPackageFailureCode =
   | "NO_PACKAGES_ON_ACCOUNT"
@@ -8,6 +8,7 @@ export type BookingPackageFailureCode =
   | "PACKAGE_FROZEN"
   | "NO_REMAINING_SESSIONS"
   | "CLASS_RESTRICTION_REACHED"
+  | "MAX_BOOKINGS_REACHED"
   | "PACKAGE_NOT_YET_ACTIVE"
   | "NO_CLASS_PACKAGES_CONFIGURED";
 
@@ -47,6 +48,9 @@ export function resolveBookingPackageFailure(input: {
   const reasons = input.skipReasons ?? [];
   if (reasons.includes("restricted")) {
     return "CLASS_RESTRICTION_REACHED";
+  }
+  if (reasons.includes("max_booked")) {
+    return "MAX_BOOKINGS_REACHED";
   }
   if (reasons.includes("remaining")) {
     return "NO_REMAINING_SESSIONS";
@@ -157,6 +161,16 @@ export const BOOKING_ERROR_MESSAGES = {
       ? `Monthly booking limit reached for ${quoteClassName(className)} under package "${pkgName}".`
       : `Monthly booking limit reached for ${quoteClassName(className)}.`;
   },
+  MAX_BOOKINGS_REACHED: (
+    className?: string,
+    limit: number = 3,
+    audience: BookingAudience = "member",
+  ) => {
+    if (audience === "member") {
+      return `You cannot have more than ${limit} booked classes without attending. Please attend an upcoming class or cancel a booking before booking ${quoteClassName(className)}.`;
+    }
+    return `Member cannot have more than ${limit} booked classes without attending.`;
+  },
   PACKAGE_NOT_YET_ACTIVE: (
     className?: string,
     pkgName?: string,
@@ -221,6 +235,12 @@ export function bookingPackageErrorMessage(
       return BOOKING_ERROR_MESSAGES.CLASS_RESTRICTION_REACHED(
         className,
         extra?.packageName,
+        extra?.limit,
+        audience,
+      );
+    case "MAX_BOOKINGS_REACHED":
+      return BOOKING_ERROR_MESSAGES.MAX_BOOKINGS_REACHED(
+        className,
         extra?.limit,
         audience,
       );

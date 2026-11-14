@@ -224,6 +224,7 @@ export class BookingsService {
         (scheduledClass.cid as any).title,
         scheduledClass.startTime,
         audience,
+        isAdminOverride,
       );
 
       // get pkg used for booking

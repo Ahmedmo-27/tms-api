@@ -61,6 +61,20 @@ export function resolvePackageAllowedFreezeDays(pkg: {
   return getDefaultAllowedFreezeDays(pkg.expiryPeriod);
 }
 
+export function resolvePackageMaxBooked(pkg?: {
+  category?: string;
+  maxBooked?: number;
+}): number | null {
+  if (!pkg) return null;
+  if (typeof pkg.maxBooked === "number" && pkg.maxBooked > 0) {
+    return pkg.maxBooked;
+  }
+  if (pkg.category === "ULTIMATE_MINDSPACER") {
+    return 3;
+  }
+  return null;
+}
+
 export function getPackageEndDate(
   startDate: string | Date,
   pkg: {
@@ -96,6 +110,7 @@ export interface IPackage {
   classRestrictions?: IClassRestriction[];
   opensClasses: Types.ObjectId[];
   notes?: string;
+  maxBooked?: number;
 }
 
 export interface IPackageMethods {}
@@ -185,6 +200,11 @@ const PackageSchema = new Schema<IPackage, IPackageModel, IPackageMethods>({
   notes: {
     type: String,
     required: false,
+  },
+  maxBooked: {
+    type: Number,
+    required: false,
+    default: null,
   },
 });
 
