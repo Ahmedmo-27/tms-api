@@ -1071,15 +1071,63 @@ export class FinanceService {
         sessions: sessions.filter((s) => s.category === category).length,
       })).sort((a, b) => b.hours - a.hours);
 
-      const byClass = new Map<string, { classTitle: string; category: string; sessions: number; hours: number; booked: number; attended: number; capacity: number; dropInRevenue: number }>();
+      type ClassRow = {
+        classTitle: string;
+        category: string;
+        sessions: number;
+        hours: number;
+        booked: number;
+        attended: number;
+        capacity: number;
+        packageUses: number;
+        attendedPackageUses: number;
+        packageValue: number;
+        dropIns: number;
+        attendedDropIns: number;
+        dropInRevenue: number;
+        packageCounts: Map<string, number>;
+        coachSessions: Map<string, number>;
+      };
+      const byClass = new Map<string, ClassRow>();
       for (const s of sessions) {
-        const row = byClass.get(s.classTitle) ?? { classTitle: s.classTitle, category: s.category, sessions: 0, hours: 0, booked: 0, attended: 0, capacity: 0, dropInRevenue: 0 };
+        const row: ClassRow = byClass.get(s.classTitle) ?? {
+          classTitle: s.classTitle,
+          category: s.category,
+          sessions: 0,
+          hours: 0,
+          booked: 0,
+          attended: 0,
+          capacity: 0,
+          packageUses: 0,
+          attendedPackageUses: 0,
+          packageValue: 0,
+          dropIns: 0,
+          attendedDropIns: 0,
+          dropInRevenue: 0,
+          packageCounts: new Map(),
+          coachSessions: new Map(),
+        };
+        const packageBookings = s.bookings.filter((b) => b.method !== DROP_IN_METHOD);
+        const memberDropIns = s.bookings.filter((b) => b.method === DROP_IN_METHOD);
         row.sessions += 1;
         row.hours += s.hours;
         row.booked += s.bookings.length + s.nonMember.length;
         row.attended += s.bookings.filter((b) => b.attended).length + s.nonMember.filter((n) => n.attended).length;
         row.capacity += s.capacity;
+        row.packageUses += packageBookings.length;
+        for (const b of packageBookings) {
+          row.packageCounts.set(b.method, (row.packageCounts.get(b.method) ?? 0) + 1);
+          if (!b.attended) continue;
+          row.attendedPackageUses += 1;
+          row.packageValue += perSessionValue(resolvePackageByName(lookups, b.method, s.locationId)) ?? 0;
+        }
+        row.dropIns += memberDropIns.length + s.nonMember.length;
+        row.attendedDropIns +=
+          memberDropIns.filter((b) => b.attended).length + s.nonMember.filter((n) => n.attended).length;
         row.dropInRevenue += s.dropInRevenue;
+        for (const coachId of s.coachIds) {
+          row.coachSessions.set(coachId, (row.coachSessions.get(coachId) ?? 0) + 1);
+        }
         byClass.set(s.classTitle, row);
       }
 
@@ -1100,10 +1148,22 @@ export class FinanceService {
         categories: categoryTotals,
         coaches,
         byClass: [...byClass.values()]
-          .map((c) => ({
+          .map(({ packageCounts, coachSessions, ...c }) => ({
             ...c,
             hours: round2(c.hours),
+            packageValue: round2(c.packageValue),
             dropInRevenue: round2(c.dropInRevenue),
+            packages: [...packageCounts.entries()]
+              .map(([name, uses]) => ({ name, uses }))
+              .sort((a, b) => b.uses - a.uses),
+            coaches: [...coachSessions.entries()]
+              .map(([coachId, count]) => ({
+                coachId,
+                name: lookups.coaches.get(coachId) ?? "Unknown coach",
+                sessions: count,
+              }))
+              .sort((a, b) => b.sessions - a.sessions),
+            unassignedSessions: c.sessions - sessions.filter((s) => s.classTitle === c.classTitle && s.coachIds.length).length,
             fillRate: c.capacity ? round2((c.booked / c.capacity) * 100) : null,
             attendanceRate: c.booked ? round2((c.attended / c.booked) * 100) : null,
           }))
