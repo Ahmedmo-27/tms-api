@@ -41,6 +41,15 @@ export const getFinanceCoachHours = asyncHandler(async (req: Request, res: Respo
   new SuccessResponse("Coach hours fetched", data).send(res);
 });
 
+export const getFinanceClassDetail = asyncHandler(async (req: Request, res: Response) => {
+  const classTitle = typeof req.query.classTitle === "string" ? req.query.classTitle.trim() : "";
+  if (!classTitle || classTitle.length > 200) {
+    throw new BadRequestError("INVALID_CLASS", "A class title is required");
+  }
+  const data = await FinanceService.classDetail(rangeFrom(req), classTitle);
+  new SuccessResponse("Class detail fetched", data).send(res);
+});
+
 export const getFinanceCoachUsage = asyncHandler(async (req: Request, res: Response) => {
   const { coachId } = req.params;
   if (!coachId || !Types.ObjectId.isValid(coachId)) {

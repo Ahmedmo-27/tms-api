@@ -3,6 +3,7 @@ import { authenticateUser, authorizeUser } from "../middlewares/auth.middleware"
 import { ForbiddenError } from "../core/ApiError";
 import {
   getFinanceBranches,
+  getFinanceClassDetail,
   getFinanceCoachHours,
   getFinanceCoachUsage,
   getFinanceCoaches,
@@ -33,6 +34,7 @@ financeRoutes.get("/overview", getFinanceOverview);
 financeRoutes.get("/sales", getFinanceSales);
 financeRoutes.get("/coaches", getFinanceCoaches);
 financeRoutes.get("/coach-hours", getFinanceCoachHours);
+financeRoutes.get("/class-detail", getFinanceClassDetail);
 financeRoutes.get("/coaches/:coachId/package-usage", getFinanceCoachUsage);
 financeRoutes.get("/pt", getFinancePt);
 financeRoutes.get("/deferred-revenue", getFinanceDeferred);
