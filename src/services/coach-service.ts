@@ -1400,7 +1400,7 @@ export class CoachService {
     const hasMissingPlace =
       typeof data.hasMissingPlace === "boolean"
         ? data.hasMissingPlace
-        : count < successScanCount;
+        : count !== successScanCount;
 
     scheduledClass.attendanceConfirmation = {
       confirmed: true,
