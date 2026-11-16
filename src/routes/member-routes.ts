@@ -33,9 +33,41 @@ import {
   removeFcmToken,
 } from "../controllers/admin/notifications-controller";
 import { checkMobileAppVersion } from "../middlewares/appVersion.middleware";
+import { cacheResponse } from "../middlewares/cacheResponse";
+import {
+  CacheTags,
+  actorOf,
+  memberTag,
+} from "../cache/response-cache";
 
 const memberRoutes = express.Router();
 const memberOrPending = ["member", "user"] as const;
+
+const memberPrivateCache = cacheResponse({
+  ttlMs: 15_000,
+  scope: "user",
+  tags: (req) => [memberTag(actorOf(req)?.id)],
+});
+const packageCatalogCache = cacheResponse({
+  ttlMs: 60_000,
+  scope: "role",
+  tags: [CacheTags.packages],
+});
+const scheduleCache = cacheResponse({
+  ttlMs: 20_000,
+  scope: "role",
+  tags: [CacheTags.schedule],
+});
+const coachListCache = cacheResponse({
+  ttlMs: 120_000,
+  scope: "role",
+  tags: [CacheTags.coaches],
+});
+const locationListCache = cacheResponse({
+  ttlMs: 300_000,
+  scope: "role",
+  tags: [CacheTags.locations],
+});
 
 memberRoutes.use(checkMobileAppVersion);
 
@@ -44,6 +76,7 @@ memberRoutes.get(
   "/profile",
   authenticateUser,
   authorizeUser([...memberOrPending]),
+  memberPrivateCache,
   getMemberProfile
 );
 
@@ -52,6 +85,7 @@ memberRoutes.get(
   "/classes",
   authenticateUser,
   authorizeUser([...memberOrPending]),
+  memberPrivateCache,
   getBookings
 );
 memberRoutes.post(
@@ -96,12 +130,14 @@ memberRoutes.get(
   "/packages",
   authenticateUser,
   authorizeUser([...memberOrPending]),
+  packageCatalogCache,
   getPackage
 );
 memberRoutes.get(
   "/member-packages",
   authenticateUser,
   authorizeUser([...memberOrPending]),
+  memberPrivateCache,
   getMemberPackages
 );
 memberRoutes.post(
@@ -140,6 +176,7 @@ memberRoutes.get(
   "/packages/freeze-requests",
   authenticateUser,
   authorizeUser(["member"]),
+  memberPrivateCache,
   getMyFreezeRequests
 );
 
@@ -148,6 +185,7 @@ memberRoutes.get(
   "/schedule",
   authenticateUser,
   authorizeUser([...memberOrPending]),
+  scheduleCache,
   getSchedule
 );
 
@@ -168,6 +206,7 @@ memberRoutes.get(
   "/coaches",
   authenticateUser,
   authorizeUser([...memberOrPending]),
+  coachListCache,
   getCoaches
 );
 
@@ -176,6 +215,7 @@ memberRoutes.get(
   "/locations",
   authenticateUser,
   authorizeUser([...memberOrPending]),
+  locationListCache,
   getLocation
 );
 

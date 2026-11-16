@@ -413,11 +413,11 @@ const BookingSchema = new Schema({
   },
   bookingTime: {
     type: Date,
-    required: true,
+    default: Date.now,
   },
   isDropIn: {
     type: Boolean,
-    required: true,
+    default: false,
   },
   paymentId: {
     type: Schema.Types.ObjectId,

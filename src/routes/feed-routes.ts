@@ -7,6 +7,8 @@ import {
 import { authenticateUser } from "../middlewares/auth.middleware";
 import { authorizeUser } from "../middlewares/auth.middleware";
 import { checkChallengeSubscription } from "../middlewares/challenge.middleware";
+import { cacheResponse, invalidateCache } from "../middlewares/cacheResponse";
+import { CacheTags } from "../cache/response-cache";
 
 const router = express.Router();
 
@@ -16,6 +18,7 @@ router.post(
   authenticateUser,
   authorizeUser(["member", "user"]),
   checkChallengeSubscription(),
+  invalidateCache([CacheTags.feed]),
   createPost,
 );
 
@@ -24,6 +27,7 @@ router.post(
   authenticateUser,
   authorizeUser(["member", "user"]),
   checkChallengeSubscription(),
+  invalidateCache([CacheTags.feed]),
   likePost,
 )
 
@@ -33,6 +37,7 @@ router.get(
   authenticateUser,
   authorizeUser(["member", "user"]),
   checkChallengeSubscription(),
+  cacheResponse({ ttlMs: 15_000, scope: "user", tags: [CacheTags.feed] }),
   getGlobalFeed,
 );
 

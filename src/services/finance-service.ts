@@ -15,6 +15,7 @@ import DailyAttendance from "../models/dailyAttendance";
 import { NotFoundError } from "../core/ApiError";
 import { locationIdScalarQuery } from "../utils/location-scope";
 import { isPackageExpired } from "../utils/timezone";
+import { CacheTags, invalidateTags } from "../cache/response-cache";
 import {
   DROP_IN_METHOD,
   FinanceRange,
@@ -2827,7 +2828,8 @@ export class FinanceService {
   }
 }
 
-/** Test hook: drop cached results. */
+/** Test hook: drop cached results, including HTTP finance responses. */
 export function clearFinanceCache() {
   cache.clear();
+  invalidateTags([CacheTags.finance]);
 }

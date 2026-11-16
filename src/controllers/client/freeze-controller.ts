@@ -3,6 +3,7 @@ import { AuthRequest } from "../../middlewares/auth.middleware";
 import { FreezeService } from "../../services/freeze-service";
 import { SuccessResponse } from "../../core/ApiResponse";
 import asyncHandler from "../../utils/asyncHandler";
+import { invalidateMemberPackageCache } from "../../cache/response-cache";
 
 export const freezeMyPackage = asyncHandler(async function (
   req: Request,
@@ -21,6 +22,7 @@ export const freezeMyPackage = asyncHandler(async function (
     reason,
   });
 
+  invalidateMemberPackageCache(uid);
   new SuccessResponse("Package Frozen Successfully!", pkg).send(res);
 });
 
@@ -38,6 +40,7 @@ export const unfreezeMyPackage = asyncHandler(async function (
     pkgStartDate,
   });
 
+  invalidateMemberPackageCache(uid);
   new SuccessResponse("Package Unfrozen Successfully!", pkg).send(res);
 });
 
@@ -57,6 +60,7 @@ export const requestExtraFreeze = asyncHandler(async function (
     reason
   );
 
+  invalidateMemberPackageCache(uid);
   new SuccessResponse("Extra Freeze Request Submitted Successfully!", request).send(res);
 });
 

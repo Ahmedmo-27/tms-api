@@ -226,7 +226,7 @@ export class PackageStatusService {
         }
 
         if (memberUpdated) {
-          await member.save();
+          await member.save({ validateModifiedOnly: true });
           updatedMembers++;
         }
       }

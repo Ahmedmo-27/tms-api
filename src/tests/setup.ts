@@ -8,6 +8,8 @@
  *  - no accidental network or real database access.
  */
 
+import { clearResponseCache } from "../cache/response-cache";
+
 // ── Deterministic environment ──────────────────────────────────────────────
 // Only defaults: a test that needs a different value still overrides it.
 const ENV_DEFAULTS: Record<string, string> = {
@@ -98,6 +100,9 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = realFetch;
+  // Response caching is process-wide. Drop it so one test cannot satisfy
+  // the next test's GET with a stale body.
+  clearResponseCache();
 });
 
 // Mongoose connections are never opened by the unit suite; if a stray `connect`

@@ -8,6 +8,7 @@ import asyncHandler from "../../utils/asyncHandler";
 import logger from "../../config/logger";
 import { SubscriptionsService } from "../../services/subscriptions-service";
 import { PackageStatusService } from "../../services/package-status-service";
+import { invalidateMemberPackageCache } from "../../cache/response-cache";
 
 // GET all packages to subscribe
 export const getPackage = asyncHandler(async function (
@@ -89,6 +90,7 @@ export const subToPackage = asyncHandler(async function (
     undefined,
     io
   );
+  invalidateMemberPackageCache(_id);
   new SuccessResponse("Package Added!").send(res);
 });
 
@@ -101,5 +103,6 @@ export const unsubFromPackage = asyncHandler(async function (
   const pkgId = req.params.pkgId;
   const pkgStartDate = req.query.pkgStartDate as string
   await SubscriptionsService.unsubscribeFromPackage(_id, pkgId, pkgStartDate);
+  invalidateMemberPackageCache(_id);
   new SuccessResponse("Package Deleted!").send(res);
 });

@@ -21,15 +21,33 @@ import {
   resetPasswordGlobalLimiter,
   resetPasswordLimiter,
 } from "../config/rateLimiter";
+import { cacheResponse, invalidateCache } from "../middlewares/cacheResponse";
+import { CacheTags } from "../cache/response-cache";
 
 const authRoutes = express.Router();
 
-authRoutes.get("/app-version", getAppVersionInfo);
-authRoutes.get("/", authenticateUser, authorizeUser(["management", "branch_admin"]), getUser);
+authRoutes.get(
+  "/app-version",
+  cacheResponse({
+    ttlMs: 300_000,
+    scope: "public",
+    tags: [CacheTags.appVersion],
+    varyHeaders: ["x-app-version", "x-client-version"],
+  }),
+  getAppVersionInfo,
+);
+authRoutes.get(
+  "/",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  cacheResponse({ ttlMs: 30_000, scope: "user", tags: [CacheTags.users] }),
+  getUser,
+);
 authRoutes.delete(
   "/",
   authenticateUser,
   authorizeUser(["management", "branch_admin", "member"]),
+  invalidateCache([CacheTags.users, CacheTags.members]),
   deactivateAccount
 );
 authRoutes.post("/register", loginLimiter, registerUser);
@@ -37,6 +55,7 @@ authRoutes.post(
   "/register-manually",
   authenticateUser,
   authorizeUser(["management", "branch_admin"]),
+  invalidateCache([CacheTags.users]),
   registerUserManually
 );
 authRoutes.post("/login", loginLimiter, loginUser);

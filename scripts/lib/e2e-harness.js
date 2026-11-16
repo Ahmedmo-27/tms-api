@@ -48,10 +48,11 @@ function sleep(ms) {
 }
 
 function makeRequest(apiBase) {
-  return async function request(method, urlPath, { token, body } = {}) {
+  return async function request(method, urlPath, { token, body, headers: extraHeaders } = {}) {
     const headers = {
       "Content-Type": "application/json",
       Accept: "application/json",
+      ...(extraHeaders || {}),
     };
     if (token) headers.Authorization = `Bearer ${token}`;
     const res = await fetch(`${apiBase}${urlPath}`, {
@@ -66,7 +67,17 @@ function makeRequest(apiBase) {
     } catch {
       data = text;
     }
-    return { status: res.status, data };
+    const responseHeaders = {};
+    res.headers.forEach((value, key) => {
+      responseHeaders[key] = value;
+    });
+    return {
+      status: res.status,
+      data,
+      headers: responseHeaders,
+      cache: responseHeaders["x-cache"] ? responseHeaders["x-cache"].toUpperCase() : null,
+      cacheControl: responseHeaders["cache-control"] || null,
+    };
   };
 }
 
