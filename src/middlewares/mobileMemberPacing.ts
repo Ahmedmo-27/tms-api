@@ -4,9 +4,11 @@ import { AuthRequest } from "./auth.middleware";
 /**
  * Pacing middleware to resolve mobile client-side race condition in knowpackages.dart.
  * When a mobile member opens the packages screen, the app requests /profile and /packages concurrently.
- * A 500ms pacing window allows /profile to finish and set _isUserMember = true in Flutter state
- * before /packages arrives, preventing the client from filtering to online packages only.
+ * A 1,200ms pacing window guarantees /profile finishes and sets _isUserMember = true in Flutter state
+ * before /packages arrives, even on cold starts with deep booking history.
  */
+export const MOBILE_MEMBER_PACING_DELAY_MS = 1200;
+
 export function mobileMemberPackagePacing(
   req: Request,
   res: Response,
@@ -22,7 +24,7 @@ export function mobileMemberPackagePacing(
   const hasNoFilter = !req.query.category && !req.query.coachId && !req.query.name;
 
   if (isMobile && isMember && hasNoFilter) {
-    setTimeout(next, 500);
+    setTimeout(next, MOBILE_MEMBER_PACING_DELAY_MS);
     return;
   }
 

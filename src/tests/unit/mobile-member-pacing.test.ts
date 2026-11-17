@@ -10,7 +10,7 @@ describe("mobileMemberPackagePacing middleware", () => {
     jest.useRealTimers();
   });
 
-  it("paces requests for mobile members with no query filter by 500ms", () => {
+  it("paces requests for mobile members with no query filter by 1200ms", () => {
     const req: any = {
       deviceType: "mobile",
       user: { role: "member" },
@@ -24,7 +24,7 @@ describe("mobileMemberPackagePacing middleware", () => {
 
     expect(next).not.toHaveBeenCalled();
 
-    jest.advanceTimersByTime(499);
+    jest.advanceTimersByTime(1199);
     expect(next).not.toHaveBeenCalled();
 
     jest.advanceTimersByTime(1);
@@ -103,7 +103,7 @@ describe("mobileMemberPackagePacing middleware", () => {
     mobileMemberPackagePacing(req as Request, res as Response, next);
 
     expect(next).not.toHaveBeenCalled();
-    jest.advanceTimersByTime(500);
+    jest.advanceTimersByTime(1200);
     expect(next).toHaveBeenCalledTimes(1);
   });
 });
