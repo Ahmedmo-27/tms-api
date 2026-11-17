@@ -33,6 +33,7 @@ import {
   removeFcmToken,
 } from "../controllers/admin/notifications-controller";
 import { checkMobileAppVersion } from "../middlewares/appVersion.middleware";
+import { mobileMemberPackagePacing } from "../middlewares/mobileMemberPacing";
 import { cacheResponse } from "../middlewares/cacheResponse";
 import {
   CacheTags,
@@ -45,6 +46,11 @@ const memberOrPending = ["member", "user"] as const;
 
 const memberPrivateCache = cacheResponse({
   ttlMs: 15_000,
+  scope: "user",
+  tags: (req) => [memberTag(actorOf(req)?.id)],
+});
+const profileCache = cacheResponse({
+  ttlMs: 60_000,
   scope: "user",
   tags: (req) => [memberTag(actorOf(req)?.id)],
 });
@@ -76,7 +82,7 @@ memberRoutes.get(
   "/profile",
   authenticateUser,
   authorizeUser([...memberOrPending]),
-  memberPrivateCache,
+  profileCache,
   getMemberProfile
 );
 
@@ -130,6 +136,7 @@ memberRoutes.get(
   "/packages",
   authenticateUser,
   authorizeUser([...memberOrPending]),
+  mobileMemberPackagePacing,
   packageCatalogCache,
   getPackage
 );
