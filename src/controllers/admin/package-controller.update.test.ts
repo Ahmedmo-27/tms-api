@@ -1,3 +1,4 @@
+import type { Request, Response } from "express";
 import { Types } from "mongoose";
 
 jest.mock("../../models/package", () => {
@@ -49,8 +50,11 @@ const fullFormBody = (overrides: Record<string, unknown> = {}) => ({
 });
 
 async function callUpdate(body: Record<string, unknown>) {
-  const req: any = { params: { id: PKG_ID }, body };
-  const res: any = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
+  const req = { params: { id: PKG_ID }, body } as unknown as Request;
+  const res = {
+    status: jest.fn().mockReturnThis(),
+    json: jest.fn().mockReturnThis(),
+  } as unknown as Response & { status: jest.Mock; json: jest.Mock };
   const next = jest.fn();
   await updatePackage(req, res, next);
   return { res, next };
@@ -60,7 +64,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   PackageMock.findById.mockResolvedValue(existingPkg);
   PackageMock.findOne.mockResolvedValue(sibling);
-  PackageMock.findByIdAndUpdate.mockImplementation(async (_id: string, update: any) => ({
+  PackageMock.findByIdAndUpdate.mockImplementation(async (_id: string, update: Record<string, unknown>) => ({
     ...existingPkg,
     ...update,
   }));
