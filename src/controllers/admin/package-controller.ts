@@ -347,13 +347,19 @@ export const updatePackage = asyncHandler(
 
     validatePackagePayload(req.body, true);
 
-    if (req.body.name || req.body.category) {
-      await assertNoDuplicatePackage(
-        req.body.name ?? existing.name,
-        req.body.category ?? existing.category,
-        req.body.locationId ?? existing.locationId?.toString(),
-        id,
-      );
+    // The edit form always resends name + category, so only run the duplicate
+    // check when the package's identity actually changes. Otherwise packages
+    // that already share a name (e.g. several "Space membership" durations)
+    // could never have their price or other fields edited.
+    const nextName = String(req.body.name ?? existing.name).trim();
+    const nextCategory = req.body.category ?? existing.category;
+    const nextLocationId = req.body.locationId ?? existing.locationId?.toString();
+    const identityChanged =
+      nextName.toLowerCase() !== String(existing.name ?? "").trim().toLowerCase() ||
+      nextCategory !== existing.category ||
+      String(nextLocationId ?? "") !== String(existing.locationId ?? "");
+    if (identityChanged) {
+      await assertNoDuplicatePackage(nextName, nextCategory, nextLocationId, id);
     }
 
     if (req.body.coachId || req.body.opensClasses || req.body.classRestrictions) {
@@ -377,6 +383,9 @@ export const updatePackage = asyncHandler(
       expiryPeriod: normalized.expiryPeriod,
       numberOfSessions: normalized.numberOfSessions,
     };
+    if (typeof updatePayload.name === "string") {
+      updatePayload.name = updatePayload.name.trim();
+    }
     if (updatePayload.notes !== undefined) {
       updatePayload.notes =
         typeof updatePayload.notes === "string"
