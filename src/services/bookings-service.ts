@@ -1829,6 +1829,7 @@ export class BookingsService {
       await PaymentsService.findPaymentByMerchantReference(
         merchantReferenceId,
         "DROPIN",
+        30,
       );
     if (existingPayment) {
       logger.info(
@@ -1855,6 +1856,7 @@ export class BookingsService {
         const recorded = await PaymentsService.findPaymentByMerchantReference(
           merchantReferenceId,
           "DROPIN",
+          30,
         );
         if (recorded) {
           await BookingsService.completeDropInFromExistingPayment(
@@ -1875,10 +1877,12 @@ export class BookingsService {
       await resolveSessionPaymentLocationId(scheduledClass as any);
     await runInTransaction(async (session: ClientSession) => {
       // Re-check inside txn in case a concurrent confirm already saved payment
+      const recentCutoff = new Date(Date.now() - 30 * 60 * 1000);
       const racePayment = await Payment.findOne({
         merchantReferenceId,
         purpose: "DROPIN",
         isRefunded: { $ne: true },
+        paymentTime: { $gte: recentCutoff },
       }).session(session);
       if (racePayment) {
         await Member.saveDropIn(

@@ -137,4 +137,30 @@ describe("PaymentsService.findPaymentByMerchantReference", () => {
     });
     expect(result).toBe(payment);
   });
+
+  it("applies paymentTime cutoff when maxAgeMinutes is specified", async () => {
+    const payment = { _id: new Types.ObjectId() };
+    (Payment.findOne as jest.Mock).mockReturnValue({
+      sort: jest.fn().mockResolvedValue(payment),
+    });
+
+    const now = Date.now();
+    jest.spyOn(Date, "now").mockReturnValue(now);
+
+    const result = await PaymentsService.findPaymentByMerchantReference(
+      "mref-1",
+      "PACKAGE",
+      30,
+    );
+
+    const expectedCutoff = new Date(now - 30 * 60 * 1000);
+    expect(Payment.findOne).toHaveBeenCalledWith({
+      merchantReferenceId: "mref-1",
+      isRefunded: { $ne: true },
+      purpose: "PACKAGE",
+      paymentTime: { $gte: expectedCutoff },
+    });
+    expect(result).toBe(payment);
+    (Date.now as jest.Mock).mockRestore?.();
+  });
 });

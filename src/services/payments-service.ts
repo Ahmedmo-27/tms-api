@@ -376,13 +376,19 @@ export class PaymentsService {
   static async findPaymentByMerchantReference(
     merchantReferenceId: string,
     purpose?: string,
+    maxAgeMinutes?: number,
   ): Promise<IPayment | null> {
     const query: Record<string, unknown> = {
       merchantReferenceId,
       isRefunded: { $ne: true },
     };
     if (purpose) query.purpose = purpose;
-    return Payment.findOne(query).sort({ paymentTime: 1 });
+    if (maxAgeMinutes != null && maxAgeMinutes > 0) {
+      query.paymentTime = {
+        $gte: new Date(Date.now() - maxAgeMinutes * 60 * 1000),
+      };
+    }
+    return Payment.findOne(query).sort({ paymentTime: -1 });
   }
 
   static async savePayment(

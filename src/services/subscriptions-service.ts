@@ -1119,6 +1119,7 @@ export class SubscriptionsService {
         await PaymentsService.findPaymentByMerchantReference(
           merchantReferenceId,
           "PACKAGE",
+          30,
         );
       if (existingPayment) {
         const alreadyHasPkg = await Member.hasPackageOnStartDay(
@@ -1210,6 +1211,7 @@ export class SubscriptionsService {
           const recorded = await PaymentsService.findPaymentByMerchantReference(
             merchantReferenceId,
             "PACKAGE",
+            30,
           );
           if (recorded) {
             const alreadyHasPkg = await Member.hasPackageOnStartDay(
@@ -1311,10 +1313,12 @@ export class SubscriptionsService {
 
       // Concurrent confirm may have saved payment already
       if (merchantReferenceId && paymentMethod === "APP") {
+        const recentCutoff = new Date(Date.now() - 30 * 60 * 1000);
         const racePayment = await Payment.findOne({
           merchantReferenceId,
           purpose: "PACKAGE",
           isRefunded: { $ne: true },
+          paymentTime: { $gte: recentCutoff },
         }).session(session);
         if (racePayment) {
           await Member.addPackage(
