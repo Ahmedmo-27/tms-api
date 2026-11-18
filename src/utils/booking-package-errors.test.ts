@@ -47,6 +47,16 @@ describe("resolveBookingPackageFailure", () => {
     ).toBe("CLASS_RESTRICTION_REACHED");
   });
 
+  it("prefers max_booked limit over remaining sessions and expiry", () => {
+    expect(
+      resolveBookingPackageFailure({
+        hasAnyActivePackage: true,
+        matchingActiveCount: 1,
+        skipReasons: ["expired", "remaining", "max_booked"],
+      }),
+    ).toBe("MAX_BOOKINGS_REACHED");
+  });
+
   it("prefers remaining sessions over expiry", () => {
     expect(
       resolveBookingPackageFailure({
@@ -101,9 +111,21 @@ describe("bookingPackageErrorMessage", () => {
         limit: 2,
       }),
     ).toBe('You have reached your monthly booking limit (2 sessions) for "Reformer Pilates" under package "1 Month Ultimate Mindspacer".');
+
+    expect(
+      bookingPackageErrorMessage("MAX_BOOKINGS_REACHED", "Functional Training", {
+        limit: 3,
+      }),
+    ).toBe('You cannot have more than 3 booked classes without attending. Please attend an upcoming class or cancel a booking before booking "Functional Training".');
   });
 
   it("formats admin-perspective messages with 'the member / this member'", () => {
+    expect(
+      bookingPackageErrorMessage("MAX_BOOKINGS_REACHED", "Functional Training", {
+        limit: 3,
+        audience: "admin",
+      }),
+    ).toBe("Member cannot have more than 3 booked classes without attending.");
     expect(
       bookingPackageErrorMessage("NO_PACKAGES_ON_ACCOUNT", "Mat Pilates", {
         audience: "admin",

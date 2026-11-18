@@ -118,18 +118,16 @@ ScheduleSchema.static("scheduleClass", async function (scid: string) {
 ScheduleSchema.static(
   "cancelClass",
   async function (scid: string, session: ClientSession) {
-    const schedule = await Schedule.findOne({
-      classes: new Types.ObjectId(scid),
-    });
-    if (!schedule)
-      throw new NotFoundError("CLASS_NOT_FOUND", "Class not Scheduled", {
-        scid,
-        schedule,
-      }); // class not scheduled for this date
-    schedule.classes = schedule.classes.filter(
-      (c) => c.toString() !== scid.toString()
+    // Remove the class from whichever day's schedule references it. If no
+    // schedule references it (an orphaned ScheduledClass), there is nothing
+    // to remove ? that must not block cancelling the class itself.
+    const result = await Schedule.updateMany(
+      { classes: new Types.ObjectId(scid) },
+      { $pull: { classes: new Types.ObjectId(scid) } },
+      { session }
     );
-    await schedule.save({ session });
+    if (result.matchedCount === 0)
+      logger.warn("cancelClass: class was not in any schedule", { scid });
   }
 );
 

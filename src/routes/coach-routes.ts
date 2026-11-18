@@ -10,34 +10,52 @@ import {
   submitCoachTicket,
   getActiveTicketCategories,
 } from "../controllers/admin/ticket-controller";
+import { cacheResponse, invalidateCache } from "../middlewares/cacheResponse";
+import { CacheTags, coachTag } from "../cache/response-cache";
 
 const router = Router();
 
+const coachRead = (ttlMs: number, ...extra: string[]) =>
+  cacheResponse({
+    ttlMs,
+    scope: "user",
+    tags: (req) => [coachTag(req), ...extra],
+  });
+
+const coachWrite = (...extra: string[]) =>
+  invalidateCache((req) => [coachTag(req), ...extra]);
+
 router.post("/auth/login", loginLimiter, coachLogin);
 router.get("/auth/verifyToken", authenticateUser, authorizeUser(["coach", "managing_coach"]), verifyToken);
-router.post("/auth/change-password", coachGuard, changeCoachPassword);
+router.post("/auth/change-password", coachGuard, coachWrite(), changeCoachPassword);
 
-router.get("/me", coachGuard, getCoachMe);
-router.get("/today", coachGuard, getToday);
-router.get("/notifications", coachGuard, getNotifications);
-router.patch("/notifications/read", coachGuard, markNotificationsRead);
+router.get("/me", coachGuard, coachRead(30_000), getCoachMe);
+router.get("/today", coachGuard, coachRead(15_000, CacheTags.schedule), getToday);
+router.get("/notifications", coachGuard, coachRead(15_000), getNotifications);
+router.patch("/notifications/read", coachGuard, coachWrite(), markNotificationsRead);
 
 // Protected — require valid coach JWT
-router.get("/clients", coachGuard, getClients);
-router.get("/clients/:memberId/packages", coachGuard, getMemberPackages);
-router.get("/clients/:memberId/deductions", coachGuard, getDeductionHistory);
-router.get("/clients/:memberId/attendance", coachGuard, getClientAttendanceHistory);
-router.get("/schedule", coachGuard, getSchedule);
-router.get("/scans", coachGuard, getScans);
-router.post("/scans/:scid/confirm-attendance", coachGuard, confirmClassAttendance);
-router.get("/pt-attendance", coachGuard, getPtAttendance);
-router.post("/deduct", coachGuard, deductSession);
+router.get("/clients", coachGuard, coachRead(20_000), getClients);
+router.get("/clients/:memberId/packages", coachGuard, coachRead(20_000), getMemberPackages);
+router.get("/clients/:memberId/deductions", coachGuard, coachRead(20_000), getDeductionHistory);
+router.get("/clients/:memberId/attendance", coachGuard, coachRead(20_000, CacheTags.attendance), getClientAttendanceHistory);
+router.get("/schedule", coachGuard, coachRead(20_000, CacheTags.schedule), getSchedule);
+router.get("/scans", coachGuard, coachRead(15_000, CacheTags.attendance), getScans);
+router.post("/scans/:scid/confirm-attendance", coachGuard, coachWrite(CacheTags.schedule, CacheTags.attendance), confirmClassAttendance);
+router.get("/pt-attendance", coachGuard, coachRead(15_000, CacheTags.attendance), getPtAttendance);
+router.post("/deduct", coachGuard, coachWrite(CacheTags.attendance), deductSession);
 
-router.get("/tickets", coachGuard, getCoachTickets);
-router.post("/tickets", coachGuard, submitCoachTicket);
-router.get("/ticket-categories", coachGuard, getActiveTicketCategories);
+router.get("/tickets", coachGuard, coachRead(30_000, CacheTags.tickets), getCoachTickets);
+router.post("/tickets", coachGuard, coachWrite(CacheTags.tickets), submitCoachTicket);
+router.get("/ticket-categories", coachGuard, coachRead(60_000, CacheTags.ticketCategories), getActiveTicketCategories);
 
-// Managing coach reports
-router.get("/managing/pt-achievement", coachGuard, requireManagingCoach, getPtAchievementReport);
+// Managing coach reports. The service keeps its own 45s map; this matches that window.
+router.get(
+  "/managing/pt-achievement",
+  coachGuard,
+  requireManagingCoach,
+  coachRead(45_000, CacheTags.ptAchievement),
+  getPtAchievementReport,
+);
 
 export default router;

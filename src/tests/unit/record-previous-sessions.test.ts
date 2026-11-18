@@ -1584,6 +1584,74 @@ describe("Unit Tests: Record Previous Session Dates & Edge Cases", () => {
       // DailyAttendance.recordOpenGymAttendance called twice
       expect(DailyAttendance.recordOpenGymAttendance).toHaveBeenCalledTimes(2);
     });
+
+    it("should record open gym attendance for an ultimate mindspacer package with opensClasses", async () => {
+      const uid = new Types.ObjectId().toString();
+      const pkgId = new Types.ObjectId().toString();
+      const startDate = new Date("2026-10-01");
+
+      const mockMember: any = {
+        uid,
+        packages: [
+          {
+            pkgId: new Types.ObjectId(pkgId),
+            pkgStartDate: startDate,
+            remainingClasses: 10000,
+            name: "3 Month Ultimate Mindspacer",
+          },
+        ],
+      };
+      (Member.findOne as jest.Mock).mockResolvedValue(mockMember);
+      (Member.editPackageClasses as any) = jest.fn().mockResolvedValue(undefined);
+      (Member.pushAdjustmentRecord as any) = jest.fn().mockResolvedValue(undefined);
+      (Member.updateOne as any) = jest.fn().mockResolvedValue({ acknowledged: true });
+      (DailyAttendance.recordOpenGymAttendance as any) = jest.fn().mockResolvedValue(undefined);
+      (Package.findById as jest.Mock).mockResolvedValue({
+        _id: new Types.ObjectId(pkgId),
+        name: "3 Month Ultimate Mindspacer",
+        category: "ULTIMATE_MINDSPACER",
+        opensClasses: [{ _id: new Types.ObjectId(), title: "Reformer Pilates" }],
+      });
+
+      const mockIo = { emit: jest.fn() };
+      const req: any = {
+        body: {
+          uid,
+          pkgId,
+          pkgStartDate: startDate.toISOString(),
+          previousSessionDates: [
+            { date: "2026-10-03", classId: "OPEN_GYM", className: "Open Gym", isOpenGym: true },
+          ],
+        },
+        app: { get: jest.fn().mockReturnValue(mockIo) },
+      };
+      const res: any = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+
+      await invokeController(recordMemberPreviousSessions, req, res);
+
+      expect(DailyAttendance.recordOpenGymAttendance).toHaveBeenCalledWith(
+        uid,
+        "3 Month Ultimate Mindspacer",
+        null,
+        "SUCCESS",
+        mockIo,
+        null,
+        expect.any(Date),
+        pkgId
+      );
+
+      expect(Member.pushAdjustmentRecord).toHaveBeenCalledWith(
+        uid,
+        pkgId,
+        startDate,
+        expect.objectContaining({
+          className: "Open Gym",
+          type: "DEDUCT",
+          amount: 1,
+        }),
+        null
+      );
+    });
   });
 
 });

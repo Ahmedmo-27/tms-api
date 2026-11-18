@@ -204,6 +204,25 @@ describe("Attendance Confirmation & Missing Place", () => {
 
       expect(mockSession.attendanceConfirmation.hasMissingPlace).toBe(true);
     });
+
+    it("flags discrepancy (hasMissingPlace true) when confirmed count is greater than scanned-in count (unscanned attendee)", async () => {
+      const now = Date.now();
+      const startTime = new Date(now - 40 * 60 * 1000);
+      const endTime = new Date(now + 20 * 60 * 1000);
+
+      // 5 scanned in, but coach counts 6 physically present in the room
+      const mockSession = createMockSession({ startTime, endTime, bookedCount: 5, scansSuccessCount: 5 });
+      (ScheduledClass.findById as jest.Mock).mockResolvedValue(mockSession);
+
+      await CoachService.confirmAttendance(
+        mockCoachDocId,
+        mockScid,
+        { confirmedCount: 6 }
+      );
+
+      expect(mockSession.attendanceConfirmation.hasMissingPlace).toBe(true); // 6 > 5 (over-attendance / discrepancy)
+      expect(mockSession.attendanceConfirmation.confirmedCount).toBe(6);
+    });
   });
 
   describe("SchedulerService.confirmAttendance", () => {
@@ -229,6 +248,26 @@ describe("Attendance Confirmation & Missing Place", () => {
       expect(mockSession.attendanceConfirmation.confirmed).toBe(true);
       expect(mockSession.attendanceConfirmation.confirmedCount).toBe(2);
       expect(mockSession.attendanceConfirmation.hasMissingPlace).toBe(true); // 2 < 3 (scans)
+    });
+
+    it("detects discrepancy when confirmed count is greater than scanned-in count", async () => {
+      // 3 scanned in, admin confirms 4 physically present -> discrepancy
+      const mockSession = createMockSession({
+        startTime: new Date(),
+        endTime: new Date(),
+        bookedCount: 3,
+        scansSuccessCount: 3,
+      });
+      (ScheduledClass.findById as jest.Mock).mockResolvedValue(mockSession);
+      jest.spyOn(SchedulerService, "assertSessionAtLocation").mockResolvedValue(undefined as any);
+
+      await SchedulerService.confirmAttendance(
+        mockScid,
+        { confirmedCount: 4 }
+      );
+
+      expect(mockSession.attendanceConfirmation.confirmedCount).toBe(4);
+      expect(mockSession.attendanceConfirmation.hasMissingPlace).toBe(true); // 4 > 3 (scans)
     });
   });
 

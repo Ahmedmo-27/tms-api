@@ -23,6 +23,15 @@ jest.mock("../../models/package", () => {
 });
 jest.mock("../../models/nonUserPackage");
 jest.mock("../../models/payment");
+jest.mock("../../models/owedPtSession", () => ({
+  __esModule: true,
+  default: {
+    find: jest.fn().mockReturnValue({
+      session: jest.fn().mockResolvedValue([]),
+    }),
+    updateMany: jest.fn().mockResolvedValue({}),
+  },
+}));
 jest.mock("../../services/payments-service");
 jest.mock("../../services/egygap-erp-service", () => ({
   sendPaymentToRentalSystem: jest.fn().mockResolvedValue({}),
@@ -119,6 +128,95 @@ describe("Non-Member Package to Mobile Registration Flow", () => {
           phoneNumber: "01011112222",
           nationalId: "29901011234567",
         })
+      );
+    });
+
+    it("immediately transfers staged package if user already exists as a member", async () => {
+      const pkgId = new Types.ObjectId().toString();
+      const existingUserId = new Types.ObjectId();
+      const mockPkg = {
+        _id: new Types.ObjectId(pkgId),
+        name: "Space membership",
+        numberOfSessions: 10000,
+        price: 3000,
+        expiryPeriod: 30,
+        isDeprecated: false,
+        category: "OPEN_GYM",
+      };
+      (Package.findById as jest.Mock).mockResolvedValue(mockPkg);
+      const queryChain: any = Promise.resolve(null);
+      queryChain.session = jest.fn().mockReturnValue(queryChain);
+      (NonUserPackage.findOne as jest.Mock).mockReturnValue(queryChain);
+
+      const existingMemberUser = {
+        _id: existingUserId,
+        name: "Hassan Hesham",
+        phoneNumber: "01000920422",
+        role: "member",
+        save: jest.fn().mockResolvedValue({}),
+      };
+      (User.findOne as jest.Mock).mockReturnValue({
+        session: jest.fn().mockResolvedValue(existingMemberUser),
+      });
+
+      const existingMemberDoc = {
+        _id: new Types.ObjectId(),
+        uid: existingUserId,
+        packages: [],
+      };
+      (Member.findOne as jest.Mock).mockReturnValue({
+        session: jest.fn().mockResolvedValue(existingMemberDoc),
+      });
+
+      (PaymentsService.savePayment as jest.Mock).mockResolvedValue({
+        _id: new Types.ObjectId(),
+        amount: 3000,
+      });
+
+      const mockNonUserPackageSave = jest.fn().mockResolvedValue({});
+      (NonUserPackage as unknown as jest.Mock).mockImplementation(function (this: any, data: any) {
+        Object.assign(this, data);
+        this.save = mockNonUserPackageSave;
+      });
+
+      const transferSpy = jest
+        .spyOn(SubscriptionsService, "transferStagedPackagesToMember")
+        .mockResolvedValue(undefined as any);
+
+      await SubscriptionsService.addNonUserPackage(
+        "Hassan Hesham",
+        "01000920422",
+        pkgId,
+        "2026-11-05",
+        "VISA",
+        false,
+        undefined,
+        "3000",
+        undefined,
+        undefined,
+        "0101010010101011"
+      );
+
+      expect(PaymentsService.savePayment).toHaveBeenCalledWith(
+        existingUserId,
+        3000,
+        "VISA",
+        "NON_USER_PACKAGE",
+        expect.anything(),
+        undefined,
+        undefined,
+        undefined,
+        mockPkg._id,
+        undefined,
+        undefined,
+        "Hassan Hesham",
+        "01000920422",
+        undefined
+      );
+      expect(transferSpy).toHaveBeenCalledWith(
+        existingUserId.toString(),
+        "01000920422",
+        expect.anything()
       );
     });
   });

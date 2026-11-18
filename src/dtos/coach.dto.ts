@@ -130,6 +130,7 @@ export interface CoachMeDto {
   hasPtSessions: boolean;
   hasScheduledClasses: boolean;
   scansCategories?: string[];
+  canViewPtReports?: boolean;
 }
 
 export interface TodaySessionSummaryDto {
@@ -201,6 +202,7 @@ export interface ClientAttendanceItemDto {
   location?: string | null;
   pkgId?: string;
   scheduledClassId?: string;
+  status?: string;
 }
 
 // ---------------------------------------------------------------------------

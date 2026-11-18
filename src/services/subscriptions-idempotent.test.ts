@@ -1,4 +1,5 @@
 import { Types } from "mongoose";
+import { BadRequestError } from "../core/ApiError";
 import { SubscriptionsService } from "./subscriptions-service";
 import Member from "../models/member";
 import Package from "../models/package";
@@ -147,5 +148,32 @@ describe("SubscriptionsService.subscribeToPackage idempotency", () => {
     expect(PaymentsService.checkPayment).toHaveBeenCalledWith(mref, 3825);
     expect(PaymentsService.savePayment).toHaveBeenCalled();
     expect(Member.addPackage).toHaveBeenCalled();
+  });
+
+  it("does not reuse old payment and calls checkPayment when payment is older than 30 minutes", async () => {
+    (PaymentsService.findPaymentByMerchantReference as jest.Mock).mockResolvedValue(
+      null,
+    );
+    (PaymentsService.checkPayment as jest.Mock).mockRejectedValue(
+      new BadRequestError("PAYMENT_FAILED", "Payment is not completed"),
+    );
+
+    await expect(
+      SubscriptionsService.subscribeToPackage(
+        uid,
+        pkgId.toString(),
+        startDate,
+        "APP",
+        mref,
+      ),
+    ).rejects.toThrow("Payment is not completed");
+
+    expect(PaymentsService.findPaymentByMerchantReference).toHaveBeenCalledWith(
+      mref,
+      "PACKAGE",
+      30,
+    );
+    expect(PaymentsService.checkPayment).toHaveBeenCalledWith(mref, 3825);
+    expect(Member.addPackage).not.toHaveBeenCalled();
   });
 });

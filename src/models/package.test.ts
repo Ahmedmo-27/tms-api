@@ -2,6 +2,7 @@ import {
   getPackageEndDate,
   isUnlimitedSpaceAccess,
   resolvePackageExpiryDays,
+  resolvePackageMaxBooked,
 } from "./package";
 import { formatInTimeZone } from "date-fns-tz";
 
@@ -54,5 +55,38 @@ describe("formatOpenGymDurationLabel", () => {
     expect(formatDuration(14)).toBe("2 weeks");
     expect(formatDuration(90)).toBe("3 months");
     expect(formatDuration(10)).toBe("10 days");
+  });
+});
+
+describe("resolvePackageMaxBooked", () => {
+  it("defaults to 3 for ULTIMATE_MINDSPACER when maxBooked is unset", () => {
+    expect(resolvePackageMaxBooked({ category: "ULTIMATE_MINDSPACER" })).toBe(3);
+    expect(
+      resolvePackageMaxBooked({
+        category: "ULTIMATE_MINDSPACER",
+        maxBooked: undefined,
+      }),
+    ).toBe(3);
+  });
+
+  it("respects explicit maxBooked when set", () => {
+    expect(
+      resolvePackageMaxBooked({
+        category: "ULTIMATE_MINDSPACER",
+        maxBooked: 5,
+      }),
+    ).toBe(5);
+    expect(
+      resolvePackageMaxBooked({
+        category: "FUNCTIONAL_TRAINING",
+        maxBooked: 2,
+      }),
+    ).toBe(2);
+  });
+
+  it("returns null for non-ultimate packages without maxBooked", () => {
+    expect(resolvePackageMaxBooked({ category: "FUNCTIONAL_TRAINING" })).toBe(null);
+    expect(resolvePackageMaxBooked({ category: "STUDIO" })).toBe(null);
+    expect(resolvePackageMaxBooked()).toBe(null);
   });
 });

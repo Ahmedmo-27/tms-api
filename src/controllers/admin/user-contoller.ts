@@ -193,6 +193,7 @@ export const createUser = asyncHandler(
       sendAsName,
       coachId,
       nationalId,
+      canViewPtReports,
     } = req.body;
 
     if (!name || !email || !phoneNumber || !password || !role) {
@@ -289,6 +290,7 @@ export const createUser = asyncHandler(
         password,
         phoneNumber: cleanPhone,
         role,
+        canViewPtReports: role === "managing_coach" ? Boolean(canViewPtReports) : false,
       };
 
       if (cleanNationalId) userData.nationalId = cleanNationalId;
@@ -320,10 +322,11 @@ export const createUser = asyncHandler(
       }
 
       if (role === "coach" || role === "managing_coach") {
+        const coachPtPrivilege = role === "managing_coach" ? Boolean(canViewPtReports) : false;
         if (coachId && Types.ObjectId.isValid(coachId)) {
           await Coach.findByIdAndUpdate(
             coachId,
-            { userId: user._id, phoneNumber: cleanPhone },
+            { userId: user._id, phoneNumber: cleanPhone, canViewPtReports: coachPtPrivilege },
             session ? { session } : {}
           );
         } else {
@@ -334,12 +337,14 @@ export const createUser = asyncHandler(
           if (existingCoach && !existingCoach.userId) {
             existingCoach.userId = user._id as Types.ObjectId;
             existingCoach.phoneNumber = cleanPhone;
+            existingCoach.canViewPtReports = coachPtPrivilege;
             await existingCoach.save(session ? { session } : {});
           } else if (!existingCoach) {
             const newCoach = new Coach({
               coachName: user.name,
               phoneNumber: cleanPhone,
               userId: user._id,
+              canViewPtReports: coachPtPrivilege,
             });
             await newCoach.save(session ? { session } : {});
           }
@@ -396,6 +401,7 @@ export const updateUser = asyncHandler(
       sendAsName,
       coachId,
       nationalId,
+      canViewPtReports,
     } = req.body;
 
     if (phoneNumber !== undefined) {
@@ -524,6 +530,27 @@ export const updateUser = asyncHandler(
     }
     if (sendAsName !== undefined) {
       user.sendAsName = sendAsName ? String(sendAsName).trim() : undefined;
+    }
+
+    if (canViewPtReports !== undefined) {
+      const isManaging = (role || user.role) === "managing_coach";
+      user.canViewPtReports = isManaging ? Boolean(canViewPtReports) : false;
+      const linkedCoach = await Coach.findOne({
+        $or: [{ userId: user._id }, { phoneNumber: user.phoneNumber }],
+      });
+      if (linkedCoach) {
+        linkedCoach.canViewPtReports = user.canViewPtReports;
+        await linkedCoach.save();
+      }
+    } else if (role !== undefined && role !== "managing_coach") {
+      user.canViewPtReports = false;
+      const linkedCoach = await Coach.findOne({
+        $or: [{ userId: user._id }, { phoneNumber: user.phoneNumber }],
+      });
+      if (linkedCoach) {
+        linkedCoach.canViewPtReports = false;
+        await linkedCoach.save();
+      }
     }
 
     await user.save();

@@ -15,8 +15,11 @@ import {
   UPDATE_REMINDER_MESSAGE,
   withUpdateReminder,
 } from "../../middlewares/appVersion.middleware";
+import { invalidateMemberReadCache } from "../../cache/response-cache";
 
 function sendAttendanceSuccess(req: Request, res: Response): void {
+  const authReq = req as AuthRequest;
+  if (authReq.user?._id) invalidateMemberReadCache(authReq.user._id);
   const versionReq = req as AppVersionRequest;
   if (versionReq.isOutdatedMobileApp) {
     res.status(200).json({
@@ -88,6 +91,7 @@ export const bookClass = asyncHandler(async function (
     return;
   }
   const result = await BookingsService.addBooking(uid, scid, false, "member");
+  invalidateMemberReadCache(uid);
   new SuccessResponse(withUpdateReminder(req, "Class Booked!"), {
     usesPackageSession: result.usesPackageSession,
     cancellationDeadline: result.cancellationDeadline.toISOString(),
@@ -102,6 +106,7 @@ export const bookDropIn = asyncHandler(async function (
   const uid = authReq.user._id as string;
   const { scid, merchantReferenceId, promoCode } = req.body;
   await BookingsService.bookDropIn(uid, scid, merchantReferenceId, promoCode);
+  invalidateMemberReadCache(uid);
   new SuccessResponse(withUpdateReminder(req, "Class Booked!")).send(res);
 });
 
@@ -117,6 +122,7 @@ export const subToWaitingList = asyncHandler(async function (
     return;
   }
   await BookingsService.addMemberToWaitingList(uid, fcmToken, scid);
+  invalidateMemberReadCache(uid);
   new SuccessResponse(withUpdateReminder(req, "Subscribed To Waiting List!")).send(res);
 });
 
@@ -128,6 +134,7 @@ export const cancelDropIn = asyncHandler(async function (
   const uid = authReq.user._id as string;
   const scid = req.params.scid;
   await BookingsService.cancelDropIn(uid, scid);
+  invalidateMemberReadCache(uid);
   new SuccessResponse(withUpdateReminder(req, "Class Canceled!")).send(res);
 });
 
@@ -206,6 +213,7 @@ export const cancelClass = asyncHandler(async function (
   const _id = authReq.user._id as string;
   const scid = req.params.scid;
   const result = await BookingsService.cancelBooking(_id, scid, "member");
+  invalidateMemberReadCache(_id);
   const message = result.lateCancellation
     ? "Booking cancelled. Since it was within 3 hours of the class, the session was still deducted from your package."
     : "Class Canceled!";

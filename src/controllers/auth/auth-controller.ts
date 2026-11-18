@@ -303,6 +303,7 @@ export const loginUser = asyncHandler(
     if (user.role === "coach" || user.role === "managing_coach") {
       let hasPtSessions = false;
       let hasScheduledClasses = false;
+      let canViewPtReports = false;
       const coachDoc = await CoachService.resolveCoachProfileForUser(user);
       if (coachDoc) {
         const coachDocId = coachDoc._id as Types.ObjectId;
@@ -318,9 +319,15 @@ export const loginUser = asyncHandler(
         });
         const extraCategories = await CoachService.getCoachExtraScansCategories(coachDocId, coachUserId);
         hasScheduledClasses = scheduledClassesCount > 0 || extraCategories.length > 0;
+        if (user.role === "managing_coach") {
+          canViewPtReports = Boolean(user.canViewPtReports || coachDoc.canViewPtReports);
+        }
+      } else if (user.role === "managing_coach") {
+        canViewPtReports = Boolean(user.canViewPtReports);
       }
       responseData.hasPtSessions = hasPtSessions;
       responseData.hasScheduledClasses = hasScheduledClasses;
+      responseData.canViewPtReports = canViewPtReports;
     }
     if (deviceType == "web") {
       res.cookie("token", token, authCookieOptions());

@@ -17,7 +17,9 @@ import Package, {
   isUnlimitedSpaceAccess,
   spaceAccessPriority,
   resolvePackageAllowedFreezeDays,
+  resolvePackageMaxBooked,
 } from "./package";
+import ScheduledClass from "./scheduledClass";
 import { memberPackageGrantsAccessAtLocation } from "../utils/open-gym-location";
 import {
   bookingPackageErrorMessage,
@@ -99,6 +101,7 @@ export interface IMemberPackageData {
   pkgEndDate: Date;
   status: "ACTIVE" | "EXPIRED" | "DELETED" | "COMPLETED" | "FROZEN";
   remainingClasses: number;
+  maxBooked?: number;
   classRestrictionsRecord?: IClassRestrictionRecord[];
   adjustmentHistory?: IAdjustmentRecord[];
   freezeInfo?: IFreezeInfo;
@@ -144,7 +147,8 @@ interface IMemberstatics {
     session: ClientSession,
     className: string,
     attendanceDate: Date,
-    audience?: BookingAudience
+    audience?: BookingAudience,
+    isAdminOverride?: boolean
   ): Promise<void>;
   saveDropIn(
     uid: string,
@@ -409,11 +413,11 @@ const BookingSchema = new Schema({
   },
   bookingTime: {
     type: Date,
-    required: true,
+    default: Date.now,
   },
   isDropIn: {
     type: Boolean,
-    required: true,
+    default: false,
   },
   paymentId: {
     type: Schema.Types.ObjectId,
@@ -507,7 +511,8 @@ MemberSchema.static(
     session: ClientSession,
     className: string,
     attendanceDate: Date,
-    audience: BookingAudience = "member"
+    audience: BookingAudience = "member",
+    isAdminOverride: boolean = false
   ): Promise<string> {
     logger.info("DATA: ", {
       uid,
@@ -672,6 +677,9 @@ MemberSchema.static(
     const catalogDocs = await Package.find({
       _id: { $in: memberPkgs.map((p) => p.pkgId) },
     }).session(session);
+    const catalogPkgById = new Map(
+      catalogDocs.map((p) => [p._id.toString(), p])
+    );
     const categoryByPkgId = new Map(
       catalogDocs.map((p) => [p._id.toString(), p.category])
     );
@@ -751,6 +759,35 @@ MemberSchema.static(
       if (restricted) {
         skipReasons.push("restricted");
         continue;
+      }
+
+      // Check maximum concurrent booked & unattended classes
+      const catalogPkg = catalogPkgById.get(pkg.pkgId.toString());
+      const maxBooked = resolvePackageMaxBooked(catalogPkg ?? pkg);
+      if (maxBooked != null && !isAdminOverride) {
+        const bookedScids = (member.bookings || []).map((b) => b.scid);
+        if (bookedScids.length > 0) {
+          // Find upcoming or in-progress classes (startTime >= 30 mins ago, which is the attendance deadline)
+          const activeScheduledClasses = await ScheduledClass.find({
+            _id: { $in: bookedScids },
+            startTime: { $gte: new Date(Date.now() - 30 * 60 * 1000) },
+          })
+            .select("_id")
+            .session(session);
+
+          const attendedScidSet = new Set(
+            (member.attendance || []).map((a) => a.scid.toString())
+          );
+
+          const unattendedCount = activeScheduledClasses.filter(
+            (sc: any) => !attendedScidSet.has(sc._id.toString())
+          ).length;
+
+          if (unattendedCount >= maxBooked) {
+            skipReasons.push("max_booked");
+            continue;
+          }
+        }
       }
 
       if (!isFree && !isWorkSpace) {
@@ -964,6 +1001,12 @@ MemberSchema.static(
       skipReasons,
     });
     const firstSkipped = memberPkgs[0];
+    const firstSkippedCatalog = firstSkipped
+      ? catalogPkgById.get(firstSkipped.pkgId.toString())
+      : undefined;
+    const skippedLimit = firstSkipped
+      ? resolvePackageMaxBooked(firstSkippedCatalog ?? firstSkipped) ?? undefined
+      : undefined;
     const dateStr = firstSkipped
       ? new Date(firstSkipped.pkgEndDate).toLocaleDateString("en-GB", {
           day: "numeric",
@@ -977,11 +1020,13 @@ MemberSchema.static(
         packageName: firstSkipped?.name,
         date: dateStr,
         audience,
+        limit: skippedLimit,
       }),
       {
         className,
         packageName: firstSkipped?.name,
         expiryDate: firstSkipped?.pkgEndDate,
+        limit: skippedLimit,
       },
     );
   }

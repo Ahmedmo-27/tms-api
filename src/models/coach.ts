@@ -6,6 +6,7 @@ export interface ICoach extends Document {
     userId?: Types.ObjectId;
     ptDropInPrice?: number | null;
     scansCategories?: string[];
+    canViewPtReports?: boolean;
 }
 
 const CoachSchema: Schema<ICoach> = new Schema({
@@ -31,6 +32,11 @@ const CoachSchema: Schema<ICoach> = new Schema({
     scansCategories: {
         type: [String],
         default: undefined,
+        required: false,
+    },
+    canViewPtReports: {
+        type: Boolean,
+        default: false,
         required: false,
     },
 });

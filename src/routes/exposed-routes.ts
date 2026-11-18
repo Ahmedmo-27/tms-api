@@ -12,23 +12,41 @@ import {
 } from "../controllers/external/coachera-controller";
 import { verifyCoacheraSignature } from "../middlewares/coachera-auth.middleware";
 import { authenticateUser } from "../middlewares/auth.middleware";
+import { cacheResponse, invalidateCache } from "../middlewares/cacheResponse";
+import { CacheTags } from "../cache/response-cache";
 
 const exposedRoutes = express.Router();
 
 exposedRoutes.get(
   "/unlinked-coaches",
   defaultLimiter,
+  cacheResponse({ ttlMs: 60_000, scope: "public", tags: [CacheTags.coaches] }),
   getUnlinkedCoaches
 );
 exposedRoutes.post(
   "/register-coach",
   loginLimiter,
+  invalidateCache([CacheTags.coaches]),
   registerCoachUser
 );
 
 // Support tickets (public get, authenticated post)
-exposedRoutes.get("/ticket-categories", getActiveTicketCategories);
-exposedRoutes.post("/tickets", defaultLimiter, authenticateUser, submitTicket);
+exposedRoutes.get(
+  "/ticket-categories",
+  cacheResponse({
+    ttlMs: 60_000,
+    scope: "public",
+    tags: [CacheTags.ticketCategories],
+  }),
+  getActiveTicketCategories,
+);
+exposedRoutes.post(
+  "/tickets",
+  defaultLimiter,
+  authenticateUser,
+  invalidateCache([CacheTags.tickets]),
+  submitTicket,
+);
 
 // Coachera online class payments intake webhooks
 exposedRoutes.post(

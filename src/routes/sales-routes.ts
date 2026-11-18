@@ -8,6 +8,8 @@ import {
   listSalesAccounts,
   listSoldPackages,
 } from "../controllers/admin/sales-controller";
+import { cacheResponse, invalidateCache } from "../middlewares/cacheResponse";
+import { CacheTags } from "../cache/response-cache";
 
 /**
  * Sales attribution — reads sold packages and sets which sales account sold
@@ -23,8 +25,20 @@ salesRoutes.use(
   authorizeUser(["management", "branch_admin", "sales_manager", "accountant"]),
 );
 
-salesRoutes.get("/accounts", listSalesAccounts);
-salesRoutes.get("/packages", listSoldPackages);
-salesRoutes.patch("/packages/:memberPackageId/seller", assignSoldPackageSeller);
+salesRoutes.get(
+  "/accounts",
+  cacheResponse({ ttlMs: 30_000, scope: "user", tags: [CacheTags.sales] }),
+  listSalesAccounts,
+);
+salesRoutes.get(
+  "/packages",
+  cacheResponse({ ttlMs: 30_000, scope: "user", tags: [CacheTags.sales] }),
+  listSoldPackages,
+);
+salesRoutes.patch(
+  "/packages/:memberPackageId/seller",
+  invalidateCache([CacheTags.sales]),
+  assignSoldPackageSeller,
+);
 
 export default salesRoutes;
