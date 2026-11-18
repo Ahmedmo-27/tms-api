@@ -107,6 +107,9 @@ import {
   getLocation,
   updateLocation,
   deleteLocation,
+  getPaymentsPin,
+  updatePaymentsPin,
+  verifyPaymentsPin,
 } from "../controllers/admin/location-controller";
 import {
   getPayments,
@@ -757,6 +760,25 @@ adminRoutes.delete(
   authenticateUser,
   authorizeUser(["management"]),
   deleteLocation
+);
+
+adminRoutes.get(
+  "/payments/pin",
+  authenticateUser,
+  authorizeUser(["management"]),
+  getPaymentsPin
+);
+adminRoutes.put(
+  "/payments/pin",
+  authenticateUser,
+  authorizeUser(["management"]),
+  updatePaymentsPin
+);
+adminRoutes.post(
+  "/payments/verify-pin",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin"]),
+  verifyPaymentsPin
 );
 
 adminRoutes.get(
