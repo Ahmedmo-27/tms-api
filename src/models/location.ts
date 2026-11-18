@@ -5,6 +5,7 @@ export interface ILocation extends Document {
   branchName: string;
   location: string;
   locationUrl: string;
+  paymentsPin?: string;
 }
 
 const LocationSchema = new Schema({
@@ -19,6 +20,10 @@ const LocationSchema = new Schema({
   locationUrl: {
     type: String,
     required: true,
+  },
+  paymentsPin: {
+    type: String,
+    default: "1967",
   },
 });
 

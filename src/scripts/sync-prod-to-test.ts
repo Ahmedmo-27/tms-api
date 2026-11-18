@@ -74,43 +74,66 @@ async function syncDb() {
 
       console.log(`\nSyncing collection: [${collName}]`);
 
-      // Drop the collection in TEST if it exists
       try {
-        await testDb.dropCollection(collName);
-        console.log(`  -> Dropped existing collection in TEST.`);
-      } catch (err: any) {
-        if (err.codeName !== 'NamespaceNotFound') {
-          console.warn(`  -> Warning dropping collection: ${err.message}`);
+        // Drop the collection in TEST if it exists
+        try {
+          await testDb.dropCollection(collName);
+          console.log(`  -> Dropped existing collection in TEST.`);
+        } catch (err: any) {
+          if (err.codeName !== 'NamespaceNotFound') {
+            console.warn(`  -> Warning dropping collection: ${err.message}`);
+          }
         }
-      }
 
-      // Read indexes from PROD
-      const indexes = await prodDb.collection(collName).indexes();
-      
-      // Create collection in TEST
-      await testDb.createCollection(collName);
-      
-      // Recreate indexes in TEST (excluding the default _id_ index)
-      const indexesToCreate = indexes
-        .filter(idx => idx.name !== '_id_')
-        .map(idx => {
-          // Remove internal properties that can't be copied directly
-          const { v, ns, ...rest } = idx as any;
-          return rest;
-        });
+        // Create collection in TEST
+        await testDb.createCollection(collName);
 
-      if (indexesToCreate.length > 0) {
-        await testDb.collection(collName).createIndexes(indexesToCreate);
-        console.log(`  -> Created ${indexesToCreate.length} indexes.`);
-      }
+        // Copy documents first (before indexes, for faster insertion and index build)
+        const docs = await prodDb.collection(collName).find({}).toArray();
+        if (docs.length > 0) {
+          // Batch inserts in chunks of 2000 to avoid document payload limits
+          const CHUNK_SIZE = 2000;
+          let totalInserted = 0;
 
-      // Copy documents
-      const docs = await prodDb.collection(collName).find({}).toArray();
-      if (docs.length > 0) {
-        await testDb.collection(collName).insertMany(docs);
-        console.log(`  -> Inserted ${docs.length} documents.`);
-      } else {
-        console.log(`  -> Collection is empty. Skipped inserts.`);
+          for (let i = 0; i < docs.length; i += CHUNK_SIZE) {
+            const chunk = docs.slice(i, i + CHUNK_SIZE);
+            try {
+              const res = await testDb.collection(collName).insertMany(chunk, { ordered: false });
+              totalInserted += res.insertedCount ?? chunk.length;
+            } catch (insertErr: any) {
+              if (insertErr.code === 11000 || insertErr.name === 'MongoBulkWriteError') {
+                const insertedInChunk = insertErr.result?.insertedCount ?? 0;
+                totalInserted += insertedInChunk;
+                console.warn(`  -> Note: Skipped duplicate keys (${insertedInChunk}/${chunk.length} inserted in chunk).`);
+              } else {
+                throw insertErr;
+              }
+            }
+          }
+          console.log(`  -> Inserted ${totalInserted}/${docs.length} documents.`);
+        } else {
+          console.log(`  -> Collection is empty. Skipped inserts.`);
+        }
+
+        // Read and recreate indexes in TEST after documents are inserted
+        const indexes = await prodDb.collection(collName).indexes();
+        const indexesToCreate = indexes
+          .filter((idx) => idx.name !== '_id_')
+          .map((idx) => {
+            const { v, ns, ...rest } = idx as any;
+            return rest;
+          });
+
+        if (indexesToCreate.length > 0) {
+          try {
+            await testDb.collection(collName).createIndexes(indexesToCreate);
+            console.log(`  -> Created ${indexesToCreate.length} indexes.`);
+          } catch (idxErr: any) {
+            console.warn(`  -> Warning creating indexes on [${collName}]: ${idxErr.message}`);
+          }
+        }
+      } catch (collErr: any) {
+        console.error(`  ❌ Error syncing collection [${collName}]:`, collErr.message);
       }
     }
 
