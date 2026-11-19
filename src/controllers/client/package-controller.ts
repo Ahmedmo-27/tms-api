@@ -67,7 +67,13 @@ export const getMemberPackages = asyncHandler(async function (
   if (isDirty) {
     await member.save();
   }
-  const packages = member.packages.filter((p: any) => p.status !== "DELETED");
+  const includeAll = req.query.includeAll === "true" || req.query.all === "true";
+  const clientPackages = PackageStatusService.filterClientPackages(
+    member.packages,
+    new Date(),
+    includeAll ? Infinity : 30
+  );
+  const packages = PackageStatusService.sortPackagesForClient(clientPackages);
   logger.info(packages);
   new SuccessResponse("Packages Found!", packages).send(res);
 });
