@@ -444,14 +444,51 @@ describe("Shadow Coach End-to-End System Integration Suite", () => {
   // --------------------------------------------------------------------------
   describe("4. Checklist Progression, Lead Coach Signatures & Phase Milestones", () => {
     it("blocks an unassigned coach from marking checklist items", async () => {
-      // Unassigned coach: otherCoachDoc
-      const isAssigned = Array.isArray(scheduledClassDoc.coachId)
-        ? scheduledClassDoc.coachId.some(
-            (id: any) => id.toString() === otherCoachDoc._id.toString()
-          )
-        : false;
+      const { updateClassShadowChecklist } = await import("../controllers/coach/shadow-coach-controller");
 
-      expect(isAssigned).toBe(false);
+      // 1. Unassigned coach Charlie tries to update -> gets 403 Forbidden
+      const unassignedReq: any = {
+        coachDocId: otherCoachDoc._id,
+        coachId: otherCoachUser._id,
+        userRole: "coach",
+        params: { scid: scheduledClassDoc._id.toString() },
+        body: { itemKey: "m1_equip", isDone: true, notes: "Unauthorized try" },
+      };
+      const mockRes: any = {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn(),
+      };
+      const unassignedNext = jest.fn();
+
+      await updateClassShadowChecklist(unassignedReq, mockRes, unassignedNext);
+      expect(unassignedNext).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringContaining("Only the lead coach of this class"),
+        })
+      );
+
+      // 2. Assigned lead coach Bob (regular role 'coach', NOT managing_coach) updates -> succeeds
+      const leadReq: any = {
+        coachDocId: leadCoachDoc._id,
+        coachId: leadCoachUser._id,
+        userRole: "coach",
+        params: { scid: scheduledClassDoc._id.toString() },
+        body: { itemKey: "m1_welcome", isDone: true, notes: "Bob observed welcome" },
+      };
+      let leadResData: any = null;
+      const leadRes: any = {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn().mockImplementation((d) => {
+          leadResData = d;
+          return leadRes;
+        }),
+      };
+      const leadNext = jest.fn();
+
+      await updateClassShadowChecklist(leadReq, leadRes, leadNext);
+      expect(leadNext).not.toHaveBeenCalled();
+      expect(leadResData).toBeDefined();
+      expect(leadResData.message).toBe("Checklist item updated");
     });
 
     it("marks Month 1 items with coach signature, timestamp, and notes", async () => {

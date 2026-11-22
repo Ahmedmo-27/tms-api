@@ -13,6 +13,43 @@ import { CoachService } from "../../services/coach-service";
 import { startOfDateCairo, endOfDateCairo, isSameCairoDay } from "../../utils/timezone";
 
 /**
+ * Helper to verify whether the authenticated coach is an assigned lead coach for a class.
+ * Checks across Coach doc IDs, User IDs, aliases, and coachName variants.
+ */
+async function isAssignedLeadCoachOfClass(
+  cls: any,
+  coachReq: CoachAuthRequest
+): Promise<boolean> {
+  const { stringIds, nameVariants = [] } = await CoachService.getCoachLookupIds(
+    coachReq.coachDocId,
+    coachReq.coachId
+  );
+
+  const rawCoachIds: any[] = Array.isArray(cls.coachId)
+    ? cls.coachId
+    : cls.coachId
+    ? [cls.coachId]
+    : [];
+
+  const matchedById = rawCoachIds.some((id: any) => {
+    const rawIdStr = (id?._id || id)?.toString?.()?.trim();
+    return rawIdStr && stringIds.includes(rawIdStr);
+  });
+
+  if (matchedById) return true;
+
+  if (cls.coachName && typeof cls.coachName === "string") {
+    const classCoachName = cls.coachName.trim().toLowerCase();
+    const matchedByName = nameVariants.some(
+      (v) => v.trim().toLowerCase() === classCoachName
+    );
+    if (matchedByName) return true;
+  }
+
+  return false;
+}
+
+/**
  * GET /api/coach/classes/:scid/shadow-checklist
  * Returns the shadow coach progress and checklists for the class.
  * Accessible by the assigned lead coach(es) or managing coach.
@@ -39,9 +76,7 @@ export const getClassShadowChecklist = asyncHandler(async (req: Request, res: Re
   }
 
   // Verify access: Lead coach on this class OR managing coach
-  const isAssignedLeadCoach = Array.isArray(cls.coachId) && cls.coachId.some(
-    (id) => id.toString() === coachReq.coachDocId.toString()
-  );
+  const isAssignedLeadCoach = await isAssignedLeadCoachOfClass(cls, coachReq);
   const isManaging = coachReq.userRole === "managing_coach";
 
   if (!isAssignedLeadCoach && !isManaging) {
@@ -98,10 +133,8 @@ export const updateClassShadowChecklist = asyncHandler(async (req: Request, res:
     );
   }
 
-  // Verify access
-  const isAssignedLeadCoach = Array.isArray(cls.coachId) && cls.coachId.some(
-    (id) => id.toString() === coachReq.coachDocId.toString()
-  );
+  // Verify access: Lead coach of this class (does not require managing coach) or managing coach
+  const isAssignedLeadCoach = await isAssignedLeadCoachOfClass(cls, coachReq);
   const isManaging = coachReq.userRole === "managing_coach";
 
   if (!isAssignedLeadCoach && !isManaging) {
@@ -112,13 +145,19 @@ export const updateClassShadowChecklist = asyncHandler(async (req: Request, res:
   }
 
   const viewerCoach = await Coach.findById(coachReq.coachDocId);
+  let signerName = viewerCoach?.coachName;
+  if (!signerName && coachReq.coachId) {
+    const userDoc = await User.findById(coachReq.coachId).select("name");
+    signerName = userDoc?.name;
+  }
+
   const updatedProgress = await ShadowCoachService.markChecklistItem(
     cls.shadowCoachId,
     itemKey,
     isDone,
     {
       _id: coachReq.coachDocId,
-      coachName: viewerCoach?.coachName,
+      coachName: signerName || "Lead Coach",
     },
     scid,
     notes
