@@ -367,6 +367,28 @@ describe("Shadow Coach End-to-End System Integration Suite", () => {
       expect(sessionInCoachPortal?.shadowCoach?.currentPhase).toBe(1);
       expect(sessionInCoachPortal?.shadowCoach?.phaseLabel).toBe("Phase 1/3: Observe + support");
     });
+
+    it("disallows shadow coaches from accessing scans monitor endpoint", async () => {
+      const { getScans } = await import("../controllers/coach/dashboard-controller");
+      const mockReq: any = {
+        coachDocId: candidateDoc._id,
+        coachId: candidateUser._id,
+        userRole: "shadow_coach",
+        query: {},
+      };
+      const mockRes: any = {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn(),
+      };
+      const mockNext = jest.fn();
+
+      await getScans(mockReq, mockRes, mockNext);
+      expect(mockNext).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: "Shadow coaches do not have access to the scans monitor",
+        })
+      );
+    });
   });
 
   // --------------------------------------------------------------------------

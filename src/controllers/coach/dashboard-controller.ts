@@ -6,7 +6,7 @@ import { CoachService } from "../../services/coach-service";
 import { CoachAuthRequest } from "../../middlewares/coach.middleware";
 import { DeductSessionRequestDto } from "../../dtos/coach.dto";
 import { startOfWeek } from "date-fns";
-import { BadRequestError } from "../../core/ApiError";
+import { BadRequestError, ForbiddenError } from "../../core/ApiError";
 import User from "../../models/user";
 import { PtAchievementService } from "../../services/pt-achievement-service";
 
@@ -100,6 +100,13 @@ export const getSchedule = asyncHandler(async (req: Request, res: Response) => {
 export const getScans = asyncHandler(async (req: Request, res: Response) => {
   const coachReq = req as CoachAuthRequest;
 
+  if (coachReq.userRole === "shadow_coach") {
+    throw new ForbiddenError(
+      "FORBIDDEN",
+      "Shadow coaches do not have access to the scans monitor"
+    );
+  }
+
   let date: Date;
   if (req.query.date) {
     date = new Date(req.query.date as string);
@@ -184,6 +191,13 @@ export const confirmClassAttendance = asyncHandler(async (req: Request, res: Res
   const coachReq = req as CoachAuthRequest;
   const { scid } = req.params;
   const { confirmedCount, hasMissingPlace, notes } = req.body;
+
+  if (coachReq.userRole === "shadow_coach") {
+    throw new ForbiddenError(
+      "FORBIDDEN",
+      "Shadow coaches cannot confirm attendance"
+    );
+  }
 
   if (confirmedCount === undefined || confirmedCount === null || isNaN(Number(confirmedCount))) {
     throw new BadRequestError("INVALID_COUNT", "Valid confirmedCount is required");
