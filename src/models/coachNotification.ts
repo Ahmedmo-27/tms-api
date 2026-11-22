@@ -2,10 +2,19 @@ import mongoose, { Document, Schema, Types } from "mongoose";
 
 export interface ICoachNotification extends Document {
   coachId: Types.ObjectId;
-  memberId: Types.ObjectId;
-  memberName: string;
-  packageName: string;
-  classesTotal: number;
+  type?: "package_assignment" | "class_assignment";
+  title?: string;
+  message?: string;
+  scheduledClassId?: Types.ObjectId;
+  classTitle?: string;
+  startTime?: Date;
+  endTime?: Date;
+  locationName?: string;
+  leadCoachName?: string;
+  memberId?: Types.ObjectId;
+  memberName?: string;
+  packageName?: string;
+  classesTotal?: number;
   read: boolean;
   createdAt: Date;
 }
@@ -17,22 +26,60 @@ const CoachNotificationSchema = new Schema<ICoachNotification>({
     required: true,
     index: true,
   },
+  type: {
+    type: String,
+    enum: ["package_assignment", "class_assignment"],
+    default: "package_assignment",
+  },
+  title: {
+    type: String,
+    required: false,
+  },
+  message: {
+    type: String,
+    required: false,
+  },
+  scheduledClassId: {
+    type: Schema.Types.ObjectId,
+    ref: "ScheduledClass",
+    required: false,
+  },
+  classTitle: {
+    type: String,
+    required: false,
+  },
+  startTime: {
+    type: Date,
+    required: false,
+  },
+  endTime: {
+    type: Date,
+    required: false,
+  },
+  locationName: {
+    type: String,
+    required: false,
+  },
+  leadCoachName: {
+    type: String,
+    required: false,
+  },
   memberId: {
     type: Schema.Types.ObjectId,
     ref: "User",
-    required: true,
+    required: false,
   },
   memberName: {
     type: String,
-    required: true,
+    required: false,
   },
   packageName: {
     type: String,
-    required: true,
+    required: false,
   },
   classesTotal: {
     type: Number,
-    required: true,
+    required: false,
   },
   read: {
     type: Boolean,

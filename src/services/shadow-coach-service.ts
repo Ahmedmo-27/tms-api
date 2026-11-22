@@ -6,6 +6,11 @@ import ShadowCoachProgress, {
 } from "../models/shadowCoachProgress";
 import Coach, { ICoach } from "../models/coach";
 import User, { IUser } from "../models/user";
+import Class from "../models/class";
+import Location from "../models/location";
+import CoachNotification from "../models/coachNotification";
+import { formatInTimeZone } from "date-fns-tz";
+import { getIO } from "../config/socket";
 import { BadRequestError, NotFoundError, ForbiddenError } from "../core/ApiError";
 import logger from "../config/logger";
 
@@ -359,5 +364,85 @@ export class ShadowCoachService {
 
     await progress.save();
     return this.getProgress(coachId);
+  }
+
+  /**
+   * Sends an in-app notification to the shadow coach informing them of their new class assignment.
+   */
+  static async notifyClassAssignment(
+    shadowCoachId: Types.ObjectId,
+    scheduledClass: any
+  ): Promise<void> {
+    try {
+      const cls = await Class.findById(scheduledClass.cid);
+      const classTitle = cls?.title || scheduledClass.className || "Class Session";
+
+      let locationName = "";
+      if (scheduledClass.locationId) {
+        const loc = await Location.findById(scheduledClass.locationId);
+        locationName = loc?.branchName || loc?.location || "";
+      }
+
+      let leadCoachName = scheduledClass.coachName || "";
+      if (!leadCoachName && scheduledClass.coachId) {
+        const coachIds = Array.isArray(scheduledClass.coachId)
+          ? scheduledClass.coachId
+          : [scheduledClass.coachId];
+        const coaches = await Coach.find({ _id: { $in: coachIds } }).select("coachName");
+        leadCoachName = coaches.map((c: any) => c.coachName).join(", ");
+      }
+
+      const dateStr = formatInTimeZone(new Date(scheduledClass.startTime), "Africa/Cairo", "EEE, MMM d");
+      const timeStr = `${formatInTimeZone(new Date(scheduledClass.startTime), "Africa/Cairo", "hh:mm a")} – ${formatInTimeZone(new Date(scheduledClass.endTime), "Africa/Cairo", "hh:mm a")}`;
+
+      const notification = await CoachNotification.create({
+        coachId: shadowCoachId,
+        type: "class_assignment",
+        title: `Class Assignment: ${classTitle}`,
+        message: `You have been assigned to shadow ${classTitle} on ${dateStr} (${timeStr})${locationName ? ` at ${locationName}` : ""}${leadCoachName ? ` with lead coach ${leadCoachName}` : ""}.`,
+        scheduledClassId: scheduledClass._id,
+        classTitle,
+        startTime: scheduledClass.startTime,
+        endTime: scheduledClass.endTime,
+        locationName,
+        leadCoachName,
+        read: false,
+      });
+
+      const io = getIO();
+      if (io) {
+        const notifDoc = notification as any;
+        const payload = {
+          id: notifDoc._id ? notifDoc._id.toString() : "",
+          type: "class_assignment",
+          title: notifDoc.title,
+          message: notifDoc.message,
+          scheduledClassId: scheduledClass._id ? scheduledClass._id.toString() : "",
+          classTitle,
+          startTime: scheduledClass.startTime instanceof Date ? scheduledClass.startTime.toISOString() : new Date(scheduledClass.startTime).toISOString(),
+          endTime: scheduledClass.endTime instanceof Date ? scheduledClass.endTime.toISOString() : new Date(scheduledClass.endTime).toISOString(),
+          locationName,
+          leadCoachName,
+          read: false,
+          createdAt: notifDoc.createdAt instanceof Date ? notifDoc.createdAt.toISOString() : new Date(notifDoc.createdAt || Date.now()).toISOString(),
+        };
+
+        io.to(`coach:${shadowCoachId.toString()}`).emit("coach:classAssignment", payload);
+
+        const coach = await Coach.findById(shadowCoachId);
+        if (coach?.userId) {
+          io.to(`coach:${coach.userId.toString()}`).emit("coach:classAssignment", payload);
+          io.to(`user:${coach.userId.toString()}`).emit("coach:classAssignment", payload);
+        }
+      }
+
+      logger.info("Notified shadow coach of class assignment", {
+        shadowCoachId,
+        scheduledClassId: scheduledClass._id,
+        classTitle,
+      });
+    } catch (err) {
+      logger.error("Failed to notify shadow coach of class assignment", { error: err });
+    }
   }
 }

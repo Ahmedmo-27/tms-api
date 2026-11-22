@@ -183,10 +183,19 @@ export interface TodaySummaryDto {
 
 export interface CoachNotificationDto {
   id: string;
-  memberId: string;
-  memberName: string;
-  packageName: string;
-  classesTotal: number;
+  type?: "package_assignment" | "class_assignment";
+  title?: string;
+  message?: string;
+  scheduledClassId?: string;
+  classTitle?: string;
+  startTime?: string;
+  endTime?: string;
+  locationName?: string;
+  leadCoachName?: string;
+  memberId?: string;
+  memberName?: string;
+  packageName?: string;
+  classesTotal?: number;
   createdAt: string;
   read: boolean;
 }

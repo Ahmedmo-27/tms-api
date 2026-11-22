@@ -5,6 +5,7 @@ import Coach from "../models/coach";
 import Class from "../models/class";
 import Location from "../models/location";
 import ScheduledClass from "../models/scheduledClass";
+import CoachNotification from "../models/coachNotification";
 import ShadowCoachProgress, {
   STANDARD_SHADOW_COACH_CURRICULUM,
 } from "../models/shadowCoachProgress";
@@ -258,6 +259,18 @@ describe("Shadow Coach End-to-End System Integration Suite", () => {
       expect(updated).toBeDefined();
       expect(updated!.availableSlots).toBe(25);
       expect(updated!.shadowCoachId!.toString()).toBe(candidateDoc._id.toString());
+    });
+
+    it("generates an in-app notification for the assigned shadow coach", async () => {
+      const notif = await CoachNotification.findOne({
+        coachId: candidateDoc._id,
+        type: "class_assignment",
+      });
+
+      expect(notif).toBeDefined();
+      expect(notif!.classTitle).toBe("Integration Test Fitness Class");
+      expect(notif!.read).toBe(false);
+      expect(notif!.message).toContain("You have been assigned to shadow");
     });
 
     it("allows managing coach to unassign shadow coach from an existing class", async () => {

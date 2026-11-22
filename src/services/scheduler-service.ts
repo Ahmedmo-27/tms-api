@@ -469,6 +469,9 @@ export class SchedulerService {
     });
     await scheduledClass.save();
     await Schedule.scheduleClass(scheduledClass._id as string);
+    if (resolvedShadowCoachId) {
+      await ShadowCoachService.notifyClassAssignment(resolvedShadowCoachId, scheduledClass);
+    }
     return scheduledClass;
   }
 
@@ -700,6 +703,10 @@ export class SchedulerService {
       if (scheduledClassOld && Number(availableSlots) > scheduledClassOld.availableSlots) {
         await WaitlistService.processWaitlist(scid);
       }
+    }
+
+    if (resolvedShadowCoachId && newClass) {
+      await ShadowCoachService.notifyClassAssignment(resolvedShadowCoachId, newClass);
     }
 
     return newClass;

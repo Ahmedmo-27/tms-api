@@ -243,8 +243,31 @@ export const getMyShadowChecklist = asyncHandler(async (req: Request, res: Respo
   const currentMonthDone = checkedItems.length;
   const currentMonthPercent = currentMonthTotal > 0 ? Math.round((currentMonthDone / currentMonthTotal) * 100) : 0;
 
+  const now = new Date();
+  const upcomingClasses = await ScheduledClass.find({
+    shadowCoachId: coachDocId,
+    endTime: { $gte: now },
+  })
+    .sort({ startTime: 1 })
+    .limit(20)
+    .populate("cid", "name title")
+    .populate("locationId", "name address")
+    .populate("coachId", "coachName phoneNumber");
+
+  const assignedClasses = upcomingClasses.map((cls: any) => ({
+    scheduledClassId: cls._id.toString(),
+    classTitle: cls.cid?.title || cls.cid?.name || cls.className || "Class Session",
+    startTime: cls.startTime.toISOString(),
+    endTime: cls.endTime.toISOString(),
+    location: cls.locationId?.name || "Main Branch",
+    leadCoaches: Array.isArray(cls.coachId)
+      ? cls.coachId.map((c: any) => c.coachName || "Coach").join(", ")
+      : cls.coachName || "Lead Coach",
+  }));
+
   return new SuccessResponse("My shadow checklist retrieved", {
     ...progress,
+    assignedClasses,
     currentMonth: {
       phaseNumber: currentPhaseNum,
       title: currentPhaseData?.title || "",

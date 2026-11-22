@@ -1667,7 +1667,7 @@ export class CoachService {
       branchName,
       branchLocation,
       hasPtSessions: ptCount > 0,
-      hasScheduledClasses: classCount > 0 || extraCategories.length > 0,
+      hasScheduledClasses: classCount > 0 || extraCategories.length > 0 || isShadowCoach,
       scansCategories: extraCategories,
       canViewPtReports,
       isShadowCoach,
@@ -1820,12 +1820,21 @@ export class CoachService {
       .sort({ createdAt: -1 })
       .limit(50);
 
-    return items.map((n) => ({
+    return items.map((n: any) => ({
       id: (n._id as Types.ObjectId).toString(),
-      memberId: n.memberId.toString(),
-      memberName: n.memberName,
-      packageName: n.packageName,
-      classesTotal: n.classesTotal,
+      type: n.type || (n.classTitle ? "class_assignment" : "package_assignment"),
+      title: n.title,
+      message: n.message,
+      scheduledClassId: n.scheduledClassId ? n.scheduledClassId.toString() : undefined,
+      classTitle: n.classTitle,
+      startTime: n.startTime ? n.startTime.toISOString() : undefined,
+      endTime: n.endTime ? n.endTime.toISOString() : undefined,
+      locationName: n.locationName,
+      leadCoachName: n.leadCoachName,
+      memberId: n.memberId ? n.memberId.toString() : "",
+      memberName: n.memberName || "",
+      packageName: n.packageName || "",
+      classesTotal: n.classesTotal ?? 0,
       createdAt: n.createdAt.toISOString(),
       read: n.read,
     }));
