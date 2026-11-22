@@ -903,13 +903,7 @@ export class CoachService {
     return dtoResult;
   }
 
-  static async getSchedule(
-    coachDocId: Types.ObjectId,
-    weekStart: Date,
-    coachUserId?: Types.ObjectId,
-    scope?: string,
-    userRole?: string
-  ): Promise<ScheduleResponseDto> {
+  static async getSchedule(coachDocId: Types.ObjectId, weekStart: Date): Promise<ScheduleResponseDto> {
     const { objectIds, stringIds } = await this.getCoachLookupIds(coachDocId);
     const assignedIds = new Set([
       ...objectIds.map((id) => id.toString()),
@@ -919,46 +913,14 @@ export class CoachService {
     const viewerCoachName = viewerCoachDoc?.coachName?.trim();
 
     const weekEnd = addDays(weekStart, 7);
-
-    let orClauses: any[] = [
-      { coachId: { $in: objectIds } },
-      { coachId: { $in: stringIds } },
-      { shadowCoachId: { $in: objectIds } },
-      { shadowCoachId: { $in: stringIds } },
-    ];
-
-    const isManagingRole =
-      userRole === "managing_coach" ||
-      userRole === "management" ||
-      userRole === "branch_admin";
-
-    if (scope === "all" && isManagingRole) {
-      const extraCategories = await this.getCoachExtraScansCategories(coachDocId, coachUserId);
-      if (extraCategories.length > 0) {
-        const categoryFilters = extraCategories.map((cat) => {
-          if (/^functional/i.test(cat)) {
-            return /^(FUNCTIONAL_TRAINING|FUNCTIONAL TRAINING)$/i;
-          }
-          if (/^studio/i.test(cat)) {
-            return /^STUDIO$/i;
-          }
-          return new RegExp(`^${escapeRegex(cat)}$`, "i");
-        });
-        const matchingClasses = await Class.find({ category: { $in: categoryFilters } }).select("_id");
-        const extraClassIds = matchingClasses.map((c) => c._id as Types.ObjectId);
-        if (extraClassIds.length > 0) {
-          orClauses.push({ cid: { $in: extraClassIds } });
-        }
-      } else {
-        orClauses = [{}];
-      }
-    }
-
     const scheduledClasses = await ScheduledClass.find({
-      ...(orClauses.length === 1 && Object.keys(orClauses[0]).length === 0
-        ? {}
-        : { $or: orClauses }),
-      startTime: { $gte: weekStart, $lt: weekEnd },
+      $or: [
+        { coachId: { $in: objectIds } },
+        { coachId: { $in: stringIds } },
+        { shadowCoachId: { $in: objectIds } },
+        { shadowCoachId: { $in: stringIds } },
+      ],
+      startTime: { $gte: weekStart, $lt: weekEnd }
     })
       .populate("locationId")
       .populate("coachId", "coachName")
