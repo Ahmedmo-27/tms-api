@@ -9,6 +9,7 @@ import User from "../../models/user";
 import { CoachAuthRequest } from "../../middlewares/coach.middleware";
 import { ShadowCoachService } from "../../services/shadow-coach-service";
 import { SchedulerService } from "../../services/scheduler-service";
+import { startOfDateCairo, endOfDateCairo } from "../../utils/timezone";
 
 /**
  * GET /api/coach/classes/:scid/shadow-checklist
@@ -312,12 +313,19 @@ export const assignClassShadowCoach = asyncHandler(async (req: Request, res: Res
  * Allows managing coaches to quickly browse classes and assign shadow coaches.
  */
 export const getUpcomingClassesForAssignment = asyncHandler(async (req: Request, res: Response) => {
-  const startOfDay = new Date();
-  startOfDay.setHours(0, 0, 0, 0);
+  const { date } = req.query;
 
-  const classes = await ScheduledClass.find({
-    startTime: { $gte: startOfDay },
-  })
+  let query: any = {};
+  if (date && typeof date === "string" && date.trim()) {
+    const startOfDay = startOfDateCairo(date.trim());
+    const endOfDay = endOfDateCairo(date.trim());
+    query.startTime = { $gte: startOfDay, $lte: endOfDay };
+  } else {
+    const startOfDay = startOfDateCairo(new Date());
+    query.startTime = { $gte: startOfDay };
+  }
+
+  const classes = await ScheduledClass.find(query)
     .sort({ startTime: 1 })
     .limit(100)
     .populate("cid", "name title description")
