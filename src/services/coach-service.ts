@@ -12,6 +12,7 @@ import Ticket from "../models/ticket";
 import User from "../models/user";
 import Location from "../models/location";
 import { BadRequestError, ForbiddenError, NotFoundError } from "../core/ApiError";
+import { ShadowCoachService } from "./shadow-coach-service";
 import { cairoDaysUntil, isPackageExpired } from "../utils/timezone";
 import {
   ClientResponseDto,
@@ -921,6 +922,7 @@ export class CoachService {
     })
       .populate("locationId")
       .populate("coachId", "coachName")
+      .populate("shadowCoachId", "coachName phoneNumber currentPhase")
       .sort({ startTime: 1 });
 
     // Batch fetch 1: Classes
@@ -1039,6 +1041,21 @@ export class CoachService {
         coachName: sessionCoachName,
         coachNames: allCoachNames || sessionCoachName,
         allCoachNames,
+        shadowCoach: scheduledClass.shadowCoachId
+          ? {
+              id: ((scheduledClass.shadowCoachId as any)._id || scheduledClass.shadowCoachId).toString(),
+              name: (scheduledClass.shadowCoachId as any).coachName || scheduledClass.shadowCoachName || "",
+              currentPhase: (scheduledClass.shadowCoachId as any).currentPhase || 1,
+              phaseLabel: ShadowCoachService.getPhaseLabel((scheduledClass.shadowCoachId as any).currentPhase || 1),
+            }
+          : scheduledClass.shadowCoachName
+          ? {
+              id: "",
+              name: scheduledClass.shadowCoachName,
+              currentPhase: 1,
+              phaseLabel: ShadowCoachService.getPhaseLabel(1),
+            }
+          : null,
         clients
       };
 
@@ -1671,6 +1688,7 @@ export class CoachService {
         coachNames?: string;
         allCoachNames?: string;
         coaches?: { id: string; name: string }[];
+        shadowCoach?: any;
       },
       date: string,
     ): TodaySessionSummaryDto => ({
@@ -1686,6 +1704,7 @@ export class CoachService {
       coachNames: session.coachNames,
       allCoachNames: session.allCoachNames,
       coaches: session.coaches,
+      shadowCoach: session.shadowCoach,
     });
 
     const todaySessions = (schedule.days.find((d) => d.date === todayKey)?.sessions ?? []).map(

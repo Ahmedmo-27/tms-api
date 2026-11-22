@@ -10,6 +10,14 @@ import {
   submitCoachTicket,
   getActiveTicketCategories,
 } from "../controllers/admin/ticket-controller";
+import {
+  getClassShadowChecklist,
+  updateClassShadowChecklist,
+  getManagingShadowCoaches,
+  getManagingShadowCoachDetail,
+  updateManagingShadowCoachPhase,
+  evaluateManagingShadowCoach,
+} from "../controllers/coach/shadow-coach-controller";
 import { cacheResponse, invalidateCache } from "../middlewares/cacheResponse";
 import { CacheTags, coachTag } from "../cache/response-cache";
 
@@ -57,5 +65,15 @@ router.get(
   coachRead(45_000, CacheTags.ptAchievement),
   getPtAchievementReport,
 );
+
+// Shadow Coach Checklist (lead coach & managing coach)
+router.get("/classes/:scid/shadow-checklist", coachGuard, getClassShadowChecklist);
+router.patch("/classes/:scid/shadow-checklist", coachGuard, updateClassShadowChecklist);
+
+// Managing Coach — Shadow Coach Program Management
+router.get("/managing/shadow-coaches", coachGuard, requireManagingCoach, getManagingShadowCoaches);
+router.get("/managing/shadow-coaches/:coachId", coachGuard, requireManagingCoach, getManagingShadowCoachDetail);
+router.patch("/managing/shadow-coaches/:coachId/phase", coachGuard, requireManagingCoach, updateManagingShadowCoachPhase);
+router.post("/managing/shadow-coaches/:coachId/decision", coachGuard, requireManagingCoach, evaluateManagingShadowCoach);
 
 export default router;

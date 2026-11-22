@@ -74,11 +74,12 @@ export const coachGuard = asyncHandler(
     }
 
     // Authorize from DB role, not JWT claim (handles demotion while token still valid)
-    if (user.role !== "coach" && user.role !== "managing_coach") {
+    if (user.role !== "coach" && user.role !== "managing_coach" && user.role !== "shadow_coach") {
       throw new ForbiddenError("INSUFFICIENT_PERMISSIONS", "Access denied - coach role required");
     }
 
     (req as CoachAuthRequest).coachId = new Types.ObjectId(decoded.uid);
+    (req as CoachAuthRequest).userRole = user.role;
 
     const coachDoc = await CoachService.resolveCoachProfileForUser(user);
     if (!coachDoc) {

@@ -16,6 +16,7 @@ import { escapeRegex } from "../../utils/escapeRegex";
 import { normalizePhoneNumber } from "../../utils/phone";
 import { assertPasswordStrength } from "../auth/auth-controller";
 import { SubscriptionsService } from "../../services/subscriptions-service";
+import { ShadowCoachService } from "../../services/shadow-coach-service";
 import { runInTransaction } from "../../utils/transaction";
 import { AuthRequest } from "../../middlewares/auth.middleware";
 import { isBranchScopedRole, normalizeRole } from "../../utils/location-scope";
@@ -211,6 +212,7 @@ export const createUser = asyncHandler(
       "branch_admin",
       "coach",
       "managing_coach",
+      "shadow_coach",
       "mailer",
       "accountant",
       "sales",
@@ -321,13 +323,22 @@ export const createUser = asyncHandler(
         );
       }
 
-      if (role === "coach" || role === "managing_coach") {
+      if (role === "coach" || role === "managing_coach" || role === "shadow_coach") {
+        const isShadow = role === "shadow_coach";
         const coachPtPrivilege = role === "managing_coach" ? Boolean(canViewPtReports) : false;
+        let linkedCoachDoc: any = null;
+
         if (coachId && Types.ObjectId.isValid(coachId)) {
-          await Coach.findByIdAndUpdate(
+          linkedCoachDoc = await Coach.findByIdAndUpdate(
             coachId,
-            { userId: user._id, phoneNumber: cleanPhone, canViewPtReports: coachPtPrivilege },
-            session ? { session } : {}
+            {
+              userId: user._id,
+              phoneNumber: cleanPhone,
+              canViewPtReports: coachPtPrivilege,
+              isShadowCoach: isShadow,
+              ...(isShadow && { currentPhase: 1, trainingStartDate: new Date() }),
+            },
+            session ? { session, new: true } : { new: true }
           );
         } else {
           const existingCoach = await Coach.findOne({
@@ -338,16 +349,35 @@ export const createUser = asyncHandler(
             existingCoach.userId = user._id as Types.ObjectId;
             existingCoach.phoneNumber = cleanPhone;
             existingCoach.canViewPtReports = coachPtPrivilege;
+            existingCoach.isShadowCoach = isShadow;
+            if (isShadow) {
+              existingCoach.currentPhase = 1;
+              existingCoach.trainingStartDate = new Date();
+            }
             await existingCoach.save(session ? { session } : {});
+            linkedCoachDoc = existingCoach;
           } else if (!existingCoach) {
             const newCoach = new Coach({
               coachName: user.name,
               phoneNumber: cleanPhone,
               userId: user._id,
               canViewPtReports: coachPtPrivilege,
+              isShadowCoach: isShadow,
+              ...(isShadow && { currentPhase: 1, trainingStartDate: new Date() }),
             });
             await newCoach.save(session ? { session } : {});
+            linkedCoachDoc = newCoach;
+          } else {
+            linkedCoachDoc = existingCoach;
           }
+        }
+
+        if (isShadow && linkedCoachDoc) {
+          await ShadowCoachService.initializeProgress(
+            linkedCoachDoc._id as any,
+            user._id as any,
+            session
+          );
         }
       }
     });
@@ -484,6 +514,7 @@ export const updateUser = asyncHandler(
         "branch_admin",
         "coach",
         "managing_coach",
+        "shadow_coach",
         "mailer",
         "accountant",
         "sales",
@@ -500,6 +531,7 @@ export const updateUser = asyncHandler(
         );
       }
 
+      const previousRole = user.role;
       user.role = role;
 
       if (role === "member") {
@@ -515,13 +547,42 @@ export const updateUser = asyncHandler(
         }
       }
 
-      if (role === "coach" || role === "managing_coach") {
+      if (role === "coach" || role === "managing_coach" || role === "shadow_coach") {
+        const isShadow = role === "shadow_coach";
+        let linkedCoachDoc: any = null;
         if (coachId && Types.ObjectId.isValid(coachId)) {
-          await Coach.findByIdAndUpdate(coachId, {
-            userId: user._id,
-            phoneNumber: user.phoneNumber,
+          linkedCoachDoc = await Coach.findByIdAndUpdate(
+            coachId,
+            {
+              userId: user._id,
+              phoneNumber: user.phoneNumber,
+              isShadowCoach: isShadow,
+              ...(isShadow && previousRole !== "shadow_coach" && { currentPhase: 1, trainingStartDate: new Date() }),
+            },
+            { new: true }
+          );
+        } else {
+          linkedCoachDoc = await Coach.findOne({
+            $or: [{ userId: user._id }, { phoneNumber: user.phoneNumber }],
           });
+          if (linkedCoachDoc) {
+            linkedCoachDoc.isShadowCoach = isShadow;
+            if (isShadow && previousRole !== "shadow_coach") {
+              linkedCoachDoc.currentPhase = 1;
+              linkedCoachDoc.trainingStartDate = new Date();
+            }
+            await linkedCoachDoc.save();
+          }
         }
+
+        if (isShadow && linkedCoachDoc) {
+          await ShadowCoachService.initializeProgress(linkedCoachDoc._id as any, user._id as any);
+        }
+      } else if (previousRole === "shadow_coach" && role !== "shadow_coach") {
+        await Coach.updateMany(
+          { $or: [{ userId: user._id }, { phoneNumber: user.phoneNumber }] },
+          { isShadowCoach: false }
+        );
       }
     }
 

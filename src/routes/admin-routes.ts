@@ -77,6 +77,7 @@ import {
   updateCoach,
   deleteCoach,
 } from "../controllers/admin/coach-controller";
+import { getManagingShadowCoaches } from "../controllers/coach/shadow-coach-controller";
 import { addMember, getMember, updateMember } from "../controllers/admin/member-controller";
 import {
   getAttendanceHistory,
@@ -848,6 +849,14 @@ adminRoutes.delete(
   authorizeUser(["management", "branch_admin"]),
   invalidateCache([CacheTags.coaches]),
   deleteCoach
+);
+
+// Shadow Coach Management Routes
+adminRoutes.get(
+  "/shadow-coaches",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin", "managing_coach"]),
+  getManagingShadowCoaches
 );
 
 // Location Routes

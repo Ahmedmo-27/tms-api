@@ -7,6 +7,7 @@ import {
 } from "../core/ApiError";
 import Class from "../models/class";
 import Location from "../models/location";
+import Coach from "../models/coach";
 import Schedule from "../models/schedule";
 import ScheduledClass from "../models/scheduledClass";
 import NonUserBooking from "../models/nonUserBookings";
@@ -20,6 +21,7 @@ import Payment from "../models/payment";
 import { PaymentsService } from "./payments-service";
 import { NotificationsService } from "./notifications-service";
 import { WaitlistService } from "./waitlist-service";
+import { ShadowCoachService } from "./shadow-coach-service";
 import WaitlistEntry from "../models/waitlistEntry";
 import { startOfDateCairo, endOfDateCairo } from "../utils/timezone";
 
@@ -143,8 +145,33 @@ export class SchedulerService {
    * Mobile app reads locationId on each scheduled session (not cid.locations[]).
    * Shape the response with this session's branch and keep cid.locations scoped to it.
    */
-  private static shapeSessionForLegacyClients(cls: any) {
+  private static shapeSessionForLegacyClients(cls: any, isClientOrMobile: boolean = false) {
     const doc = typeof cls.toObject === "function" ? cls.toObject() : { ...cls };
+
+    if (isClientOrMobile) {
+      delete doc.shadowCoachId;
+      delete doc.shadowCoachName;
+      delete doc.shadowCoach;
+    } else {
+      if (doc.shadowCoachId && typeof doc.shadowCoachId === "object") {
+        const sc = doc.shadowCoachId;
+        const phase = sc.currentPhase || 1;
+        doc.shadowCoach = {
+          id: (sc._id || sc).toString(),
+          name: sc.coachName || doc.shadowCoachName || "",
+          currentPhase: phase,
+          phaseLabel: ShadowCoachService.getPhaseLabel(phase),
+        };
+      } else if (doc.shadowCoachName) {
+        doc.shadowCoach = {
+          id: doc.shadowCoachId ? doc.shadowCoachId.toString() : "",
+          name: doc.shadowCoachName,
+          currentPhase: 1,
+          phaseLabel: ShadowCoachService.getPhaseLabel(1),
+        };
+      }
+    }
+
     const sessionLocation = this.resolveSessionLocation(cls);
     const locationId = this.shapeLocationId(sessionLocation);
     const availableSlots =
@@ -265,6 +292,7 @@ export class SchedulerService {
   static async getSchedule(
     date: string,
     locationId?: string,
+    isClientOrMobile: boolean = false,
   ): Promise<IScheduledClass[]> {
     const startOfDay = startOfDateCairo(date);
     const endOfDay = endOfDateCairo(date);
@@ -279,6 +307,7 @@ export class SchedulerService {
       .populate({ path: "cid", populate: { path: "locations" } })
       .populate({ path: "locationId", select: "branchName location locationUrl" })
       .populate({ path: "coachId" })
+      .populate({ path: "shadowCoachId", select: "coachName phoneNumber currentPhase" })
       .populate({ path: "bookedMembers.uid", select: "name phoneNumber" })
       .populate({ path: "waitlistedMembers.uid", select: "name phoneNumber phone" })
       .sort({ startTime: 1 })
@@ -297,6 +326,7 @@ export class SchedulerService {
           .populate({ path: "cid", populate: { path: "locations" } })
           .populate({ path: "locationId", select: "branchName location locationUrl" })
           .populate({ path: "coachId" })
+          .populate({ path: "shadowCoachId", select: "coachName phoneNumber currentPhase" })
           .populate({ path: "bookedMembers.uid", select: "name phoneNumber" })
           .populate({ path: "waitlistedMembers.uid", select: "name phoneNumber phone" })
           .sort({ startTime: 1 })
@@ -307,7 +337,7 @@ export class SchedulerService {
     await this.populateWaitlistsForClasses(scheduledClasses);
 
     return scheduledClasses.map((cls) =>
-      this.shapeSessionForLegacyClients(cls),
+      this.shapeSessionForLegacyClients(cls, isClientOrMobile),
     );
   }
 
@@ -322,6 +352,7 @@ export class SchedulerService {
       .populate({ path: "cid", populate: { path: "locations" } })
       .populate({ path: "locationId", select: "branchName location locationUrl" })
       .populate({ path: "coachId" })
+      .populate({ path: "shadowCoachId", select: "coachName phoneNumber currentPhase" })
       .populate({ path: "scans.uid" })
       .populate({ path: "bookedMembers.uid", select: "name phoneNumber" })
       .populate({ path: "waitlistedMembers.uid", select: "name phoneNumber phone" })
@@ -331,7 +362,7 @@ export class SchedulerService {
     await this.populateWaitlistsForClasses(scheduledClasses);
 
     return scheduledClasses.map((cls) =>
-      this.shapeSessionForLegacyClients(cls),
+      this.shapeSessionForLegacyClients(cls, false),
     );
   }
 
@@ -344,6 +375,7 @@ export class SchedulerService {
       .populate({ path: "cid", populate: { path: "locations" } })
       .populate({ path: "locationId", select: "branchName location locationUrl" })
       .populate({ path: "coachId" })
+      .populate({ path: "shadowCoachId", select: "coachName phoneNumber currentPhase" })
       .populate({ path: "scans.uid" })
       .populate({ path: "bookedMembers.uid", select: "name phoneNumber" })
       .populate({ path: "waitlistedMembers.uid", select: "name phoneNumber phone" })
@@ -354,7 +386,7 @@ export class SchedulerService {
     await this.populateWaitlistsForClasses(scheduledClasses);
 
     return scheduledClasses.map((cls) =>
-      this.shapeSessionForLegacyClients(cls),
+      this.shapeSessionForLegacyClients(cls, false),
     );
   }
 
@@ -365,6 +397,8 @@ export class SchedulerService {
     availableSlots: string,
     coachId: string | string[] | Record<string, string>,
     locationRaw?: string,
+    shadowCoachId?: string | null,
+    creatorRole?: string,
   ): Promise<IScheduledClass> {
     const cls = await Class.findById(cid);
     if (!cls)
@@ -398,6 +432,27 @@ export class SchedulerService {
       endTime ||
       new Date(new Date(startTime).getTime() + defaultDurationMs).toISOString();
 
+    let resolvedShadowCoachId: Types.ObjectId | undefined;
+    let resolvedShadowCoachName: string | undefined;
+
+    if (shadowCoachId && shadowCoachId !== "none" && shadowCoachId !== "") {
+      if (creatorRole !== "managing_coach") {
+        throw new ForbiddenError(
+          "MANAGING_COACH_ONLY",
+          "Only managing coaches can assign a shadow coach to a class"
+        );
+      }
+      if (!Types.ObjectId.isValid(shadowCoachId)) {
+        throw new BadRequestError("INVALID_SHADOW_COACH_ID", "Invalid shadow coach ID format");
+      }
+      const shadowCoach = await Coach.findById(shadowCoachId);
+      if (!shadowCoach) {
+        throw new NotFoundError("SHADOW_COACH_NOT_FOUND", "Shadow coach not found", { shadowCoachId });
+      }
+      resolvedShadowCoachId = shadowCoach._id as Types.ObjectId;
+      resolvedShadowCoachName = shadowCoach.coachName;
+    }
+
     const scheduledClass = new ScheduledClass({
       cid,
       locationId,
@@ -406,6 +461,10 @@ export class SchedulerService {
       endTime: resolvedEndTime,
       availableSlots,
       coachId: normalizeCoachIds(coachId).map((id) => new Types.ObjectId(id)),
+      ...(resolvedShadowCoachId && {
+        shadowCoachId: resolvedShadowCoachId,
+        shadowCoachName: resolvedShadowCoachName,
+      }),
     });
     await scheduledClass.save();
     await Schedule.scheduleClass(scheduledClass._id as string);
@@ -484,6 +543,7 @@ export class SchedulerService {
     updatedClass: Record<string, any>,
     scid: string,
     restrictToLocationId?: string | Types.ObjectId | null,
+    editorRole?: string,
   ): Promise<IScheduledClass | null> {
     if (!scid || !Types.ObjectId.isValid(scid))
       throw new NotFoundError("CLASS_NOT_FOUND", "Class not found", { scid });
@@ -496,6 +556,7 @@ export class SchedulerService {
       "coachId",
       "locationId",
       "location",
+      "shadowCoachId",
     ];
     const updates = Object.keys(updatedClass);
     const isValidUpdate = updates.every((update) =>
@@ -504,6 +565,34 @@ export class SchedulerService {
     let newClass = null;
     if (!isValidUpdate)
       throw new BadRequestError("INVALID_UPDATES", "Invalid updates");
+
+    let resolvedShadowCoachId: Types.ObjectId | null | undefined;
+    let resolvedShadowCoachName: string | null | undefined;
+
+    if ("shadowCoachId" in updatedClass) {
+      if (editorRole !== "managing_coach") {
+        throw new ForbiddenError(
+          "MANAGING_COACH_ONLY",
+          "Only managing coaches can assign or modify a shadow coach on a class"
+        );
+      }
+      const rawScId = updatedClass.shadowCoachId;
+      if (rawScId && rawScId !== "none" && rawScId !== "") {
+        if (!Types.ObjectId.isValid(rawScId)) {
+          throw new BadRequestError("INVALID_SHADOW_COACH_ID", "Invalid shadow coach ID format");
+        }
+        const scDoc = await Coach.findById(rawScId);
+        if (!scDoc) {
+          throw new NotFoundError("SHADOW_COACH_NOT_FOUND", "Shadow coach not found", { shadowCoachId: rawScId });
+        }
+        resolvedShadowCoachId = scDoc._id as Types.ObjectId;
+        resolvedShadowCoachName = scDoc.coachName;
+      } else {
+        resolvedShadowCoachId = null;
+        resolvedShadowCoachName = "";
+      }
+    }
+
     const {
       startTime,
       endTime,
@@ -587,6 +676,10 @@ export class SchedulerService {
             coachId: normalizeCoachIds(coachId).map(
               (id) => new Types.ObjectId(id),
             ),
+          }),
+          ...("shadowCoachId" in updatedClass && {
+            shadowCoachId: resolvedShadowCoachId,
+            shadowCoachName: resolvedShadowCoachName,
           }),
         },
         { new: true },

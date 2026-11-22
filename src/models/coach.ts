@@ -7,6 +7,9 @@ export interface ICoach extends Document {
     ptDropInPrice?: number | null;
     scansCategories?: string[];
     canViewPtReports?: boolean;
+    isShadowCoach?: boolean;
+    currentPhase?: number;
+    trainingStartDate?: Date;
 }
 
 const CoachSchema: Schema<ICoach> = new Schema({
@@ -37,6 +40,22 @@ const CoachSchema: Schema<ICoach> = new Schema({
     canViewPtReports: {
         type: Boolean,
         default: false,
+        required: false,
+    },
+    isShadowCoach: {
+        type: Boolean,
+        default: false,
+        required: false,
+    },
+    currentPhase: {
+        type: Number,
+        default: 1,
+        min: 1,
+        max: 3,
+        required: false,
+    },
+    trainingStartDate: {
+        type: Date,
         required: false,
     },
 });

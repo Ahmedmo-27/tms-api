@@ -46,8 +46,9 @@ export const scheduleClass = asyncHandler(async function (
   req: Request,
   res: Response
 ): Promise<void> {
-  const { cid, startTime, endTime, availableSlots, coachId } = req.body;
+  const { cid, startTime, endTime, availableSlots, coachId, shadowCoachId } = req.body;
   const targetLocationId = resolveLocationIdForWrite(req);
+  const userRole = (req as any).user?.role;
 
   const scheduledClass = await SchedulerService.scheduleClass(
     cid,
@@ -56,6 +57,8 @@ export const scheduleClass = asyncHandler(async function (
     availableSlots,
     coachId,
     targetLocationId,
+    shadowCoachId,
+    userRole,
   );
   new SuccessResponse("Class Scheduled!", scheduledClass).send(res);
 });
@@ -74,10 +77,12 @@ export const editClass = asyncHandler(async function (
   res: Response
 ): Promise<void> {
   const scid = req.params.scid;
+  const userRole = (req as any).user?.role;
   const updatedClass = await SchedulerService.editClass(
     req.body,
     scid,
     getRestrictToLocationId(req),
+    userRole,
   );
   new SuccessResponse("Class Updated!", updatedClass).send(res);
 });

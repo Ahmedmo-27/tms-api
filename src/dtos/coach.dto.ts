@@ -67,6 +67,13 @@ export interface CalendarClientDto {
   } | null;
 }
 
+export interface ShadowCoachRefDto {
+  id: string;
+  name: string;
+  currentPhase: number;
+  phaseLabel: string;
+}
+
 export interface ScheduleSessionDto {
   scheduledClassId: string;
   classTitle: string;
@@ -80,6 +87,7 @@ export interface ScheduleSessionDto {
   coachName?: string;
   coachNames?: string;
   allCoachNames?: string;
+  shadowCoach?: ShadowCoachRefDto | null;
   clients: CalendarClientDto[];
 }
 
@@ -146,6 +154,7 @@ export interface TodaySessionSummaryDto {
   coachName?: string;
   coachNames?: string;
   allCoachNames?: string;
+  shadowCoach?: ShadowCoachRefDto | null;
 }
 
 export interface TodayPtAlertDto {
