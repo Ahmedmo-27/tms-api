@@ -389,6 +389,54 @@ describe("Shadow Coach End-to-End System Integration Suite", () => {
         })
       );
     });
+
+    it("returns classes assigned to shadow coach in getMyShadowChecklist even if their end time has passed or scheduled today", async () => {
+      const { getMyShadowChecklist } = await import("../controllers/coach/shadow-coach-controller");
+      const { startOfDateCairo } = await import("../utils/timezone");
+
+      const cairoToday = startOfDateCairo(new Date());
+      // Create a class scheduled for today
+      const todayStart = new Date(cairoToday.getTime() + 8 * 3600000);
+      const todayEnd = new Date(cairoToday.getTime() + 9 * 3600000);
+
+      const pastClassToday = await ScheduledClass.create({
+        cid: testClass._id,
+        startTime: todayStart,
+        endTime: todayEnd,
+        availableSlots: 10,
+        coachId: [leadCoachDoc._id],
+        shadowCoachId: candidateDoc._id,
+        locationId: testLocation._id,
+      });
+
+      const mockReq: any = {
+        coachDocId: candidateDoc._id,
+        coachId: candidateUser._id,
+        userRole: "shadow_coach",
+      };
+
+      let responseData: any = null;
+      const mockRes: any = {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn().mockImplementation((payload) => {
+          responseData = payload;
+          return mockRes;
+        }),
+      };
+      const mockNext = jest.fn();
+
+      await getMyShadowChecklist(mockReq, mockRes, mockNext);
+
+      expect(mockNext).not.toHaveBeenCalled();
+      expect(responseData).toBeDefined();
+      expect(responseData.data.assignedClasses).toBeDefined();
+      const found = responseData.data.assignedClasses.find(
+        (c: any) => c.scheduledClassId === (pastClassToday._id as any).toString()
+      );
+      expect(found).toBeDefined();
+      expect(found.classTitle).toBe(testClass.title);
+      expect(found.status).toBe("today");
+    });
   });
 
   // --------------------------------------------------------------------------

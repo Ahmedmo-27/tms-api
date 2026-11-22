@@ -9,7 +9,8 @@ import User from "../../models/user";
 import { CoachAuthRequest } from "../../middlewares/coach.middleware";
 import { ShadowCoachService } from "../../services/shadow-coach-service";
 import { SchedulerService } from "../../services/scheduler-service";
-import { startOfDateCairo, endOfDateCairo } from "../../utils/timezone";
+import { CoachService } from "../../services/coach-service";
+import { startOfDateCairo, endOfDateCairo, isSameCairoDay } from "../../utils/timezone";
 
 /**
  * GET /api/coach/classes/:scid/shadow-checklist
@@ -244,27 +245,57 @@ export const getMyShadowChecklist = asyncHandler(async (req: Request, res: Respo
   const currentMonthDone = checkedItems.length;
   const currentMonthPercent = currentMonthTotal > 0 ? Math.round((currentMonthDone / currentMonthTotal) * 100) : 0;
 
-  const now = new Date();
-  const upcomingClasses = await ScheduledClass.find({
-    shadowCoachId: coachDocId,
-    endTime: { $gte: now },
+  const { objectIds, stringIds } = await CoachService.getCoachLookupIds(coachDocId, coachReq.coachId);
+  const coachIdFilter = {
+    $or: [
+      { shadowCoachId: { $in: objectIds } },
+      { shadowCoachId: { $in: stringIds } },
+    ],
+  };
+
+  const cairoNow = new Date();
+  const startOfToday = startOfDateCairo(cairoNow);
+  const recentWindow = new Date(startOfToday.getTime() - 14 * 24 * 60 * 60 * 1000);
+
+  let assignedClassDocs = await ScheduledClass.find({
+    ...coachIdFilter,
+    startTime: { $gte: recentWindow },
   })
     .sort({ startTime: 1 })
-    .limit(20)
-    .populate("cid", "name title")
-    .populate("locationId", "name address")
-    .populate("coachId", "coachName phoneNumber");
+    .limit(50)
+    .populate("cid", "name title description")
+    .populate("locationId", "name branchName address location")
+    .populate("coachId", "coachName phoneNumber email");
 
-  const assignedClasses = upcomingClasses.map((cls: any) => ({
-    scheduledClassId: cls._id.toString(),
-    classTitle: cls.cid?.title || cls.cid?.name || cls.className || "Class Session",
-    startTime: cls.startTime.toISOString(),
-    endTime: cls.endTime.toISOString(),
-    location: cls.locationId?.name || "Main Branch",
-    leadCoaches: Array.isArray(cls.coachId)
-      ? cls.coachId.map((c: any) => c.coachName || "Coach").join(", ")
-      : cls.coachName || "Lead Coach",
-  }));
+  if (assignedClassDocs.length === 0) {
+    assignedClassDocs = await ScheduledClass.find(coachIdFilter)
+      .sort({ startTime: -1 })
+      .limit(20)
+      .populate("cid", "name title description")
+      .populate("locationId", "name branchName address location")
+      .populate("coachId", "coachName phoneNumber email");
+    assignedClassDocs.reverse();
+  }
+
+  const assignedClasses = assignedClassDocs.map((cls: any) => {
+    const start = new Date(cls.startTime);
+    const end = new Date(cls.endTime);
+    const isPast = end.getTime() < cairoNow.getTime();
+    const isToday = isSameCairoDay(start, cairoNow);
+    const status = isToday ? "today" : isPast ? "completed" : "upcoming";
+
+    return {
+      scheduledClassId: cls._id.toString(),
+      classTitle: cls.cid?.title || cls.cid?.name || cls.className || "Class Session",
+      startTime: cls.startTime.toISOString(),
+      endTime: cls.endTime.toISOString(),
+      location: cls.locationId?.name || cls.locationId?.branchName || "Main Branch",
+      leadCoaches: Array.isArray(cls.coachId)
+        ? cls.coachId.map((c: any) => c.coachName || "Coach").join(", ")
+        : cls.coachName || "Lead Coach",
+      status,
+    };
+  });
 
   return new SuccessResponse("My shadow checklist retrieved", {
     ...progress,
