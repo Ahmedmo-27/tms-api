@@ -136,7 +136,7 @@ describe("Shadow Coach Role & 3-Month Training Program", () => {
     const startTime = new Date(Date.now() + 86400000).toISOString();
     const endTime = new Date(Date.now() + 90000000).toISOString();
 
-    // Attempt assignment with non-managing role (e.g. branch_admin or coach) -> Must throw
+    // Attempt assignment with non-managing role (e.g. coach) -> Must throw
     await expect(
       SchedulerService.scheduleClass(
         testClass._id.toString(),
@@ -146,7 +146,7 @@ describe("Shadow Coach Role & 3-Month Training Program", () => {
         leadCoachDoc._id.toString(),
         testLocation._id.toString(),
         shadowCoachDoc._id.toString(),
-        "branch_admin" // Not managing_coach
+        "coach" // Regular coach (not managing role)
       )
     ).rejects.toThrow(ForbiddenError);
 

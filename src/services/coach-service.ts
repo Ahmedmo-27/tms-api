@@ -903,7 +903,13 @@ export class CoachService {
     return dtoResult;
   }
 
-  static async getSchedule(coachDocId: Types.ObjectId, weekStart: Date): Promise<ScheduleResponseDto> {
+  static async getSchedule(
+    coachDocId: Types.ObjectId,
+    weekStart: Date,
+    coachUserId?: Types.ObjectId,
+    scope?: string,
+    userRole?: string
+  ): Promise<ScheduleResponseDto> {
     const { objectIds, stringIds } = await this.getCoachLookupIds(coachDocId);
     const assignedIds = new Set([
       ...objectIds.map((id) => id.toString()),
@@ -913,14 +919,46 @@ export class CoachService {
     const viewerCoachName = viewerCoachDoc?.coachName?.trim();
 
     const weekEnd = addDays(weekStart, 7);
+
+    let orClauses: any[] = [
+      { coachId: { $in: objectIds } },
+      { coachId: { $in: stringIds } },
+      { shadowCoachId: { $in: objectIds } },
+      { shadowCoachId: { $in: stringIds } },
+    ];
+
+    const isManagingRole =
+      userRole === "managing_coach" ||
+      userRole === "management" ||
+      userRole === "branch_admin";
+
+    if (scope === "all" && isManagingRole) {
+      const extraCategories = await this.getCoachExtraScansCategories(coachDocId, coachUserId);
+      if (extraCategories.length > 0) {
+        const categoryFilters = extraCategories.map((cat) => {
+          if (/^functional/i.test(cat)) {
+            return /^(FUNCTIONAL_TRAINING|FUNCTIONAL TRAINING)$/i;
+          }
+          if (/^studio/i.test(cat)) {
+            return /^STUDIO$/i;
+          }
+          return new RegExp(`^${escapeRegex(cat)}$`, "i");
+        });
+        const matchingClasses = await Class.find({ category: { $in: categoryFilters } }).select("_id");
+        const extraClassIds = matchingClasses.map((c) => c._id as Types.ObjectId);
+        if (extraClassIds.length > 0) {
+          orClauses.push({ cid: { $in: extraClassIds } });
+        }
+      } else {
+        orClauses = [{}];
+      }
+    }
+
     const scheduledClasses = await ScheduledClass.find({
-      $or: [
-        { coachId: { $in: objectIds } },
-        { coachId: { $in: stringIds } },
-        { shadowCoachId: { $in: objectIds } },
-        { shadowCoachId: { $in: stringIds } },
-      ],
-      startTime: { $gte: weekStart, $lt: weekEnd }
+      ...(orClauses.length === 1 && Object.keys(orClauses[0]).length === 0
+        ? {}
+        : { $or: orClauses }),
+      startTime: { $gte: weekStart, $lt: weekEnd },
     })
       .populate("locationId")
       .populate("coachId", "coachName")
@@ -1214,6 +1252,7 @@ export class CoachService {
       .populate<{ "scans.uid": any }>("scans.uid")
       .populate("locationId")
       .populate("coachId", "coachName")
+      .populate("shadowCoachId", "coachName phoneNumber currentPhase")
       .sort({ startTime: 1 });
 
     const classIds = Array.from(new Set(scheduledClasses.map(sc => sc.cid.toString())));
@@ -1325,6 +1364,21 @@ export class CoachService {
         coachName:   sessionCoachName,
         coachNames:  allCoachNames || sessionCoachName,
         allCoachNames,
+        shadowCoach: sc.shadowCoachId
+          ? {
+              id: ((sc.shadowCoachId as any)._id || sc.shadowCoachId).toString(),
+              name: (sc.shadowCoachId as any).coachName || sc.shadowCoachName || "",
+              currentPhase: (sc.shadowCoachId as any).currentPhase || 1,
+              phaseLabel: ShadowCoachService.getPhaseLabel((sc.shadowCoachId as any).currentPhase || 1),
+            }
+          : sc.shadowCoachName
+          ? {
+              id: "",
+              name: sc.shadowCoachName,
+              currentPhase: 1,
+              phaseLabel: ShadowCoachService.getPhaseLabel(1),
+            }
+          : null,
         scans,
         attendanceConfirmation: sc.attendanceConfirmation?.confirmed
           ? {

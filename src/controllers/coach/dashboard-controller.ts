@@ -88,7 +88,14 @@ export const getSchedule = asyncHandler(async (req: Request, res: Response) => {
     weekStart = startOfWeek(new Date(), { weekStartsOn: 1 });
   }
 
-  const schedule = await CoachService.getSchedule(coachReq.coachDocId, weekStart);
+  const scope = typeof req.query.scope === "string" ? req.query.scope : undefined;
+  const schedule = await CoachService.getSchedule(
+    coachReq.coachDocId,
+    weekStart,
+    coachReq.coachId,
+    scope,
+    coachReq.userRole
+  );
   return new SuccessResponse("Schedule fetched", schedule).send(res);
 });
 
