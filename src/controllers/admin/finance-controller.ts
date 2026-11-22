@@ -46,8 +46,25 @@ export const getFinanceClassDetail = asyncHandler(async (req: Request, res: Resp
   if (!classTitle || classTitle.length > 200) {
     throw new BadRequestError("INVALID_CLASS", "A class title is required");
   }
-  const data = await FinanceService.classDetail(rangeFrom(req), classTitle);
-  new SuccessResponse("Class detail fetched", data).send(res);
+  const allTime = req.query.allTime === "1" || req.query.allTime === "true";
+  const range = allTime
+    ? await FinanceService.classAllTimeRange(classTitle, resolveLocationFilter(req))
+    : rangeFrom(req);
+  const data = await FinanceService.classDetail(range, classTitle);
+  new SuccessResponse("Class detail fetched", { ...data, allTime }).send(res);
+});
+
+export const getFinanceClassDay = asyncHandler(async (req: Request, res: Response) => {
+  const classTitle = typeof req.query.classTitle === "string" ? req.query.classTitle.trim() : "";
+  if (!classTitle || classTitle.length > 200) {
+    throw new BadRequestError("INVALID_CLASS", "A class title is required");
+  }
+  const date = typeof req.query.date === "string" ? req.query.date.trim() : "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new BadRequestError("INVALID_DATE", "A date in yyyy-MM-dd format is required");
+  }
+  const data = await FinanceService.classDay(classTitle, date, resolveLocationFilter(req));
+  new SuccessResponse("Class day fetched", data).send(res);
 });
 
 export const getFinanceCoachUsage = asyncHandler(async (req: Request, res: Response) => {
