@@ -198,7 +198,7 @@ describe("Shadow Coach End-to-End System Integration Suite", () => {
     const endTime = new Date(Date.now() + 90000000).toISOString();
 
     it("rejects shadow coach assignment by non-managing roles (403 Forbidden)", async () => {
-      const nonManagingRoles = ["coach", "branch_admin", "management", "front_desk", "accountant"];
+      const nonManagingRoles = ["coach", "front_desk", "accountant"];
 
       for (const role of nonManagingRoles) {
         await expect(

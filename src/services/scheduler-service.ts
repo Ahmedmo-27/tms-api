@@ -436,10 +436,11 @@ export class SchedulerService {
     let resolvedShadowCoachName: string | undefined;
 
     if (shadowCoachId && shadowCoachId !== "none" && shadowCoachId !== "") {
-      if (creatorRole !== "managing_coach") {
+      const allowedRoles = ["managing_coach", "management", "branch_admin"];
+      if (!allowedRoles.includes(creatorRole || "")) {
         throw new ForbiddenError(
           "MANAGING_COACH_ONLY",
-          "Only managing coaches can assign a shadow coach to a class"
+          "Only managing coaches and management staff can assign a shadow coach to a class"
         );
       }
       if (!Types.ObjectId.isValid(shadowCoachId)) {
@@ -570,10 +571,11 @@ export class SchedulerService {
     let resolvedShadowCoachName: string | null | undefined;
 
     if ("shadowCoachId" in updatedClass) {
-      if (editorRole !== "managing_coach") {
+      const allowedRoles = ["managing_coach", "management", "branch_admin"];
+      if (!allowedRoles.includes(editorRole || "")) {
         throw new ForbiddenError(
           "MANAGING_COACH_ONLY",
-          "Only managing coaches can assign or modify a shadow coach on a class"
+          "Only managing coaches and management staff can assign or modify a shadow coach on a class"
         );
       }
       const rawScId = updatedClass.shadowCoachId;
