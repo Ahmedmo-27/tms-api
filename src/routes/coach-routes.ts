@@ -17,6 +17,7 @@ import {
   getManagingShadowCoachDetail,
   updateManagingShadowCoachPhase,
   evaluateManagingShadowCoach,
+  getMyShadowChecklist,
 } from "../controllers/coach/shadow-coach-controller";
 import { cacheResponse, invalidateCache } from "../middlewares/cacheResponse";
 import { CacheTags, coachTag } from "../cache/response-cache";
@@ -34,7 +35,12 @@ const coachWrite = (...extra: string[]) =>
   invalidateCache((req) => [coachTag(req), ...extra]);
 
 router.post("/auth/login", loginLimiter, coachLogin);
-router.get("/auth/verifyToken", authenticateUser, authorizeUser(["coach", "managing_coach"]), verifyToken);
+router.get(
+  "/auth/verifyToken",
+  authenticateUser,
+  authorizeUser(["coach", "managing_coach", "shadow_coach"]),
+  verifyToken
+);
 router.post("/auth/change-password", coachGuard, coachWrite(), changeCoachPassword);
 
 router.get("/me", coachGuard, coachRead(30_000), getCoachMe);
@@ -65,6 +71,9 @@ router.get(
   coachRead(45_000, CacheTags.ptAchievement),
   getPtAchievementReport,
 );
+
+// Shadow Coach Personal Checklist Tracker (for shadow coaches)
+router.get("/shadow/my-checklist", coachGuard, getMyShadowChecklist);
 
 // Shadow Coach Checklist (lead coach & managing coach)
 router.get("/classes/:scid/shadow-checklist", coachGuard, getClassShadowChecklist);

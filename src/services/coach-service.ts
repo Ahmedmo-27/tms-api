@@ -917,6 +917,8 @@ export class CoachService {
       $or: [
         { coachId: { $in: objectIds } },
         { coachId: { $in: stringIds } },
+        { shadowCoachId: { $in: objectIds } },
+        { shadowCoachId: { $in: stringIds } },
       ],
       startTime: { $gte: weekStart, $lt: weekEnd }
     })
@@ -1623,20 +1625,23 @@ export class CoachService {
         $or: [
           { coachId: { $in: objectIds } },
           { coachId: { $in: stringIds } },
+          { shadowCoachId: { $in: objectIds } },
+          { shadowCoachId: { $in: stringIds } },
         ],
       }),
     ]);
 
+    const coachDoc = coachDocId ? await Coach.findById(coachDocId) : null;
     let canViewPtReports = false;
     if (user.role === "managing_coach") {
       canViewPtReports = Boolean(user.canViewPtReports);
-      if (!canViewPtReports && coachDocId) {
-        const coachDoc = await Coach.findById(coachDocId);
-        if (coachDoc?.canViewPtReports) {
-          canViewPtReports = true;
-        }
+      if (!canViewPtReports && coachDoc?.canViewPtReports) {
+        canViewPtReports = true;
       }
     }
+
+    const isShadowCoach = user.role === "shadow_coach" || Boolean(coachDoc?.isShadowCoach);
+    const currentPhase = coachDoc?.currentPhase ?? 1;
 
     return {
       name: user.name ?? "",
@@ -1649,6 +1654,8 @@ export class CoachService {
       hasScheduledClasses: classCount > 0 || extraCategories.length > 0,
       scansCategories: extraCategories,
       canViewPtReports,
+      isShadowCoach,
+      currentPhase,
     };
   }
 

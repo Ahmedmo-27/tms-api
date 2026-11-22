@@ -139,6 +139,8 @@ export interface CoachMeDto {
   hasScheduledClasses: boolean;
   scansCategories?: string[];
   canViewPtReports?: boolean;
+  isShadowCoach?: boolean;
+  currentPhase?: number;
 }
 
 export interface TodaySessionSummaryDto {

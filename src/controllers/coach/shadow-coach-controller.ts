@@ -208,3 +208,52 @@ export const evaluateManagingShadowCoach = asyncHandler(async (req: Request, res
 
   return new SuccessResponse(message, result).send(res);
 });
+
+/**
+ * GET /api/coach/shadow/my-checklist
+ * Allows the logged-in coach (specifically shadow coaches) to track their own 3-month curriculum,
+ * current month target checklist, completed competencies with verifying lead coach signatures,
+ * and remaining competencies for the current month.
+ */
+export const getMyShadowChecklist = asyncHandler(async (req: Request, res: Response) => {
+  const coachReq = req as CoachAuthRequest;
+  let coachDocId = coachReq.coachDocId;
+
+  if (!coachDocId && coachReq.coachId) {
+    const coachDoc = await Coach.findOne({ userId: coachReq.coachId });
+    if (coachDoc) {
+      coachDocId = coachDoc._id as Types.ObjectId;
+    }
+  }
+
+  if (!coachDocId) {
+    throw new NotFoundError("COACH_NOT_FOUND", "Coach profile not found");
+  }
+
+  const progress = await ShadowCoachService.getProgress(coachDocId);
+
+  const currentPhaseNum = progress.currentPhase || 1;
+  const currentPhaseData = progress.phases.find((p) => p.phaseNumber === currentPhaseNum) || progress.phases[0];
+
+  const checkedItems = (currentPhaseData?.checklist || []).filter((i: any) => i.isDone);
+  const remainingItems = (currentPhaseData?.checklist || []).filter((i: any) => !i.isDone);
+
+  const currentMonthTotal = currentPhaseData?.checklist?.length || 0;
+  const currentMonthDone = checkedItems.length;
+  const currentMonthPercent = currentMonthTotal > 0 ? Math.round((currentMonthDone / currentMonthTotal) * 100) : 0;
+
+  return new SuccessResponse("My shadow checklist retrieved", {
+    ...progress,
+    currentMonth: {
+      phaseNumber: currentPhaseNum,
+      title: currentPhaseData?.title || "",
+      guidelines: currentPhaseData?.guidelines || "",
+      isPhaseComplete: currentPhaseData?.isPhaseComplete || false,
+      totalCount: currentMonthTotal,
+      completedCount: currentMonthDone,
+      progressPercent: currentMonthPercent,
+      checkedItems,
+      remainingItems,
+    },
+  }).send(res);
+});
