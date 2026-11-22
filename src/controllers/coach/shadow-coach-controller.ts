@@ -187,10 +187,10 @@ export const evaluateManagingShadowCoach = asyncHandler(async (req: Request, res
   }
 
   const managingUser = await User.findById(coachReq.coachId);
-  if (!managingUser || managingUser.role !== "managing_coach") {
+  if (!managingUser || !["managing_coach", "management", "branch_admin"].includes(managingUser.role)) {
     throw new ForbiddenError(
       "INSUFFICIENT_PERMISSIONS",
-      "Only managing coaches can evaluate shadow coaches"
+      "Only managing coaches and management staff can evaluate shadow coaches"
     );
   }
 

@@ -3,7 +3,7 @@ import { getClients, getMemberPackages, deductSession, getSchedule, getScans, ge
 import { coachLogin, getCoachMe, changeCoachPassword } from "../controllers/coach/auth-controller";
 import { verifyToken } from "../controllers/auth/auth-controller";
 import { authenticateUser, authorizeUser } from "../middlewares/auth.middleware";
-import { coachGuard, requireManagingCoach } from "../middlewares/coach.middleware";
+import { coachGuard, requireManagingCoach, requireShadowCoachManager } from "../middlewares/coach.middleware";
 import { loginLimiter } from "../config/rateLimiter";
 import {
   getCoachTickets,
@@ -80,9 +80,9 @@ router.get("/classes/:scid/shadow-checklist", coachGuard, getClassShadowChecklis
 router.patch("/classes/:scid/shadow-checklist", coachGuard, updateClassShadowChecklist);
 
 // Managing Coach — Shadow Coach Program Management
-router.get("/managing/shadow-coaches", coachGuard, requireManagingCoach, getManagingShadowCoaches);
-router.get("/managing/shadow-coaches/:coachId", coachGuard, requireManagingCoach, getManagingShadowCoachDetail);
-router.patch("/managing/shadow-coaches/:coachId/phase", coachGuard, requireManagingCoach, updateManagingShadowCoachPhase);
-router.post("/managing/shadow-coaches/:coachId/decision", coachGuard, requireManagingCoach, evaluateManagingShadowCoach);
+router.get("/managing/shadow-coaches", coachGuard, requireShadowCoachManager, getManagingShadowCoaches);
+router.get("/managing/shadow-coaches/:coachId", coachGuard, requireShadowCoachManager, getManagingShadowCoachDetail);
+router.patch("/managing/shadow-coaches/:coachId/phase", coachGuard, requireShadowCoachManager, updateManagingShadowCoachPhase);
+router.post("/managing/shadow-coaches/:coachId/decision", coachGuard, requireShadowCoachManager, evaluateManagingShadowCoach);
 
 export default router;

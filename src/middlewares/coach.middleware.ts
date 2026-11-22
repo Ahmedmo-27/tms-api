@@ -120,3 +120,18 @@ export const requireManagingCoach = asyncHandler(
     next();
   }
 );
+
+export const requireShadowCoachManager = asyncHandler(
+  async (req: Request, _res: Response, next: NextFunction) => {
+    const coachReq = req as CoachAuthRequest;
+    const user = await User.findById(coachReq.coachId).select("role");
+    const allowedRoles = ["managing_coach", "management", "branch_admin"];
+    if (!user || !allowedRoles.includes(user.role)) {
+      throw new ForbiddenError(
+        "INSUFFICIENT_PERMISSIONS",
+        "This endpoint is restricted to managing coaches and management staff",
+      );
+    }
+    next();
+  }
+);
