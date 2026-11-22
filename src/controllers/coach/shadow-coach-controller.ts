@@ -8,6 +8,7 @@ import Coach from "../../models/coach";
 import User from "../../models/user";
 import { CoachAuthRequest } from "../../middlewares/coach.middleware";
 import { ShadowCoachService } from "../../services/shadow-coach-service";
+import { SchedulerService } from "../../services/scheduler-service";
 
 /**
  * GET /api/coach/classes/:scid/shadow-checklist
@@ -257,3 +258,50 @@ export const getMyShadowChecklist = asyncHandler(async (req: Request, res: Respo
     },
   }).send(res);
 });
+
+/**
+ * PATCH /api/coach/managing/classes/:scid/shadow-coach
+ * Allows managing coaches to assign, update, or remove a shadow coach for an existing scheduled class.
+ * Body: { shadowCoachId?: string | null }
+ */
+export const assignClassShadowCoach = asyncHandler(async (req: Request, res: Response) => {
+  const coachReq = req as CoachAuthRequest;
+  const { scid } = req.params;
+  const { shadowCoachId } = req.body;
+
+  if (!scid || !Types.ObjectId.isValid(scid)) {
+    throw new BadRequestError("INVALID_ID", "Invalid scheduled class ID format");
+  }
+
+  const updated = await SchedulerService.editClass(
+    { shadowCoachId: shadowCoachId === "none" || !shadowCoachId ? null : shadowCoachId },
+    scid,
+    null,
+    coachReq.userRole
+  );
+
+  return new SuccessResponse("Shadow coach assigned to class successfully", updated).send(res);
+});
+
+/**
+ * GET /api/coach/managing/classes/upcoming
+ * Returns upcoming scheduled classes with lead coaches, location, and currently assigned shadow coach.
+ * Allows managing coaches to quickly browse classes and assign shadow coaches.
+ */
+export const getUpcomingClassesForAssignment = asyncHandler(async (req: Request, res: Response) => {
+  const startOfDay = new Date();
+  startOfDay.setHours(0, 0, 0, 0);
+
+  const classes = await ScheduledClass.find({
+    startTime: { $gte: startOfDay },
+  })
+    .sort({ startTime: 1 })
+    .limit(100)
+    .populate("cid", "name title description")
+    .populate("locationId", "name address")
+    .populate("coachId", "coachName email phone profilePicture")
+    .populate("shadowCoachId", "coachName email phone profilePicture");
+
+  return new SuccessResponse("Upcoming classes retrieved", classes).send(res);
+});
+

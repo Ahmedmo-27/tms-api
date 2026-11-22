@@ -259,6 +259,27 @@ describe("Shadow Coach End-to-End System Integration Suite", () => {
       expect(updated!.availableSlots).toBe(25);
       expect(updated!.shadowCoachId!.toString()).toBe(candidateDoc._id.toString());
     });
+
+    it("allows managing coach to unassign shadow coach from an existing class", async () => {
+      const unassigned = await SchedulerService.editClass(
+        { shadowCoachId: "none" },
+        scheduledClassDoc._id.toString(),
+        null,
+        "managing_coach"
+      );
+
+      expect(unassigned).toBeDefined();
+      expect(unassigned!.shadowCoachId).toBeNull();
+      expect(unassigned!.shadowCoachName).toBe("");
+
+      // Restore assignment for subsequent test sections
+      await SchedulerService.editClass(
+        { shadowCoachId: candidateDoc._id.toString() },
+        scheduledClassDoc._id.toString(),
+        null,
+        "managing_coach"
+      );
+    });
   });
 
   // --------------------------------------------------------------------------

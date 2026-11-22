@@ -18,6 +18,8 @@ import {
   updateManagingShadowCoachPhase,
   evaluateManagingShadowCoach,
   getMyShadowChecklist,
+  assignClassShadowCoach,
+  getUpcomingClassesForAssignment,
 } from "../controllers/coach/shadow-coach-controller";
 import { cacheResponse, invalidateCache } from "../middlewares/cacheResponse";
 import { CacheTags, coachTag } from "../cache/response-cache";
@@ -84,5 +86,13 @@ router.get("/managing/shadow-coaches", coachGuard, requireShadowCoachManager, ge
 router.get("/managing/shadow-coaches/:coachId", coachGuard, requireShadowCoachManager, getManagingShadowCoachDetail);
 router.patch("/managing/shadow-coaches/:coachId/phase", coachGuard, requireShadowCoachManager, updateManagingShadowCoachPhase);
 router.post("/managing/shadow-coaches/:coachId/decision", coachGuard, requireShadowCoachManager, evaluateManagingShadowCoach);
+router.get("/managing/classes/upcoming", coachGuard, requireShadowCoachManager, getUpcomingClassesForAssignment);
+router.patch(
+  "/managing/classes/:scid/shadow-coach",
+  coachGuard,
+  requireShadowCoachManager,
+  coachWrite(CacheTags.schedule),
+  assignClassShadowCoach
+);
 
 export default router;
