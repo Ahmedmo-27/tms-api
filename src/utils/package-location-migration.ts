@@ -64,9 +64,11 @@ export function packageNameContainsBranchLabel(
   for (const label of branchLabels) {
     const trimmed = label.trim();
     if (!trimmed) continue;
+    // Use Unicode letter/number classes so Arabic (etc.) is not treated as a
+    // word boundary — otherwise "عضويةCairo" would falsely match "Cairo".
     const pattern = new RegExp(
-      `(^|[^A-Za-z0-9])${escapeRegex(trimmed)}([^A-Za-z0-9]|$)`,
-      "i",
+      `(^|[^\\p{L}\\p{N}])${escapeRegex(trimmed)}([^\\p{L}\\p{N}]|$)`,
+      "iu",
     );
     if (pattern.test(name)) {
       return { matched: true, label: trimmed };

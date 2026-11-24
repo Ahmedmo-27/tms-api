@@ -48,6 +48,18 @@ describe("package-location-migration", () => {
     ).toEqual({ matched: false });
   });
 
+  it("does not match a label glued to Arabic letters", () => {
+    expect(
+      packageNameContainsBranchLabel("عضويةCairo", labels),
+    ).toEqual({ matched: false });
+  });
+
+  it("still matches a label next to Arabic when separated", () => {
+    expect(
+      packageNameContainsBranchLabel("عضوية Cairo", labels),
+    ).toEqual({ matched: true, label: "Cairo" });
+  });
+
   it("keeps packages that already have all-locations scope", () => {
     const decision = decidePackageLocationMigration(
       {
