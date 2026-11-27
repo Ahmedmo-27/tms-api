@@ -24,6 +24,7 @@ import {
   SALES_SEGMENTS,
   UNLIMITED_SESSIONS_THRESHOLD,
   cairoKey,
+  isOnlinePackageName,
   paymentSegment,
   perSessionValue,
   percentChange,
@@ -418,10 +419,22 @@ interface PtSession {
   phone?: string;
 }
 
-async function loadPtSessions(range: FinanceRange, lookups: Lookups): Promise<PtSession[]> {
+export type PtTypeFilter = "all" | "mindspace" | "online";
+
+function matchesPtType(name: string | null | undefined, ptType: PtTypeFilter): boolean {
+  if (ptType === "all") return true;
+  const isOnline = isOnlinePackageName(name);
+  return ptType === "online" ? isOnline : !isOnline;
+}
+
+async function loadPtSessions(
+  range: FinanceRange,
+  lookups: Lookups,
+  ptType: PtTypeFilter = "all",
+): Promise<PtSession[]> {
   const ptPackageIds = new Set(
     [...lookups.packages.values()]
-      .filter((p) => p.category === "PERSONAL_TRAINING")
+      .filter((p) => p.category === "PERSONAL_TRAINING" && matchesPtType(p.name, ptType))
       .map((p) => p.id),
   );
 
@@ -475,7 +488,7 @@ async function loadPtSessions(range: FinanceRange, lookups: Lookups): Promise<Pt
       if (time < range.start || time >= range.end) continue;
       const pkgId = idStr(att.pkgId);
       const pkg = lookups.packages.get(pkgId);
-      if (!ptPackageIds.has(pkgId) && !pkg?.coachId) continue;
+      if (!ptPackageIds.has(pkgId) && (ptType !== "all" || !pkg?.coachId)) continue;
       const memberPkg = (m.packages ?? []).find((mp: AnyDoc) => idStr(mp.pkgId) === pkgId);
       sessions.push({
         date: time,
@@ -491,6 +504,13 @@ async function loadPtSessions(range: FinanceRange, lookups: Lookups): Promise<Pt
   for (const log of logs as AnyDoc[]) {
     const pkgId = idStr(log.pkgId);
     const pkg = lookups.packages.get(pkgId);
+    if (ptType !== "all") {
+      if (pkg) {
+        if (!matchesPtType(pkg.name, ptType)) continue;
+      } else if (ptType === "online") {
+        continue;
+      }
+    }
     sessions.push({
       date: new Date(log.sessionDate),
       memberId: idStr(log.memberId),
@@ -503,7 +523,9 @@ async function loadPtSessions(range: FinanceRange, lookups: Lookups): Promise<Pt
   }
 
   // Load PT drop-ins from payments
-  const ptPayments = (dropInPayments as AnyDoc[]).filter(isPtDropInPayment);
+  const ptPayments = (dropInPayments as AnyDoc[]).filter(
+    (p) => isPtDropInPayment(p) && matchesPtType(p.note, ptType),
+  );
   const seenDropInDayKeys = new Set<string>();
 
   for (const p of ptPayments) {
@@ -538,6 +560,7 @@ async function loadPtSessions(range: FinanceRange, lookups: Lookups): Promise<Pt
         !entry.pkgId &&
         (method.includes("dropin") || method.includes("drop-in") || method.includes("drop in"));
       if (!isDropIn) continue;
+      if (!matchesPtType(entry.method, ptType)) continue;
       const time = new Date(entry.time);
       if (time < range.start || time >= range.end) continue;
       const memId = idStr(entry.uid) || entry.guestPhone || entry.guestName || "guest";
@@ -1795,15 +1818,17 @@ export class FinanceService {
   }
 
   /** Personal training: sessions, clients, balances, revenue and renewals. */
-  static async ptAnalytics(range: FinanceRange) {
-    return cached(`pt|${rangeKey(range)}`, async () => {
+  static async ptAnalytics(range: FinanceRange, ptType: PtTypeFilter = "all") {
+    return cached(`pt|${rangeKey(range)}|${ptType}`, async () => {
       const lookups = await loadLookups();
-      const ptPackages = [...lookups.packages.values()].filter((p) => p.category === "PERSONAL_TRAINING");
+      const ptPackages = [...lookups.packages.values()].filter(
+        (p) => p.category === "PERSONAL_TRAINING" && matchesPtType(p.name, ptType),
+      );
       const ptIds = ptPackages.map((p) => p.id);
       const ptIdSet = new Set(ptIds);
 
       const [sessions, members, candidatePayments] = await Promise.all([
-        loadPtSessions(range, lookups),
+        loadPtSessions(range, lookups, ptType),
         ptIds.length
           ? Member.find({ "packages.pkgId": { $in: ptIds.map((id) => new Types.ObjectId(id)) } })
               .select("uid packages")
@@ -1821,7 +1846,9 @@ export class FinanceService {
       ]);
 
       const payments = candidatePayments.filter(
-        (p) => (p.pkgId && ptIdSet.has(idStr(p.pkgId))) || isPtDropInPayment(p),
+        (p) =>
+          (p.pkgId && ptIdSet.has(idStr(p.pkgId))) ||
+          (isPtDropInPayment(p) && matchesPtType(p.note, ptType)),
       );
 
       // Renewal = the member had paid for a PT package before this payment.
@@ -1983,7 +2010,7 @@ export class FinanceService {
 
       const revenue = payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
       return {
-        range: { startDate: range.startKey, endDate: range.endKey, granularity: range.granularity },
+        range: { startDate: range.startKey, endDate: range.endKey, granularity: range.granularity, ptType },
         totals: {
           sessions: sessions.length,
           scanSessions: sessions.filter((s) => s.source === "SCAN" || s.source === "PT_DROPIN").length,

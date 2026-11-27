@@ -168,4 +168,133 @@ describe("PT Achievement Report", () => {
       expect(range.endKey).toBe("2026-10-20");
     });
   });
+
+  describe("getReport", () => {
+    const chainable = (val: unknown) => {
+      const obj: any = {
+        sort: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue(val),
+      };
+      return obj;
+    };
+
+    it("separates Mindspace PT from Online PT and excludes expired or 0-class packages from active clients", async () => {
+      const coachId = new Types.ObjectId();
+      const mindspacePkgId = new Types.ObjectId();
+      const onlinePkgId = new Types.ObjectId();
+      const activeUserId = new Types.ObjectId();
+      const zeroClassUserId = new Types.ObjectId();
+      const expiredUserId = new Types.ObjectId();
+      const onlineUserId = new Types.ObjectId();
+
+      const futureDate = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000);
+      const pastDate = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+
+      (Coach.find as jest.Mock).mockReturnValue(
+        chainable([{ _id: coachId, coachName: "Salma", phoneNumber: "01000000001" }]),
+      );
+      (Package.find as jest.Mock).mockReturnValue(
+        chainable([
+          { _id: mindspacePkgId, name: "10 Personal Training with Salma", numberOfSessions: 10, price: 5000, coachId },
+          { _id: onlinePkgId, name: "1 month online PT with Salma", numberOfSessions: 12, price: 3000, coachId },
+        ]),
+      );
+
+      (Member.find as jest.Mock)
+        .mockReturnValueOnce(chainable([])) // scan members (mindspace)
+        .mockReturnValueOnce(
+          chainable([
+            {
+              uid: activeUserId,
+              packages: [
+                { _id: new Types.ObjectId(), pkgId: mindspacePkgId, status: "ACTIVE", pkgEndDate: futureDate, remainingClasses: 2 },
+              ],
+            },
+            {
+              uid: zeroClassUserId,
+              packages: [
+                { _id: new Types.ObjectId(), pkgId: mindspacePkgId, status: "ACTIVE", pkgEndDate: futureDate, remainingClasses: 0 },
+              ],
+            },
+            {
+              uid: expiredUserId,
+              packages: [
+                { _id: new Types.ObjectId(), pkgId: mindspacePkgId, status: "ACTIVE", pkgEndDate: pastDate, remainingClasses: 4 },
+              ],
+            },
+          ]),
+        )
+        .mockReturnValueOnce(chainable([])) // scan members (online)
+        .mockReturnValueOnce(
+          chainable([
+            {
+              uid: onlineUserId,
+              packages: [
+                { _id: new Types.ObjectId(), pkgId: onlinePkgId, status: "ACTIVE", pkgEndDate: futureDate, remainingClasses: 5 },
+              ],
+            },
+          ]),
+        );
+
+      (DeductionLog.find as jest.Mock)
+        .mockReturnValueOnce(
+          chainable([
+            { _id: new Types.ObjectId(), coachId, pkgId: mindspacePkgId, memberId: activeUserId, sessionDate: new Date("2026-11-25T10:00:00Z") },
+            { _id: new Types.ObjectId(), coachId, pkgId: onlinePkgId, memberId: onlineUserId, sessionDate: new Date("2026-11-25T11:00:00Z") },
+          ]),
+        )
+        .mockReturnValueOnce(
+          chainable([
+            { _id: new Types.ObjectId(), coachId, pkgId: mindspacePkgId, memberId: activeUserId, sessionDate: new Date("2026-11-25T10:00:00Z") },
+            { _id: new Types.ObjectId(), coachId, pkgId: onlinePkgId, memberId: onlineUserId, sessionDate: new Date("2026-11-25T11:00:00Z") },
+          ]),
+        );
+
+      (Payment.find as jest.Mock)
+        .mockReturnValueOnce(
+          chainable([{ _id: new Types.ObjectId(), pkgId: mindspacePkgId, uid: activeUserId, amount: 5000, paymentTime: new Date("2026-11-25T09:00:00Z") }]),
+        )
+        .mockReturnValueOnce(
+          chainable([{ _id: new Types.ObjectId(), pkgId: onlinePkgId, uid: onlineUserId, amount: 3000, paymentTime: new Date("2026-11-25T09:00:00Z") }]),
+        );
+
+      (User.find as jest.Mock).mockReturnValue(
+        chainable([
+          { _id: activeUserId, name: "Active Member", phoneNumber: "01011111111" },
+          { _id: onlineUserId, name: "Online Member", phoneNumber: "01022222222" },
+        ]),
+      );
+
+      const mindspaceReport = await PtAchievementService.getReport({
+        filterType: "date",
+        startDate: "2026-11-01",
+        endDate: "2026-11-30",
+        ptType: "mindspace",
+      });
+
+      expect(mindspaceReport.range.ptType).toBe("mindspace");
+      expect(mindspaceReport.totals.boughtPackages).toBe(1);
+      expect(mindspaceReport.totals.boughtRevenue).toBe(5000);
+      expect(mindspaceReport.totals.deductionSessions).toBe(1);
+      expect(mindspaceReport.totals.activeClients).toBe(1);
+      expect(mindspaceReport.totals.remainingSessions).toBe(2);
+      expect(mindspaceReport.expiringSoonPackages).toHaveLength(1);
+      expect(mindspaceReport.expiringSoonPackages?.[0].memberId).toBe(activeUserId.toString());
+
+      const onlineReport = await PtAchievementService.getReport({
+        filterType: "date",
+        startDate: "2026-11-01",
+        endDate: "2026-11-30",
+        ptType: "online",
+      });
+
+      expect(onlineReport.range.ptType).toBe("online");
+      expect(onlineReport.totals.boughtPackages).toBe(1);
+      expect(onlineReport.totals.boughtRevenue).toBe(3000);
+      expect(onlineReport.totals.deductionSessions).toBe(1);
+      expect(onlineReport.totals.activeClients).toBe(1);
+      expect(onlineReport.totals.remainingSessions).toBe(5);
+    });
+  });
 });

@@ -392,11 +392,10 @@ export class CoachService {
 
   private static summarizeActivePt(
     packages: IMemberPackageData[],
-    coachDocId: Types.ObjectId,
-    pkgMeta: Map<string, { category: string; coachId: string | null; numberOfSessions?: number }>,
+    assignedIdSet: Set<string>,
+    pkgMeta: Map<string, { category: string; coachId: string | null; numberOfSessions?: number; matchesCoachByName?: boolean }>,
   ): Pick<ClientResponseDto, "remainingClasses" | "totalClasses" | "daysUntilExpiry" | "nearestExpiryDate"> {
     const now = new Date();
-    const coachIdStr = coachDocId.toString();
     let lowestRemaining: number | null = null;
     let lowestTotal: number | null = null;
     let nearestEnd: Date | null = null;
@@ -405,9 +404,11 @@ export class CoachService {
       const meta = pkgMeta.get(pkg.pkgId.toString());
       if (!meta) continue;
       if (meta.category !== "PERSONAL_TRAINING") continue;
-      if (!meta.coachId || meta.coachId !== coachIdStr) continue;
+      const matchesCoach = (meta.coachId && assignedIdSet.has(meta.coachId)) || (!meta.coachId && meta.matchesCoachByName);
+      if (!matchesCoach) continue;
       if (pkg.status !== "ACTIVE") continue;
       if (isPackageExpired(pkg.pkgEndDate, now)) continue;
+      if ((pkg.remainingClasses ?? 0) <= 0) continue;
 
       if (lowestRemaining === null || pkg.remainingClasses < lowestRemaining) {
         lowestRemaining = pkg.remainingClasses;
@@ -453,20 +454,14 @@ export class CoachService {
   ): Promise<PaginatedClientsResponseDto> {
     const clientsMap = new Map<string, ClientResponseDto>();
 
-    const coachDoc = await Coach.findById(coachDocId);
-    const coachName = coachDoc?.coachName?.trim();
-
-    const ptPkgQuery: any = {
-      $or: [
-        { coachId: coachDocId },
-      ],
-    };
-    if (coachName && coachName.length >= 3) {
-      ptPkgQuery.$or.push({
-        category: "PERSONAL_TRAINING",
-        name: { $regex: new RegExp(`(^|[^a-z0-9])${escapeRegex(coachName)}([^a-z0-9]|$)`, "i") },
-      });
-    }
+    const {
+      query: ptPkgQuery,
+      assignedIdSet,
+      nameVariants,
+    } = await this.buildCoachPtPackageQuery(coachDocId);
+    const nameVariantsLower = nameVariants
+      .map((v) => v.toLowerCase().trim())
+      .filter((v) => v.length >= 3);
 
     const ptPackages = await Package.find(ptPkgQuery);
     const ptPkgIds = ptPackages.map(p => p._id);
@@ -482,27 +477,37 @@ export class CoachService {
 
     const packagesInfo = await Package.find({ _id: { $in: Array.from(allPkgIds) } });
     const allowedPkgIdSet = new Set<string>();
-    const pkgMeta = new Map<string, { category: string; coachId: string | null; numberOfSessions?: number }>();
-    const coachIdStr = coachDocId.toString();
+    const pkgMeta = new Map<string, { category: string; coachId: string | null; numberOfSessions?: number; matchesCoachByName?: boolean }>();
     for (const pkg of packagesInfo) {
       const pkgCoachId = pkg.coachId ? String(pkg.coachId) : null;
+      const pkgNameLower = (pkg.name || "").toLowerCase();
+      const matchesCoachByName =
+        pkg.category === "PERSONAL_TRAINING" &&
+        nameVariantsLower.some((v) => pkgNameLower.includes(v));
+      const matchesCoach = (pkgCoachId && assignedIdSet.has(pkgCoachId)) || (!pkgCoachId && matchesCoachByName);
+
       pkgMeta.set(pkg._id.toString(), {
         category: pkg.category,
         coachId: pkgCoachId,
         numberOfSessions: pkg.numberOfSessions,
+        matchesCoachByName,
       });
-      if (!pkgCoachId || pkgCoachId === coachIdStr) {
+      if (matchesCoach) {
         allowedPkgIdSet.add(pkg._id.toString());
       }
     }
 
+    const now = new Date();
     for (const member of ptMembers) {
       if (!member.uid) continue;
       const uidStr = member.uid._id.toString();
       const activePackagesCount = member.packages.filter(p =>
-        allowedPkgIdSet.has(p.pkgId.toString()) && p.status === "ACTIVE"
+        allowedPkgIdSet.has(p.pkgId.toString()) &&
+        p.status === "ACTIVE" &&
+        !isPackageExpired(p.pkgEndDate, now) &&
+        (p.remainingClasses ?? 0) > 0
       ).length;
-      const pt = this.summarizeActivePt(member.packages, coachDocId, pkgMeta);
+      const pt = this.summarizeActivePt(member.packages, assignedIdSet, pkgMeta);
       clientsMap.set(uidStr, {
         memberId: uidStr,
         name: member.uid.name ?? "",

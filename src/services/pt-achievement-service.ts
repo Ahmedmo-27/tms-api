@@ -12,8 +12,10 @@ import {
   CAIRO_TZ,
   cairoDaysUntil,
   cairoDateKey,
+  isPackageExpired,
+  activeEndDateBound,
 } from "../utils/timezone";
-import { cairoKey, round2 } from "../utils/finance-range";
+import { cairoKey, round2, isOnlinePackageName } from "../utils/finance-range";
 import { formatInTimeZone, fromZonedTime, toZonedTime } from "date-fns-tz";
 import { startOfWeek, endOfWeek } from "date-fns";
 
@@ -53,6 +55,8 @@ function getCoachNameVariants(rawName?: string | null): string[] {
 const CACHE_TTL_MS = 45 * 1000;
 const cache = new Map<string, { at: number; value: PtAchievementReport }>();
 
+export type PtTypeFilter = "all" | "mindspace" | "online";
+
 export interface PtAchievementParams {
   filterType: "weekly" | "monthly" | "date";
   date?: string;       // yyyy-MM-dd (for weekly mode)
@@ -60,10 +64,11 @@ export interface PtAchievementParams {
   startDate?: string;  // yyyy-MM-dd (for date mode)
   endDate?: string;    // yyyy-MM-dd (for date mode)
   coachId?: string;    // optional: drill down into single coach doc ID
+  ptType?: PtTypeFilter;
 }
 
 export interface PtAchievementReport {
-  range: { startDate: string; endDate: string; filterType: string };
+  range: { startDate: string; endDate: string; filterType: string; ptType: PtTypeFilter };
   totals: {
     sessions: number;
     scanSessions: number;
@@ -236,20 +241,30 @@ export class PtAchievementService {
   static async getReport(params: PtAchievementParams): Promise<PtAchievementReport> {
     const { startDate, endDate, startKey, endKey } = this.resolveDateRange(params);
     const now = new Date();
+    const ptType: PtTypeFilter =
+      params.ptType === "online" || params.ptType === "mindspace" ? params.ptType : "all";
 
-    const cacheKey = `${params.filterType}|${startKey}|${endKey}|${params.coachId ?? "all"}`;
+    const cacheKey = `${params.filterType}|${startKey}|${endKey}|${params.coachId ?? "all"}|${ptType}`;
     const cached = cache.get(cacheKey);
     if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
       return cached.value;
     }
 
     // 1. Initial parallel query: load coaches and all PT packages once
-    const [coaches, ptPackages] = await Promise.all([
+    const [coaches, allPtPackages] = await Promise.all([
       Coach.find({}).sort({ coachName: 1 }).lean(),
       Package.find({ category: "PERSONAL_TRAINING" })
         .select("_id name numberOfSessions price coachId")
         .lean(),
     ]);
+
+    const allPtPkgMap = new Map(allPtPackages.map((p) => [p._id.toString(), p]));
+    const ptPackages =
+      ptType === "all"
+        ? allPtPackages
+        : allPtPackages.filter((p) =>
+            ptType === "online" ? isOnlinePackageName(p.name) : !isOnlinePackageName(p.name)
+          );
 
     const allPtPkgIds = ptPackages.map((p) => p._id);
     const ptPkgMap = new Map(ptPackages.map((p) => [p._id.toString(), p]));
@@ -280,7 +295,8 @@ export class PtAchievementService {
           $elemMatch: {
             pkgId: { $in: allPtPkgIds },
             status: "ACTIVE",
-            pkgEndDate: { $gt: now },
+            pkgEndDate: { $gte: activeEndDateBound(now) },
+            remainingClasses: { $gt: 0 },
           },
         },
       }).select("uid packages").lean(),
@@ -374,11 +390,26 @@ export class PtAchievementService {
 
       for (const d of allDeductions as any[]) {
         const dCoachId = d.coachId ? d.coachId.toString() : null;
-        if (dCoachId && cm.assignedIdSet.has(dCoachId)) {
-          deductionSessions++;
-          if (isSelected) {
-            coachDeductions.push(d);
+        if (!dCoachId || !cm.assignedIdSet.has(dCoachId)) continue;
+
+        const dPkgId = d.pkgId ? d.pkgId.toString() : null;
+        if (ptType !== "all") {
+          if (dPkgId) {
+            const dPkg = allPtPkgMap.get(dPkgId);
+            if (dPkg) {
+              const isOnline = isOnlinePackageName(dPkg.name);
+              if (ptType === "online" ? !isOnline : isOnline) continue;
+            } else if (!cm.pkgIds.has(dPkgId)) {
+              continue;
+            }
+          } else if (ptType === "online") {
+            continue;
           }
+        }
+
+        deductionSessions++;
+        if (isSelected) {
+          coachDeductions.push(d);
         }
       }
 
@@ -410,14 +441,16 @@ export class PtAchievementService {
         const uidStr = m.uid?.toString();
         for (const pkg of m.packages ?? []) {
           if (!pkg.pkgId || !cm.pkgIds.has(pkg.pkgId.toString())) continue;
-          if (pkg.status !== "ACTIVE" || !pkg.pkgEndDate || new Date(pkg.pkgEndDate) <= now) continue;
+          if (pkg.status !== "ACTIVE" || !pkg.pkgEndDate || isPackageExpired(pkg.pkgEndDate, now)) continue;
+
+          const rem = pkg.remainingClasses ?? 0;
+          if (rem <= 0) continue;
 
           if (uidStr) {
             coachActiveMemberUids.add(uidStr);
             globalActiveMemberIds.add(uidStr);
           }
 
-          const rem = pkg.remainingClasses ?? 0;
           coachRemainingSessions += rem;
 
           const daysUntil = cairoDaysUntil(pkg.pkgEndDate, now);
@@ -644,6 +677,7 @@ export class PtAchievementService {
         startDate: startKey,
         endDate: endKey,
         filterType: params.filterType,
+        ptType,
       },
       totals: {
         sessions: totalSessions,

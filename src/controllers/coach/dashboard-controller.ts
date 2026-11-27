@@ -220,7 +220,7 @@ export const confirmClassAttendance = asyncHandler(async (req: Request, res: Res
 });
 
 export const getPtAchievementReport = asyncHandler(async (req: Request, res: Response) => {
-  const { filterType, date, month, startDate, endDate, coachId } = req.query;
+  const { filterType, date, month, startDate, endDate, coachId, ptType } = req.query;
   const params = {
     filterType: (filterType as string) || "weekly",
     date: date as string | undefined,
@@ -228,6 +228,7 @@ export const getPtAchievementReport = asyncHandler(async (req: Request, res: Res
     startDate: startDate as string | undefined,
     endDate: endDate as string | undefined,
     coachId: coachId as string | undefined,
+    ptType: ptType as string | undefined,
   };
   const data = await PtAchievementService.getReport(params as any);
   return new SuccessResponse("PT achievement report", data).send(res);
