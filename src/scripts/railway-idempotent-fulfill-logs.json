@@ -1,0 +1,83 @@
+{
+  "source": "Railway MCP get-logs",
+  "projectId": "f4c63c65-ac5e-4908-b9cc-b062893fd10d",
+  "projectName": "TMS",
+  "environmentId": "2ce1d1cc-8297-4279-b709-069b59e57905",
+  "environmentName": "production",
+  "serviceId": "2f4965a9-41b2-4591-a3fc-5d24c070c20c",
+  "serviceName": "TMS-API",
+  "stream": "deploy",
+  "filter": "Package subscribe idempotent fulfill from payment",
+  "queriedFrom": "2026-08-01T00:00:00.000Z",
+  "queriedTo": "2026-11-18T00:00:00.000Z",
+  "retention": {
+    "absentBefore": "2026-11-10T23:40:00.000Z",
+    "earliestObservedLog": "2026-11-10T23:48:11.000Z",
+    "note": "Deploy logs were requested from 2026-08-01T00:00:00Z. Windows before 2026-11-10T23:40:00Z returned no logs. The earliest retained line observed is 2026-11-10T23:48:11Z. August through 10 November 23:40 UTC is outside Railway retention, so Method 2 cannot confirm or clear incidents in that period."
+  },
+  "entries": [
+    {
+      "logTimestamp": "2026-11-12T07:30:35.000Z",
+      "ingestedAt": "2026-11-12T07:30:43.105517721Z",
+      "recycledPaymentId": "6aa0fd12699ea186f062868d",
+      "merchantReferenceId": "69e53352408d5581877981881bcf",
+      "routeLogTimestamp": "2026-11-12T07:30:34.000Z",
+      "routePkgId": "69e53352408d558187798188",
+      "message": "Package subscribe idempotent fulfill from payment 6aa0fd12699ea186f062868d mref=69e53352408d5581877981881bcf"
+    },
+    {
+      "logTimestamp": "2026-11-14T19:55:48.000Z",
+      "ingestedAt": "2026-11-14T19:55:53.660077548Z",
+      "recycledPaymentId": "69ff43d12c3a1156078a3839",
+      "merchantReferenceId": "69e53352408d558187798185ab54",
+      "routeLogTimestamp": "2026-11-14T19:55:48.000Z",
+      "routePkgId": "69e53352408d558187798185",
+      "message": "Package subscribe idempotent fulfill from payment 69ff43d12c3a1156078a3839 mref=69e53352408d558187798185ab54"
+    },
+    {
+      "logTimestamp": "2026-11-15T12:52:21.000Z",
+      "ingestedAt": "2026-11-15T12:52:25.617077481Z",
+      "recycledPaymentId": "6a26bb7abbdca39c36eb64cd",
+      "merchantReferenceId": "69e53352408d55818779818836ec",
+      "routeLogTimestamp": "2026-11-15T12:52:21.000Z",
+      "routePkgId": "69e53352408d558187798188",
+      "message": "Package subscribe idempotent fulfill from payment 6a26bb7abbdca39c36eb64cd mref=69e53352408d55818779818836ec"
+    },
+    {
+      "logTimestamp": "2026-11-15T20:08:22.000Z",
+      "ingestedAt": "2026-11-15T20:08:22.861633386Z",
+      "recycledPaymentId": "6a04a8d92c3a11560705fa43",
+      "merchantReferenceId": "69e53352408d55818779818bccdf",
+      "routeLogTimestamp": "2026-11-15T20:08:22.000Z",
+      "routePkgId": "69e53352408d55818779818b",
+      "message": "Package subscribe idempotent fulfill from payment 6a04a8d92c3a11560705fa43 mref=69e53352408d55818779818bccdf"
+    },
+    {
+      "logTimestamp": "2026-11-17T19:38:52.000Z",
+      "ingestedAt": "2026-11-17T19:38:53.001824915Z",
+      "recycledPaymentId": "6a6da6ff6e8fed89b1a44dc9",
+      "merchantReferenceId": "69e53353408d558187798194a6f8",
+      "routeLogTimestamp": "2026-11-17T19:38:52.000Z",
+      "routePkgId": "69e53353408d558187798194",
+      "message": "Package subscribe idempotent fulfill from payment 6a6da6ff6e8fed89b1a44dc9 mref=69e53353408d558187798194a6f8"
+    },
+    {
+      "logTimestamp": "2026-11-17T20:06:06.000Z",
+      "ingestedAt": "2026-11-17T20:06:06.725475001Z",
+      "recycledPaymentId": "6ad39b6981337b6ffb076be9",
+      "merchantReferenceId": "69e53352408d55818779818538ed",
+      "routeLogTimestamp": "2026-11-17T20:06:06.000Z",
+      "routePkgId": "69e53352408d558187798185",
+      "message": "Package subscribe idempotent fulfill from payment 6ad39b6981337b6ffb076be9 mref=69e53352408d55818779818538ed"
+    },
+    {
+      "logTimestamp": "2026-11-17T20:57:31.000Z",
+      "ingestedAt": "2026-11-17T20:57:31.227553384Z",
+      "recycledPaymentId": "69ed95d913c8a320104bbc33",
+      "merchantReferenceId": "69e53352408d55818779818ea6f8",
+      "routeLogTimestamp": "2026-11-17T20:57:31.000Z",
+      "routePkgId": "69e53352408d55818779818e",
+      "message": "Package subscribe idempotent fulfill from payment 69ed95d913c8a320104bbc33 mref=69e53352408d55818779818ea6f8"
+    }
+  ]
+}

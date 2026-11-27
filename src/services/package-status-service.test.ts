@@ -222,3 +222,169 @@ describe("PackageStatusService - syncMemberPackageStatuses", () => {
     expect(modified).toBe(false);
   });
 });
+
+describe("PackageStatusService - filterClientPackages", () => {
+  const referenceTime = new Date("2026-11-19T12:00:00Z");
+  const validPkgId = { _id: "pkg-123", name: "Studio 10" };
+
+  it("should return empty array if input is not array", () => {
+    expect(PackageStatusService.filterClientPackages(null as any)).toEqual([]);
+  });
+
+  it("should filter out DELETED packages", () => {
+    const pkgs = [
+      {
+        pkgId: validPkgId,
+        status: "DELETED",
+        pkgEndDate: new Date("2026-12-01T00:00:00Z"),
+      },
+    ];
+    const filtered = PackageStatusService.filterClientPackages(pkgs, referenceTime);
+    expect(filtered).toHaveLength(0);
+  });
+
+  it("should filter out unpopulated or missing pkgId packages", () => {
+    const pkgs = [
+      {
+        pkgId: null,
+        status: "ACTIVE",
+        pkgEndDate: new Date("2026-12-01T00:00:00Z"),
+      },
+      {
+        pkgId: "not-an-object",
+        status: "ACTIVE",
+        pkgEndDate: new Date("2026-12-01T00:00:00Z"),
+      },
+    ];
+    const filtered = PackageStatusService.filterClientPackages(pkgs, referenceTime);
+    expect(filtered).toHaveLength(0);
+  });
+
+  it("should always retain ACTIVE and FROZEN packages", () => {
+    const pkgs = [
+      {
+        pkgId: validPkgId,
+        status: "ACTIVE",
+        pkgEndDate: new Date("2026-12-01T00:00:00Z"),
+      },
+      {
+        pkgId: validPkgId,
+        status: "FROZEN",
+        pkgEndDate: new Date("2026-12-15T00:00:00Z"),
+      },
+    ];
+    const filtered = PackageStatusService.filterClientPackages(pkgs, referenceTime);
+    expect(filtered).toHaveLength(2);
+  });
+
+  it("should retain EXPIRED packages if expired within 30 days", () => {
+    const pkgs = [
+      {
+        pkgId: validPkgId,
+        status: "EXPIRED",
+        // Expired 10 days ago
+        pkgEndDate: new Date("2026-11-09T12:00:00Z"),
+      },
+      {
+        pkgId: validPkgId,
+        status: "EXPIRED",
+        // Expired 29 days ago
+        pkgEndDate: new Date("2026-10-21T12:00:00Z"),
+      },
+    ];
+    const filtered = PackageStatusService.filterClientPackages(pkgs, referenceTime);
+    expect(filtered).toHaveLength(2);
+  });
+
+  it("should exclude EXPIRED packages if expired more than 30 days ago", () => {
+    const pkgs = [
+      {
+        pkgId: validPkgId,
+        status: "EXPIRED",
+        // Expired 31 days ago
+        pkgEndDate: new Date("2026-10-19T11:00:00Z"),
+      },
+      {
+        pkgId: validPkgId,
+        status: "EXPIRED",
+        // Expired 60 days ago
+        pkgEndDate: new Date("2026-09-20T00:00:00Z"),
+      },
+    ];
+    const filtered = PackageStatusService.filterClientPackages(pkgs, referenceTime);
+    expect(filtered).toHaveLength(0);
+  });
+
+  it("should retain COMPLETED packages within 30 days of end date and exclude older ones", () => {
+    const pkgs = [
+      {
+        pkgId: validPkgId,
+        status: "COMPLETED",
+        // End date in future
+        pkgEndDate: new Date("2026-11-25T00:00:00Z"),
+      },
+      {
+        pkgId: validPkgId,
+        status: "COMPLETED",
+        // End date 15 days ago
+        pkgEndDate: new Date("2026-11-04T00:00:00Z"),
+      },
+      {
+        pkgId: validPkgId,
+        status: "COMPLETED",
+        // End date 45 days ago
+        pkgEndDate: new Date("2026-10-05T00:00:00Z"),
+      },
+    ];
+    const filtered = PackageStatusService.filterClientPackages(pkgs, referenceTime);
+    expect(filtered).toHaveLength(2);
+  });
+
+  it("should retain all packages if maxExpiredDays is Infinity (includeAll override)", () => {
+    const pkgs = [
+      {
+        pkgId: validPkgId,
+        status: "EXPIRED",
+        pkgEndDate: new Date("2024-01-01T00:00:00Z"),
+      },
+    ];
+    const filtered = PackageStatusService.filterClientPackages(pkgs, referenceTime, Infinity);
+    expect(filtered).toHaveLength(1);
+  });
+});
+
+describe("PackageStatusService - sortPackagesForClient", () => {
+  it("should sort ACTIVE and FROZEN packages before EXPIRED and COMPLETED, newest start date first", () => {
+    const pkgs = [
+      {
+        _id: "1",
+        status: "EXPIRED",
+        pkgStartDate: new Date("2026-09-01T00:00:00Z"),
+      },
+      {
+        _id: "2",
+        status: "ACTIVE",
+        pkgStartDate: new Date("2026-11-01T00:00:00Z"),
+      },
+      {
+        _id: "3",
+        status: "EXPIRED",
+        pkgStartDate: new Date("2026-10-15T00:00:00Z"),
+      },
+      {
+        _id: "4",
+        status: "ACTIVE",
+        pkgStartDate: new Date("2026-11-10T00:00:00Z"),
+      },
+      {
+        _id: "5",
+        status: "FROZEN",
+        pkgStartDate: new Date("2026-11-05T00:00:00Z"),
+      },
+    ];
+
+    const sorted = PackageStatusService.sortPackagesForClient(pkgs);
+    const ids = sorted.map((p) => p._id);
+    expect(ids).toEqual(["4", "5", "2", "3", "1"]);
+  });
+});

@@ -242,4 +242,63 @@ export class PackageStatusService {
 
     return { updatedMembers, updatedPkgs };
   }
+
+  /**
+   * Filters member packages for client display.
+   * Omits DELETED packages and packages that expired more than `maxExpiredDays` (default: 30) ago.
+   */
+  static filterClientPackages(
+    packages: any[],
+    now: Date = new Date(),
+    maxExpiredDays: number = 30
+  ): any[] {
+    if (!Array.isArray(packages)) return [];
+    const cutoffTime = new Date(now.getTime() - maxExpiredDays * 24 * 60 * 60 * 1000);
+
+    return packages.filter((p: any) => {
+      if (!p) return false;
+      if (p.status === "DELETED") return false;
+      if (!p.pkgId || typeof p.pkgId !== "object" || !p.pkgId._id) return false;
+
+      // ACTIVE and FROZEN are always returned
+      if (p.status === "ACTIVE" || p.status === "FROZEN") {
+        return true;
+      }
+
+      // EXPIRED and COMPLETED packages: keep only if expired within maxExpiredDays
+      if (p.status === "EXPIRED" || p.status === "COMPLETED") {
+        if (p.pkgEndDate) {
+          const endDate = new Date(p.pkgEndDate);
+          if (!isNaN(endDate.getTime()) && endDate < cutoffTime) {
+            return false;
+          }
+        }
+      }
+
+      return true;
+    });
+  }
+
+  /**
+   * Sorts member packages for client display:
+   * 1. ACTIVE and FROZEN packages first
+   * 2. EXPIRED and COMPLETED packages second
+   * 3. Within each group, newest pkgStartDate first
+   */
+  static sortPackagesForClient(packages: any[]): any[] {
+    if (!Array.isArray(packages)) return [];
+    return [...packages].sort((a, b) => {
+      const aStatus = String(a.status || "").toUpperCase();
+      const bStatus = String(b.status || "").toUpperCase();
+      const aIsActive = aStatus === "ACTIVE" || aStatus === "FROZEN";
+      const bIsActive = bStatus === "ACTIVE" || bStatus === "FROZEN";
+
+      if (aIsActive && !bIsActive) return -1;
+      if (!aIsActive && bIsActive) return 1;
+
+      const aDate = a.pkgStartDate ? new Date(a.pkgStartDate).getTime() : 0;
+      const bDate = b.pkgStartDate ? new Date(b.pkgStartDate).getTime() : 0;
+      return bDate - aDate;
+    });
+  }
 }

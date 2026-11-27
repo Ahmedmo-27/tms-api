@@ -12,6 +12,7 @@ import Ticket from "../models/ticket";
 import User from "../models/user";
 import Location from "../models/location";
 import { BadRequestError, ForbiddenError, NotFoundError } from "../core/ApiError";
+import { ShadowCoachService } from "./shadow-coach-service";
 import { cairoDaysUntil, isPackageExpired } from "../utils/timezone";
 import {
   ClientResponseDto,
@@ -391,11 +392,10 @@ export class CoachService {
 
   private static summarizeActivePt(
     packages: IMemberPackageData[],
-    coachDocId: Types.ObjectId,
-    pkgMeta: Map<string, { category: string; coachId: string | null; numberOfSessions?: number }>,
+    assignedIdSet: Set<string>,
+    pkgMeta: Map<string, { category: string; coachId: string | null; numberOfSessions?: number; matchesCoachByName?: boolean }>,
   ): Pick<ClientResponseDto, "remainingClasses" | "totalClasses" | "daysUntilExpiry" | "nearestExpiryDate"> {
     const now = new Date();
-    const coachIdStr = coachDocId.toString();
     let lowestRemaining: number | null = null;
     let lowestTotal: number | null = null;
     let nearestEnd: Date | null = null;
@@ -404,9 +404,11 @@ export class CoachService {
       const meta = pkgMeta.get(pkg.pkgId.toString());
       if (!meta) continue;
       if (meta.category !== "PERSONAL_TRAINING") continue;
-      if (!meta.coachId || meta.coachId !== coachIdStr) continue;
+      const matchesCoach = (meta.coachId && assignedIdSet.has(meta.coachId)) || (!meta.coachId && meta.matchesCoachByName);
+      if (!matchesCoach) continue;
       if (pkg.status !== "ACTIVE") continue;
       if (isPackageExpired(pkg.pkgEndDate, now)) continue;
+      if ((pkg.remainingClasses ?? 0) <= 0) continue;
 
       if (lowestRemaining === null || pkg.remainingClasses < lowestRemaining) {
         lowestRemaining = pkg.remainingClasses;
@@ -452,20 +454,14 @@ export class CoachService {
   ): Promise<PaginatedClientsResponseDto> {
     const clientsMap = new Map<string, ClientResponseDto>();
 
-    const coachDoc = await Coach.findById(coachDocId);
-    const coachName = coachDoc?.coachName?.trim();
-
-    const ptPkgQuery: any = {
-      $or: [
-        { coachId: coachDocId },
-      ],
-    };
-    if (coachName && coachName.length >= 3) {
-      ptPkgQuery.$or.push({
-        category: "PERSONAL_TRAINING",
-        name: { $regex: new RegExp(`(^|[^a-z0-9])${escapeRegex(coachName)}([^a-z0-9]|$)`, "i") },
-      });
-    }
+    const {
+      query: ptPkgQuery,
+      assignedIdSet,
+      nameVariants,
+    } = await this.buildCoachPtPackageQuery(coachDocId);
+    const nameVariantsLower = nameVariants
+      .map((v) => v.toLowerCase().trim())
+      .filter((v) => v.length >= 3);
 
     const ptPackages = await Package.find(ptPkgQuery);
     const ptPkgIds = ptPackages.map(p => p._id);
@@ -481,27 +477,37 @@ export class CoachService {
 
     const packagesInfo = await Package.find({ _id: { $in: Array.from(allPkgIds) } });
     const allowedPkgIdSet = new Set<string>();
-    const pkgMeta = new Map<string, { category: string; coachId: string | null; numberOfSessions?: number }>();
-    const coachIdStr = coachDocId.toString();
+    const pkgMeta = new Map<string, { category: string; coachId: string | null; numberOfSessions?: number; matchesCoachByName?: boolean }>();
     for (const pkg of packagesInfo) {
       const pkgCoachId = pkg.coachId ? String(pkg.coachId) : null;
+      const pkgNameLower = (pkg.name || "").toLowerCase();
+      const matchesCoachByName =
+        pkg.category === "PERSONAL_TRAINING" &&
+        nameVariantsLower.some((v) => pkgNameLower.includes(v));
+      const matchesCoach = (pkgCoachId && assignedIdSet.has(pkgCoachId)) || (!pkgCoachId && matchesCoachByName);
+
       pkgMeta.set(pkg._id.toString(), {
         category: pkg.category,
         coachId: pkgCoachId,
         numberOfSessions: pkg.numberOfSessions,
+        matchesCoachByName,
       });
-      if (!pkgCoachId || pkgCoachId === coachIdStr) {
+      if (matchesCoach) {
         allowedPkgIdSet.add(pkg._id.toString());
       }
     }
 
+    const now = new Date();
     for (const member of ptMembers) {
       if (!member.uid) continue;
       const uidStr = member.uid._id.toString();
       const activePackagesCount = member.packages.filter(p =>
-        allowedPkgIdSet.has(p.pkgId.toString()) && p.status === "ACTIVE"
+        allowedPkgIdSet.has(p.pkgId.toString()) &&
+        p.status === "ACTIVE" &&
+        !isPackageExpired(p.pkgEndDate, now) &&
+        (p.remainingClasses ?? 0) > 0
       ).length;
-      const pt = this.summarizeActivePt(member.packages, coachDocId, pkgMeta);
+      const pt = this.summarizeActivePt(member.packages, assignedIdSet, pkgMeta);
       clientsMap.set(uidStr, {
         memberId: uidStr,
         name: member.uid.name ?? "",
@@ -916,11 +922,14 @@ export class CoachService {
       $or: [
         { coachId: { $in: objectIds } },
         { coachId: { $in: stringIds } },
+        { shadowCoachId: { $in: objectIds } },
+        { shadowCoachId: { $in: stringIds } },
       ],
       startTime: { $gte: weekStart, $lt: weekEnd }
     })
       .populate("locationId")
       .populate("coachId", "coachName")
+      .populate("shadowCoachId", "coachName phoneNumber currentPhase")
       .sort({ startTime: 1 });
 
     // Batch fetch 1: Classes
@@ -1039,6 +1048,21 @@ export class CoachService {
         coachName: sessionCoachName,
         coachNames: allCoachNames || sessionCoachName,
         allCoachNames,
+        shadowCoach: scheduledClass.shadowCoachId
+          ? {
+              id: ((scheduledClass.shadowCoachId as any)._id || scheduledClass.shadowCoachId).toString(),
+              name: (scheduledClass.shadowCoachId as any).coachName || scheduledClass.shadowCoachName || "",
+              currentPhase: (scheduledClass.shadowCoachId as any).currentPhase || 1,
+              phaseLabel: ShadowCoachService.getPhaseLabel((scheduledClass.shadowCoachId as any).currentPhase || 1),
+            }
+          : scheduledClass.shadowCoachName
+          ? {
+              id: "",
+              name: scheduledClass.shadowCoachName,
+              currentPhase: 1,
+              phaseLabel: ShadowCoachService.getPhaseLabel(1),
+            }
+          : null,
         clients
       };
 
@@ -1195,6 +1219,7 @@ export class CoachService {
       .populate<{ "scans.uid": any }>("scans.uid")
       .populate("locationId")
       .populate("coachId", "coachName")
+      .populate("shadowCoachId", "coachName phoneNumber currentPhase")
       .sort({ startTime: 1 });
 
     const classIds = Array.from(new Set(scheduledClasses.map(sc => sc.cid.toString())));
@@ -1306,6 +1331,21 @@ export class CoachService {
         coachName:   sessionCoachName,
         coachNames:  allCoachNames || sessionCoachName,
         allCoachNames,
+        shadowCoach: sc.shadowCoachId
+          ? {
+              id: ((sc.shadowCoachId as any)._id || sc.shadowCoachId).toString(),
+              name: (sc.shadowCoachId as any).coachName || sc.shadowCoachName || "",
+              currentPhase: (sc.shadowCoachId as any).currentPhase || 1,
+              phaseLabel: ShadowCoachService.getPhaseLabel((sc.shadowCoachId as any).currentPhase || 1),
+            }
+          : sc.shadowCoachName
+          ? {
+              id: "",
+              name: sc.shadowCoachName,
+              currentPhase: 1,
+              phaseLabel: ShadowCoachService.getPhaseLabel(1),
+            }
+          : null,
         scans,
         attendanceConfirmation: sc.attendanceConfirmation?.confirmed
           ? {
@@ -1606,20 +1646,23 @@ export class CoachService {
         $or: [
           { coachId: { $in: objectIds } },
           { coachId: { $in: stringIds } },
+          { shadowCoachId: { $in: objectIds } },
+          { shadowCoachId: { $in: stringIds } },
         ],
       }),
     ]);
 
+    const coachDoc = coachDocId ? await Coach.findById(coachDocId) : null;
     let canViewPtReports = false;
     if (user.role === "managing_coach") {
       canViewPtReports = Boolean(user.canViewPtReports);
-      if (!canViewPtReports && coachDocId) {
-        const coachDoc = await Coach.findById(coachDocId);
-        if (coachDoc?.canViewPtReports) {
-          canViewPtReports = true;
-        }
+      if (!canViewPtReports && coachDoc?.canViewPtReports) {
+        canViewPtReports = true;
       }
     }
+
+    const isShadowCoach = user.role === "shadow_coach" || Boolean(coachDoc?.isShadowCoach);
+    const currentPhase = coachDoc?.currentPhase ?? 1;
 
     return {
       name: user.name ?? "",
@@ -1629,9 +1672,11 @@ export class CoachService {
       branchName,
       branchLocation,
       hasPtSessions: ptCount > 0,
-      hasScheduledClasses: classCount > 0 || extraCategories.length > 0,
+      hasScheduledClasses: classCount > 0 || extraCategories.length > 0 || isShadowCoach,
       scansCategories: extraCategories,
       canViewPtReports,
+      isShadowCoach,
+      currentPhase,
     };
   }
 
@@ -1671,6 +1716,7 @@ export class CoachService {
         coachNames?: string;
         allCoachNames?: string;
         coaches?: { id: string; name: string }[];
+        shadowCoach?: any;
       },
       date: string,
     ): TodaySessionSummaryDto => ({
@@ -1686,6 +1732,7 @@ export class CoachService {
       coachNames: session.coachNames,
       allCoachNames: session.allCoachNames,
       coaches: session.coaches,
+      shadowCoach: session.shadowCoach,
     });
 
     const todaySessions = (schedule.days.find((d) => d.date === todayKey)?.sessions ?? []).map(
@@ -1778,12 +1825,21 @@ export class CoachService {
       .sort({ createdAt: -1 })
       .limit(50);
 
-    return items.map((n) => ({
+    return items.map((n: any) => ({
       id: (n._id as Types.ObjectId).toString(),
-      memberId: n.memberId.toString(),
-      memberName: n.memberName,
-      packageName: n.packageName,
-      classesTotal: n.classesTotal,
+      type: n.type || (n.classTitle ? "class_assignment" : "package_assignment"),
+      title: n.title,
+      message: n.message,
+      scheduledClassId: n.scheduledClassId ? n.scheduledClassId.toString() : undefined,
+      classTitle: n.classTitle,
+      startTime: n.startTime ? n.startTime.toISOString() : undefined,
+      endTime: n.endTime ? n.endTime.toISOString() : undefined,
+      locationName: n.locationName,
+      leadCoachName: n.leadCoachName,
+      memberId: n.memberId ? n.memberId.toString() : "",
+      memberName: n.memberName || "",
+      packageName: n.packageName || "",
+      classesTotal: n.classesTotal ?? 0,
       createdAt: n.createdAt.toISOString(),
       read: n.read,
     }));

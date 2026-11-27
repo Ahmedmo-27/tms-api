@@ -14,6 +14,7 @@ import { WaitlistService } from "./services/waitlist-service";
 import { CORS_ORIGINS } from "./config/corsOrigins";
 import User from "./models/user";
 import Member from "./models/member";
+import Coach from "./models/coach";
 import { setIO } from "./config/socket";
 
 const app = require("./app"); // your Express app
@@ -136,7 +137,7 @@ const startServer = async () => {
           "tokens.token": token,
         });
 
-        if (!user || (user.role !== "coach" && user.role !== "managing_coach")) {
+        if (!user || (user.role !== "coach" && user.role !== "managing_coach" && user.role !== "shadow_coach")) {
           socket.emit("error", { message: "Unauthorized" });
           return;
         }
@@ -149,6 +150,12 @@ const startServer = async () => {
 
         socket.join(`coach:${coachId}`);
         socket.join(`user:${coachId}`);
+
+        // Also join the coach document room if available so notifications targeting Coach._id reach this socket
+        const coachDoc = await Coach.findOne({ userId: user._id });
+        if (coachDoc && coachDoc._id) {
+          socket.join(`coach:${(coachDoc._id as any).toString()}`);
+        }
         logger.info("Coach joined room", { socketId: socket.id, coachId });
       } catch (err) {
         logger.warn("coach:joinRoom rejected", {

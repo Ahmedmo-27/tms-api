@@ -67,6 +67,13 @@ export interface CalendarClientDto {
   } | null;
 }
 
+export interface ShadowCoachRefDto {
+  id: string;
+  name: string;
+  currentPhase: number;
+  phaseLabel: string;
+}
+
 export interface ScheduleSessionDto {
   scheduledClassId: string;
   classTitle: string;
@@ -80,6 +87,7 @@ export interface ScheduleSessionDto {
   coachName?: string;
   coachNames?: string;
   allCoachNames?: string;
+  shadowCoach?: ShadowCoachRefDto | null;
   clients: CalendarClientDto[];
 }
 
@@ -131,6 +139,8 @@ export interface CoachMeDto {
   hasScheduledClasses: boolean;
   scansCategories?: string[];
   canViewPtReports?: boolean;
+  isShadowCoach?: boolean;
+  currentPhase?: number;
 }
 
 export interface TodaySessionSummaryDto {
@@ -146,6 +156,7 @@ export interface TodaySessionSummaryDto {
   coachName?: string;
   coachNames?: string;
   allCoachNames?: string;
+  shadowCoach?: ShadowCoachRefDto | null;
 }
 
 export interface TodayPtAlertDto {
@@ -172,10 +183,19 @@ export interface TodaySummaryDto {
 
 export interface CoachNotificationDto {
   id: string;
-  memberId: string;
-  memberName: string;
-  packageName: string;
-  classesTotal: number;
+  type?: "package_assignment" | "class_assignment";
+  title?: string;
+  message?: string;
+  scheduledClassId?: string;
+  classTitle?: string;
+  startTime?: string;
+  endTime?: string;
+  locationName?: string;
+  leadCoachName?: string;
+  memberId?: string;
+  memberName?: string;
+  packageName?: string;
+  classesTotal?: number;
   createdAt: string;
   read: boolean;
 }

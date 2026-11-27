@@ -74,11 +74,12 @@ export const coachGuard = asyncHandler(
     }
 
     // Authorize from DB role, not JWT claim (handles demotion while token still valid)
-    if (user.role !== "coach" && user.role !== "managing_coach") {
+    if (user.role !== "coach" && user.role !== "managing_coach" && user.role !== "shadow_coach") {
       throw new ForbiddenError("INSUFFICIENT_PERMISSIONS", "Access denied - coach role required");
     }
 
     (req as CoachAuthRequest).coachId = new Types.ObjectId(decoded.uid);
+    (req as CoachAuthRequest).userRole = user.role;
 
     const coachDoc = await CoachService.resolveCoachProfileForUser(user);
     if (!coachDoc) {
@@ -116,6 +117,21 @@ export const requireManagingCoach = asyncHandler(
       );
     }
 
+    next();
+  }
+);
+
+export const requireShadowCoachManager = asyncHandler(
+  async (req: Request, _res: Response, next: NextFunction) => {
+    const coachReq = req as CoachAuthRequest;
+    const user = await User.findById(coachReq.coachId).select("role");
+    const allowedRoles = ["managing_coach", "management", "branch_admin"];
+    if (!user || !allowedRoles.includes(user.role)) {
+      throw new ForbiddenError(
+        "INSUFFICIENT_PERMISSIONS",
+        "This endpoint is restricted to managing coaches and management staff",
+      );
+    }
     next();
   }
 );

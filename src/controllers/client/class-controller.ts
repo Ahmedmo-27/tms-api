@@ -42,7 +42,7 @@ export const getSchedule = asyncHandler(async function (
   res: Response
 ): Promise<void> {
   const date = req.query.date;
-  const scheduleData = await SchedulerService.getSchedule(date as string);
+  const scheduleData = await SchedulerService.getSchedule(date as string, undefined, true);
   new SuccessResponse("Scheduled Classes Found!", scheduleData).send(res);
 });
 

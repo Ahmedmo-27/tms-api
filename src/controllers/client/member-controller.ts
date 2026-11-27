@@ -99,13 +99,13 @@ export const getMemberProfile: RequestHandler = asyncHandler(async function (
     (b) => b.scid && typeof b.scid === "object" && b.scid._id
   );
 
-  member.packages = member.packages.filter(
-    (p: any) =>
-      p.status !== "DELETED" &&
-      p.pkgId &&
-      typeof p.pkgId === "object" &&
-      p.pkgId._id
+  const includeAll = req.query.includeAll === "true" || req.query.all === "true";
+  const clientPackages = PackageStatusService.filterClientPackages(
+    member.packages,
+    new Date(),
+    includeAll ? Infinity : 30
   );
+  member.packages = PackageStatusService.sortPackagesForClient(clientPackages);
   const memberObj: any = member.toObject ? member.toObject() : { ...member };
   memberObj.isMember = isMember;
   memberObj.role = isMember ? "member" : "user";

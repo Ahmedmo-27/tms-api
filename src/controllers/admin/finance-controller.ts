@@ -82,7 +82,9 @@ export const getFinanceCoaches = asyncHandler(async (_req: Request, res: Respons
 });
 
 export const getFinancePt = asyncHandler(async (req: Request, res: Response) => {
-  const data = await FinanceService.ptAnalytics(rangeFrom(req));
+  const rawPtType = req.query.ptType;
+  const ptType = rawPtType === "online" || rawPtType === "mindspace" ? rawPtType : "all";
+  const data = await FinanceService.ptAnalytics(rangeFrom(req), ptType);
   new SuccessResponse("PT analytics fetched", data).send(res);
 });
 
