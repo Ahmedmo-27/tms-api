@@ -170,6 +170,7 @@ import {
   commitSheetRows,
   importSheetDay,
 } from "../controllers/admin/sheet-controller";
+import { getPtAchievementReport } from "../controllers/admin/pt-achievement-controller";
 import { clearFinanceCache } from "../services/finance-service";
 import { cacheResponse, invalidateCache } from "../middlewares/cacheResponse";
 import { CacheTags } from "../cache/response-cache";
@@ -1244,6 +1245,15 @@ adminRoutes.get(
   authenticateUser,
   authorizeUser(["management", "branch_admin"]),
   getMaintenanceHistory
+);
+
+// PT Achievement / PT Reports (management staff; separate from finance PT Analytics)
+adminRoutes.get(
+  "/pt-achievement",
+  authenticateUser,
+  authorizeUser(["management"]),
+  adminRead(45_000, CacheTags.ptAchievement),
+  getPtAchievementReport
 );
 
 export default adminRoutes;

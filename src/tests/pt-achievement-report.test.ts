@@ -1,6 +1,8 @@
 import { Request, Response } from "express";
 import { Types } from "mongoose";
 import { requireManagingCoach, CoachAuthRequest } from "../middlewares/coach.middleware";
+import { authorizeUser, AuthRequest } from "../middlewares/auth.middleware";
+import { getPtAchievementReport } from "../controllers/admin/pt-achievement-controller";
 import { PtAchievementService } from "../services/pt-achievement-service";
 import User from "../models/user";
 import Coach from "../models/coach";
@@ -295,6 +297,77 @@ describe("PT Achievement Report", () => {
       expect(onlineReport.totals.deductionSessions).toBe(1);
       expect(onlineReport.totals.activeClients).toBe(1);
       expect(onlineReport.totals.remainingSessions).toBe(5);
+    });
+  });
+
+  describe("admin GET /admin/pt-achievement", () => {
+    it("allows management role and rejects accountant for the management-only gate", async () => {
+      const allowManagement = authorizeUser(["management"]);
+
+      const managementReq = {
+        user: { role: "management" },
+      } as unknown as AuthRequest;
+      const managementNext = jest.fn();
+      await allowManagement(managementReq as Request, {} as Response, managementNext);
+      expect(managementNext).toHaveBeenCalledWith();
+
+      const accountantReq = {
+        user: { role: "accountant" },
+      } as unknown as AuthRequest;
+      const accountantNext = jest.fn();
+      await allowManagement(accountantReq as Request, {} as Response, accountantNext);
+      expect(accountantNext).toHaveBeenCalled();
+      const err = accountantNext.mock.calls[0][0];
+      expect(err).toBeInstanceOf(ForbiddenError);
+      expect(err.code).toBe("INSUFFICIENT_PERMISSIONS");
+    });
+
+    it("forwards query params including ptType to PtAchievementService.getReport", async () => {
+      const report = {
+        range: { startDate: "2026-11-01", endDate: "2026-11-30", filterType: "date", ptType: "online" },
+        totals: {},
+        coaches: [],
+      };
+      const getReportSpy = jest
+        .spyOn(PtAchievementService, "getReport")
+        .mockResolvedValue(report as any);
+
+      const req = {
+        query: {
+          filterType: "date",
+          startDate: "2026-11-01",
+          endDate: "2026-11-30",
+          coachId: "coach-1",
+          ptType: "online",
+        },
+      } as unknown as Request;
+      const res = {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn().mockReturnThis(),
+      } as unknown as Response;
+      const next = jest.fn();
+
+      await getPtAchievementReport(req, res, next);
+
+      expect(getReportSpy).toHaveBeenCalledWith({
+        filterType: "date",
+        date: undefined,
+        month: undefined,
+        startDate: "2026-11-01",
+        endDate: "2026-11-30",
+        coachId: "coach-1",
+        ptType: "online",
+      });
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: "PT achievement report",
+          data: report,
+        }),
+      );
+      expect(next).not.toHaveBeenCalled();
+
+      getReportSpy.mockRestore();
     });
   });
 });
