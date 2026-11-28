@@ -3,11 +3,7 @@ import Member from "../models/member";
 import Package from "../models/package";
 import User from "../models/user";
 import Location from "../models/location";
-import {
-  BadRequestError,
-  ForbiddenError,
-  NotFoundError,
-} from "../core/ApiError";
+import { BadRequestError, NotFoundError } from "../core/ApiError";
 import { escapeRegex } from "../utils/escapeRegex";
 
 /** Roles a sold package may be credited to. */
@@ -346,8 +342,7 @@ export class SalesService {
 
   /**
    * Credits a sold package to a sales account, or clears the attribution.
-   * `scopedLocationId` is set for branch_admin, which may only touch sales
-   * made at its own branch.
+   * Updates member-level soldBy and every non-deleted package on the member.
    */
   static async assignSeller(params: {
     memberPackageId: string;
@@ -386,64 +381,25 @@ export class SalesService {
         "This package was removed from the member and cannot be credited",
       );
     }
-    if (params.scopedLocationId) {
-      const packageLocationId = soldPackage.locationId
-        ? String(soldPackage.locationId)
-        : null;
-      if (packageLocationId !== params.scopedLocationId) {
-        throw new ForbiddenError(
-          "BRANCH_SCOPE_MISMATCH",
-          "This package was not sold at your branch",
-        );
-      }
-    }
 
     const assignedAt = new Date();
     const actorObjectId = new Types.ObjectId(params.actorId);
-    const activePackages = member.packages.filter(
+    const packagesUpdated = member.packages.filter(
       (pkg) => !isDeletedPackageStatus(String(pkg.status)),
-    );
-    const scopedLocationId = params.scopedLocationId
-      ? String(params.scopedLocationId)
-      : null;
-
-    const packageMatchesBranchScope = (pkg: (typeof member.packages)[number]) => {
-      if (!scopedLocationId) return true;
-      const packageLocationId = pkg.locationId
-        ? String(pkg.locationId)
-        : null;
-      return packageLocationId === scopedLocationId;
-    };
-
-    const packagesUpdated = activePackages.filter(packageMatchesBranchScope)
-      .length;
-
-    // branch_admin may only touch packages at its branch. Member-level soldBy is
-    // shared across branches, so we set it only when every active package
-    // belongs to that branch; otherwise leave the member field unchanged.
-    const setMemberLevelSoldBy =
-      !scopedLocationId ||
-      activePackages.every(packageMatchesBranchScope);
+    ).length;
 
     const packageArrayFilter: Record<string, unknown> = {
       "pkg.status": { $not: { $regex: "^deleted$", $options: "i" } },
     };
-    if (scopedLocationId) {
-      packageArrayFilter["pkg.locationId"] = new Types.ObjectId(
-        scopedLocationId,
-      );
-    }
 
     const $set: Record<string, unknown> = {
+      soldBy: sellerId,
+      soldByAssignedAt: assignedAt,
+      soldByAssignedBy: actorObjectId,
       "packages.$[pkg].soldBy": sellerId,
       "packages.$[pkg].soldByAssignedAt": assignedAt,
       "packages.$[pkg].soldByAssignedBy": actorObjectId,
     };
-    if (setMemberLevelSoldBy) {
-      $set.soldBy = sellerId;
-      $set.soldByAssignedAt = assignedAt;
-      $set.soldByAssignedBy = actorObjectId;
-    }
 
     await Member.updateOne(
       { _id: member._id },

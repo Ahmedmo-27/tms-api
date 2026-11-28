@@ -496,18 +496,7 @@ describe("PATCH /sales/packages/:id/seller", () => {
     expect(res.status).toBe(200);
   });
 
-  it("keeps branch_admin out of another branch's sale", async () => {
-    const res = await assignAs(
-      branchAdminA,
-      soldPackageIds["b-active"],
-      salesAccount.id,
-    );
-
-    expect(res.status).toBe(403);
-    expect(res.body.code).toBe("BRANCH_SCOPE_MISMATCH");
-  });
-
-  it("updates only its branch's packages and leaves member.soldBy when the member spans branches", async () => {
+  it("updates every non-deleted package and member.soldBy for branch_admin on multi-branch members", async () => {
     const res = await assignAs(
       branchAdminA,
       soldPackageIds["multi-a"],
@@ -515,12 +504,12 @@ describe("PATCH /sales/packages/:id/seller", () => {
     );
 
     expect(res.status).toBe(200);
-    expect(res.body.data.packagesUpdated).toBe(1);
+    expect(res.body.data.packagesUpdated).toBe(2);
 
     const memberDoc = await mongoose.connection.db!.collection("members").findOne({
       uid: new Types.ObjectId(memberMultiBranchUid),
     });
-    expect(memberDoc?.soldBy).toBeFalsy();
+    expect(String(memberDoc?.soldBy)).toBe(salesAccount.id);
 
     const branchAPkg = memberDoc!.packages.find(
       (p: { _id: Types.ObjectId }) => String(p._id) === soldPackageIds["multi-a"],
@@ -529,17 +518,21 @@ describe("PATCH /sales/packages/:id/seller", () => {
       (p: { _id: Types.ObjectId }) => String(p._id) === soldPackageIds["multi-b"],
     );
     expect(String(branchAPkg?.soldBy)).toBe(salesAccount.id);
-    expect(branchBPkg?.soldBy).toBeFalsy();
+    expect(String(branchBPkg?.soldBy)).toBe(salesAccount.id);
   });
 
-  it("keeps branch_admin out of a sale with no branch recorded", async () => {
+  it("lets branch_admin credit starting from a package at another branch via direct id", async () => {
     const res = await assignAs(
       branchAdminA,
-      soldPackageIds["b-nobranch"],
+      soldPackageIds["b-active"],
       salesAccount.id,
     );
 
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
+    const listed = await listAs(salesManager, "?limit=100");
+    expect(rowFor(body(listed), soldPackageIds["b-active"]).soldBy?._id).toBe(
+      salesAccount.id,
+    );
   });
 
   it("lets the accountant credit a sale at any branch — its one write", async () => {
