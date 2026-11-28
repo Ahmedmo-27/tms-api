@@ -25,12 +25,31 @@ import {
 
 const EXPORT_DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
 
+function queryString(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value) && typeof value[0] === "string") return value[0];
+  return undefined;
+}
+
+/** Reject non-yyyy-MM-dd values and impossible calendar days (e.g. 2025-02-30). */
+function parseExportDateKey(value: string): string {
+  const trimmed = value.trim();
+  if (!EXPORT_DATE_KEY.test(trimmed)) {
+    throw new BadRequestError("INVALID_DATE", "Dates must use the yyyy-MM-dd format");
+  }
+  // startOfDateCairo normalizes overflow days; cairoDateKey must round-trip.
+  if (cairoDateKey(startOfDateCairo(trimmed)) !== trimmed) {
+    throw new BadRequestError("INVALID_DATE", "Dates must be valid calendar days");
+  }
+  return trimmed;
+}
+
 export const exportMembers = asyncHandler(async function (
   req: Request,
   res: Response
 ): Promise<void> {
-  const startDateRaw = (req.query.startDate || req.query.from) as string | undefined;
-  const endDateRaw = (req.query.endDate || req.query.to) as string | undefined;
+  const startDateRaw = queryString(req.query.startDate ?? req.query.from);
+  const endDateRaw = queryString(req.query.endDate ?? req.query.to);
 
   if (!startDateRaw?.trim() || !endDateRaw?.trim()) {
     throw new BadRequestError(
@@ -39,24 +58,14 @@ export const exportMembers = asyncHandler(async function (
     );
   }
 
-  const startDate = startDateRaw.trim();
-  const endDate = endDateRaw.trim();
+  const startDate = parseExportDateKey(startDateRaw);
+  const endDate = parseExportDateKey(endDateRaw);
 
-  if (!EXPORT_DATE_KEY.test(startDate) || !EXPORT_DATE_KEY.test(endDate)) {
-    throw new BadRequestError("INVALID_DATE", "Dates must use the yyyy-MM-dd format");
-  }
-
-  const parsedStart = new Date(startDate);
-  const parsedEnd = new Date(endDate);
-  if (isNaN(parsedStart.getTime()) || isNaN(parsedEnd.getTime())) {
-    throw new BadRequestError("INVALID_DATE", "Dates must be valid");
-  }
-
-  let rangeStart = startOfDateCairo(parsedStart);
-  let rangeEnd = endOfDateCairo(parsedEnd);
+  let rangeStart = startOfDateCairo(startDate);
+  let rangeEnd = endOfDateCairo(endDate);
   if (rangeStart > rangeEnd) {
-    rangeStart = startOfDateCairo(parsedEnd);
-    rangeEnd = endOfDateCairo(parsedStart);
+    rangeStart = startOfDateCairo(endDate);
+    rangeEnd = endOfDateCairo(startDate);
   }
 
   type ExportMemberRow = {

@@ -1004,7 +1004,8 @@ adminRoutes.get(
   "/members/export",
   authenticateUser,
   authorizeUser(["management", "branch_admin", "accountant"]),
-  adminRead(HOT, CacheTags.members),
+  // Tag both: export reads User fields; /users writes only bust CacheTags.users.
+  adminRead(HOT, CacheTags.members, CacheTags.users),
   exportMembers
 );
 adminRoutes.get(
