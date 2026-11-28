@@ -60,65 +60,52 @@ export const exportMembers = asyncHandler(async function (
   }
 
   type ExportMemberRow = {
-    createdAt?: Date;
-    sortCreatedAt: Date;
-    user: {
-      _id: Types.ObjectId;
-      name?: string;
-      phoneNumber?: string;
-      email?: string;
-      nationalId?: string;
-    };
+    _id: Types.ObjectId;
+    name?: string;
+    phoneNumber?: string;
+    email?: string;
+    nationalId?: string;
+    createdAt: Date;
   };
 
-  const rows = await Member.aggregate<ExportMemberRow>([
-    { $match: { isActive: { $ne: false } } },
-    {
-      $lookup: {
-        from: "users",
-        localField: "uid",
-        foreignField: "_id",
-        as: "user",
-        pipeline: [
-          {
-            $project: {
-              name: 1,
-              phoneNumber: 1,
-              email: 1,
-              nationalId: 1,
-              createdAt: 1,
-            },
-          },
-        ],
-      },
-    },
-    { $unwind: "$user" },
-    {
-      $addFields: {
-        sortCreatedAt: { $ifNull: ["$createdAt", "$user.createdAt"] },
-      },
-    },
+  // Member has no createdAt; export range is User.createdAt for role=member with an active Member row.
+  const rows = await User.aggregate<ExportMemberRow>([
     {
       $match: {
-        sortCreatedAt: { $gte: rangeStart, $lte: rangeEnd },
+        role: "member",
+        createdAt: { $gte: rangeStart, $lte: rangeEnd },
       },
     },
-    { $sort: { sortCreatedAt: 1 } },
+    {
+      $lookup: {
+        from: "members",
+        localField: "_id",
+        foreignField: "uid",
+        as: "memberDoc",
+      },
+    },
+    { $unwind: "$memberDoc" },
+    { $match: { "memberDoc.isActive": { $ne: false } } },
+    {
+      $project: {
+        name: 1,
+        phoneNumber: 1,
+        email: 1,
+        nationalId: 1,
+        createdAt: 1,
+      },
+    },
+    { $sort: { createdAt: 1 } },
   ]);
 
-  const members = rows.map((row) => {
-    const memberCreatedAt = row.createdAt
-      ? new Date(row.createdAt)
-      : new Date(row.sortCreatedAt);
-    return {
-      id: row.user._id.toString(),
-      name: row.user.name ?? "",
-      phone: row.user.phoneNumber ?? "",
-      email: row.user.email ?? "",
-      nationalId: row.user.nationalId ?? "",
-      createdAt: memberCreatedAt.toISOString(),
-    };
-  });
+  const members = rows.map((row) => ({
+    id: row._id.toString(),
+    name: row.name ?? "",
+    phone: row.phoneNumber ?? "",
+    email: row.email ?? "",
+    nationalId: row.nationalId ?? "",
+    createdAt: new Date(row.createdAt).toISOString(),
+  }));
 
   new SuccessResponse("Members Exported!", {
     members,
