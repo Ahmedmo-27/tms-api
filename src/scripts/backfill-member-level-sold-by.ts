@@ -31,6 +31,13 @@ import {
 } from "../utils/member-sold-by-backfill";
 import { describeMongoTarget, resolveScriptMongoUri } from "./script-db";
 
+const MEMBER_BATCH_CURSOR_SIZE = 50;
+
+const MEMBER_SELECT =
+  "_id uid soldBy soldByAssignedAt soldByAssignedBy " +
+  "packages._id packages.status packages.soldBy packages.soldByAssignedAt " +
+  "packages.soldByAssignedBy packages.pkgStartDate";
+
 function isDryRun(): boolean {
   return process.argv.includes("--dry-run");
 }
@@ -56,6 +63,36 @@ type MemberLean = {
   }>;
 };
 
+function packageAttributionForUpdate(
+  packages: BackfillPackageInput[],
+  plan: NonNullable<ReturnType<typeof planMemberSoldByBackfill>>,
+  migrationRunAt: Date,
+): {
+  soldBy: Types.ObjectId;
+  soldByAssignedAt: Date | null;
+  soldByAssignedBy: Types.ObjectId | null;
+} {
+  const nextPackages = applySoldByBackfillToPackages(packages, plan, {
+    migrationRunAt,
+  });
+  const sampleId = plan.packageIdsToUpdate[0];
+  const patched = nextPackages.find((p) => p._id === sampleId);
+  const soldByAssignedAt =
+    (patched?.soldByAssignedAt as Date | undefined) ??
+    plan.attribution.soldByAssignedAt ??
+    migrationRunAt;
+  const soldByAssignedByRaw =
+    patched?.soldByAssignedBy ?? plan.attribution.soldByAssignedBy;
+
+  return {
+    soldBy: new Types.ObjectId(plan.attribution.soldBy),
+    soldByAssignedAt: soldByAssignedAt ?? null,
+    soldByAssignedBy: soldByAssignedByRaw
+      ? new Types.ObjectId(String(soldByAssignedByRaw))
+      : null,
+  };
+}
+
 async function main() {
   const dryRun = isDryRun();
   const migrationRunAt = new Date();
@@ -69,14 +106,9 @@ async function main() {
 
   await connectDB();
 
-  const candidates = await Member.find({
-    $or: [
-      { soldBy: { $ne: null } },
-      { "packages.soldBy": { $ne: null } },
-    ],
-  })
-    .select("_id uid soldBy soldByAssignedAt soldByAssignedBy packages")
-    .lean<MemberLean[]>();
+  const query = {
+    $or: [{ soldBy: { $ne: null } }, { "packages.soldBy": { $ne: null } }],
+  };
 
   let examined = 0;
   let updated = 0;
@@ -85,7 +117,12 @@ async function main() {
   let skipped = 0;
   const conflicts: SoldByConflictLog[] = [];
 
-  for (const doc of candidates) {
+  const cursor = Member.find(query)
+    .select(MEMBER_SELECT)
+    .lean<MemberLean>()
+    .cursor({ batchSize: MEMBER_BATCH_CURSOR_SIZE });
+
+  for await (const doc of cursor) {
     examined += 1;
     const packages: BackfillPackageInput[] = doc.packages.map((p) => ({
       _id: idStr(p._id),
@@ -123,36 +160,11 @@ async function main() {
       );
     }
 
-    const nextPackages = applySoldByBackfillToPackages(packages, plan, {
-      migrationRunAt,
-    });
-
-    const $set: Record<string, unknown> = {};
     if (plan.memberFieldsChanged) {
-      $set.soldBy = new Types.ObjectId(plan.attribution.soldBy);
-      $set.soldByAssignedAt = plan.attribution.soldByAssignedAt;
-      $set.soldByAssignedBy = plan.attribution.soldByAssignedBy
-        ? new Types.ObjectId(plan.attribution.soldByAssignedBy)
-        : null;
       membersSet += 1;
     }
 
     if (plan.packageIdsToUpdate.length > 0) {
-      const mergedPackages = doc.packages.map((raw, index) => {
-        const patch = nextPackages[index];
-        if (!patch || !plan.packageIdsToUpdate.includes(idStr(raw._id))) {
-          return raw;
-        }
-        return {
-          ...raw,
-          soldBy: new Types.ObjectId(plan.attribution.soldBy),
-          soldByAssignedAt: patch.soldByAssignedAt ?? null,
-          soldByAssignedBy: patch.soldByAssignedBy
-            ? new Types.ObjectId(patch.soldByAssignedBy)
-            : null,
-        };
-      });
-      $set.packages = mergedPackages;
       packagesTouched += plan.packageIdsToUpdate.length;
     }
     updated += 1;
@@ -165,7 +177,40 @@ async function main() {
       continue;
     }
 
-    await Member.updateOne({ _id: doc._id }, { $set });
+    const $set: Record<string, unknown> = {};
+    const arrayFilters: Record<string, unknown>[] = [];
+
+    if (plan.memberFieldsChanged) {
+      $set.soldBy = new Types.ObjectId(plan.attribution.soldBy);
+      $set.soldByAssignedAt = plan.attribution.soldByAssignedAt;
+      $set.soldByAssignedBy = plan.attribution.soldByAssignedBy
+        ? new Types.ObjectId(plan.attribution.soldByAssignedBy)
+        : null;
+    }
+
+    if (plan.packageIdsToUpdate.length > 0) {
+      const pkgAttribution = packageAttributionForUpdate(
+        packages,
+        plan,
+        migrationRunAt,
+      );
+      const pkgObjectIds = plan.packageIdsToUpdate.map(
+        (id) => new Types.ObjectId(id),
+      );
+
+      $set["packages.$[pkg].soldBy"] = pkgAttribution.soldBy;
+      $set["packages.$[pkg].soldByAssignedAt"] =
+        pkgAttribution.soldByAssignedAt;
+      $set["packages.$[pkg].soldByAssignedBy"] =
+        pkgAttribution.soldByAssignedBy;
+
+      arrayFilters.push({ "pkg._id": { $in: pkgObjectIds } });
+    }
+
+    const updateOptions =
+      arrayFilters.length > 0 ? { arrayFilters } : undefined;
+
+    await Member.updateOne({ _id: doc._id }, { $set }, updateOptions);
   }
 
   console.log("\n=== Summary ===");
