@@ -6,7 +6,10 @@ import { BadRequestError, ForbiddenError, InternalError, NotFoundError } from ".
 import { resolveLocationFilter, normalizeRole, isBranchScopedRole } from "../../utils/location-scope";
 import { getMainBranchLocationId } from "../../utils/app-package-location";
 import { Types } from "mongoose";
+import * as XLSX from "xlsx";
 import Payment from "../../models/payment";
+import { startOfDateCairo, cairoDayRange } from "../../utils/timezone";
+import { buildPaymentsNationalIdExport } from "../../services/payments-national-id-export";
 
 export const getPayments = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
@@ -266,6 +269,51 @@ export const syncPaymentToCoachera = asyncHandler(
         payment: updatedPayment,
       }
     ).send(res);
+  }
+);
+
+export const exportPaymentsWithNationalId = asyncHandler(
+  async (req: Request, res: Response): Promise<void> => {
+    const startDate = String(req.query.startDate || "").trim();
+    const endDate = String(req.query.endDate || "").trim();
+    const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+
+    if (!datePattern.test(startDate) || !datePattern.test(endDate)) {
+      throw new BadRequestError(
+        "INVALID_DATE_RANGE",
+        "startDate and endDate must be provided in YYYY-MM-DD format"
+      );
+    }
+
+    const start = startOfDateCairo(startDate);
+    const { end } = cairoDayRange(endDate);
+    if (start >= end) {
+      throw new BadRequestError(
+        "INVALID_DATE_RANGE",
+        "startDate must be before or equal to endDate"
+      );
+    }
+
+    const { workbook } = await buildPaymentsNationalIdExport({
+      startDate: start,
+      endDate: end,
+      sheetName: "Payments National ID",
+    });
+
+    const buffer = XLSX.write(workbook, {
+      type: "buffer",
+      bookType: "xlsx",
+    }) as Buffer;
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="payments-national-id-${startDate}-to-${endDate}.xlsx"`
+    );
+    res.status(200).send(buffer);
   }
 );
 
