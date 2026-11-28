@@ -15,7 +15,116 @@ import { PackageStatusService } from "../../services/package-status-service";
 import { runInTransaction } from "../../utils/transaction";
 import { escapeRegex } from "../../utils/escapeRegex";
 import { normalizePhoneNumber } from "../../utils/phone";
-import { activeEndDateBound, cairoDateKey, isSameCairoDay } from "../../utils/timezone";
+import {
+  activeEndDateBound,
+  cairoDateKey,
+  endOfDateCairo,
+  isSameCairoDay,
+  startOfDateCairo,
+} from "../../utils/timezone";
+
+const EXPORT_DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
+
+export const exportMembers = asyncHandler(async function (
+  req: Request,
+  res: Response
+): Promise<void> {
+  const startDateRaw = (req.query.startDate || req.query.from) as string | undefined;
+  const endDateRaw = (req.query.endDate || req.query.to) as string | undefined;
+
+  if (!startDateRaw?.trim() || !endDateRaw?.trim()) {
+    throw new BadRequestError(
+      "MISSING_DATE",
+      "startDate and endDate query parameters are required"
+    );
+  }
+
+  const startDate = startDateRaw.trim();
+  const endDate = endDateRaw.trim();
+
+  if (!EXPORT_DATE_KEY.test(startDate) || !EXPORT_DATE_KEY.test(endDate)) {
+    throw new BadRequestError("INVALID_DATE", "Dates must use the yyyy-MM-dd format");
+  }
+
+  const parsedStart = new Date(startDate);
+  const parsedEnd = new Date(endDate);
+  if (isNaN(parsedStart.getTime()) || isNaN(parsedEnd.getTime())) {
+    throw new BadRequestError("INVALID_DATE", "Dates must be valid");
+  }
+
+  let rangeStart = startOfDateCairo(parsedStart);
+  let rangeEnd = endOfDateCairo(parsedEnd);
+  if (rangeStart > rangeEnd) {
+    rangeStart = startOfDateCairo(parsedEnd);
+    rangeEnd = endOfDateCairo(parsedStart);
+  }
+
+  type ExportMemberRow = {
+    createdAt?: Date;
+    sortCreatedAt: Date;
+    user: {
+      _id: Types.ObjectId;
+      name?: string;
+      phoneNumber?: string;
+      email?: string;
+      nationalId?: string;
+    };
+  };
+
+  const rows = await Member.aggregate<ExportMemberRow>([
+    { $match: { isActive: { $ne: false } } },
+    {
+      $lookup: {
+        from: "users",
+        localField: "uid",
+        foreignField: "_id",
+        as: "user",
+        pipeline: [
+          {
+            $project: {
+              name: 1,
+              phoneNumber: 1,
+              email: 1,
+              nationalId: 1,
+              createdAt: 1,
+            },
+          },
+        ],
+      },
+    },
+    { $unwind: "$user" },
+    {
+      $addFields: {
+        sortCreatedAt: { $ifNull: ["$createdAt", "$user.createdAt"] },
+      },
+    },
+    {
+      $match: {
+        sortCreatedAt: { $gte: rangeStart, $lte: rangeEnd },
+      },
+    },
+    { $sort: { sortCreatedAt: 1 } },
+  ]);
+
+  const members = rows.map((row) => {
+    const memberCreatedAt = row.createdAt
+      ? new Date(row.createdAt)
+      : new Date(row.sortCreatedAt);
+    return {
+      id: row.user._id.toString(),
+      name: row.user.name ?? "",
+      phone: row.user.phoneNumber ?? "",
+      email: row.user.email ?? "",
+      nationalId: row.user.nationalId ?? "",
+      createdAt: memberCreatedAt.toISOString(),
+    };
+  });
+
+  new SuccessResponse("Members Exported!", {
+    members,
+    total: members.length,
+  }).send(res);
+});
 
 export const addMember = asyncHandler(async function (
   req: Request,

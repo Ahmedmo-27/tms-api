@@ -78,7 +78,12 @@ import {
   deleteCoach,
 } from "../controllers/admin/coach-controller";
 import { getManagingShadowCoaches } from "../controllers/coach/shadow-coach-controller";
-import { addMember, getMember, updateMember } from "../controllers/admin/member-controller";
+import {
+  addMember,
+  exportMembers,
+  getMember,
+  updateMember,
+} from "../controllers/admin/member-controller";
 import {
   getAttendanceHistory,
   getOwedPtSessions,
@@ -994,6 +999,13 @@ adminRoutes.get(
   authorizeUser(["management", "branch_admin"]),
   adminRead(HOT, CacheTags.members),
   searchMembers
+);
+adminRoutes.get(
+  "/members/export",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin", "accountant"]),
+  adminRead(HOT, CacheTags.members),
+  exportMembers
 );
 adminRoutes.get(
   "/members/:memberId/recent-payments",
