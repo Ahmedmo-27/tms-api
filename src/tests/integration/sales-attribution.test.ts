@@ -185,6 +185,9 @@ beforeEach(async () => {
     {},
     {
       $unset: {
+        salesRep: "",
+        salesRepAssignedAt: "",
+        salesRepAssignedBy: "",
         "packages.$[].soldBy": "",
         "packages.$[].soldByAssignedAt": "",
         "packages.$[].soldByAssignedBy": "",
@@ -199,6 +202,12 @@ const listAs = (who: Staff, query = "") =>
 const assignAs = (who: Staff, memberPackageId: string, soldBy: string | null) =>
   api()
     .patch(`/sales/packages/${memberPackageId}/seller`)
+    .set(bearer(who.token))
+    .send({ soldBy });
+
+const assignMemberAs = (who: Staff, uid: string, soldBy: string | null) =>
+  api()
+    .patch(`/sales/members/${uid}/seller`)
     .set(bearer(who.token))
     .send({ soldBy });
 
@@ -363,11 +372,16 @@ describe("PATCH /sales/packages/:id/seller", () => {
     expect(row.soldByAssignedAt).toBeTruthy();
   });
 
-  it("credits only the package it names, not the member's others", async () => {
+  it("credits all non-deleted packages of the member, not just one", async () => {
     await assignAs(salesManager, soldPackageIds["a-active"], salesAccount.id);
 
     const listed = await listAs(salesManager, "?limit=100");
-    expect(rowFor(body(listed), soldPackageIds["a-legacy-case"]).soldBy).toBeNull();
+    expect(rowFor(body(listed), soldPackageIds["a-active"]).soldBy?._id).toBe(
+      salesAccount.id,
+    );
+    expect(rowFor(body(listed), soldPackageIds["a-legacy-case"]).soldBy?._id).toBe(
+      salesAccount.id,
+    );
   });
 
   it("moves a sale from one salesperson to another", async () => {
@@ -502,31 +516,32 @@ describe("filtering by salesperson", () => {
 
     const listed = ids(res);
     expect(listed).not.toContain(soldPackageIds["a-active"]);
-    expect(listed).toContain(soldPackageIds["a-legacy-case"]);
-    expect(res.body.data.total).toBe(3);
+    expect(listed).not.toContain(soldPackageIds["a-legacy-case"]);
+    expect(res.body.data.total).toBe(2);
   });
 
   it("'assigned' returns only credited sales", async () => {
     const res = await listAs(salesManager, "?limit=100&seller=assigned");
 
-    expect(res.body.data.rows).toHaveLength(1);
-    expect(res.body.data.rows[0].memberPackageId).toBe(
-      soldPackageIds["a-active"],
-    );
+    expect(res.body.data.rows).toHaveLength(2);
+    const listed = ids(res);
+    expect(listed).toContain(soldPackageIds["a-active"]);
+    expect(listed).toContain(soldPackageIds["a-legacy-case"]);
   });
 
   it("filters to one salesperson and counts them in the summary", async () => {
     const res = await listAs(salesManager, `?limit=100&seller=${salesAccount.id}`);
 
-    expect(res.body.data.rows).toHaveLength(1);
+    // Member A has 2 non-deleted packages ("a-active" and "a-legacy-case").
+    expect(res.body.data.rows).toHaveLength(2);
     // The summary spans the whole selection, not just the filtered page.
     expect(res.body.data.summary).toMatchObject({
       total: 4,
-      assigned: 1,
-      unassigned: 3,
+      assigned: 2,
+      unassigned: 2,
     });
     expect(res.body.data.summary.bySeller).toEqual([
-      { salesAccountId: salesAccount.id, name: expect.any(String), count: 1 },
+      { salesAccountId: salesAccount.id, name: expect.any(String), count: 2 },
     ]);
   });
 
@@ -587,5 +602,35 @@ describe("who may reach the sales endpoints at all", () => {
       salesAccount.id,
     );
     expect(res.status).toBe(403);
+  });
+});
+
+describe("PATCH /sales/members/:uid/seller", () => {
+  it("links a sales rep to the member and marks all non-deleted packages as sold by them", async () => {
+    const res = await assignMemberAs(salesManager, memberAUid, salesAccount.id);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.uid).toBe(memberAUid);
+    expect(res.body.data.salesRep._id).toBe(salesAccount.id);
+
+    const listed = await listAs(salesManager, "?limit=100");
+    expect(rowFor(body(listed), soldPackageIds["a-active"]).soldBy?._id).toBe(
+      salesAccount.id,
+    );
+    expect(rowFor(body(listed), soldPackageIds["a-legacy-case"]).soldBy?._id).toBe(
+      salesAccount.id,
+    );
+  });
+
+  it("clears the member's sales rep and package attributions when soldBy is null", async () => {
+    await assignMemberAs(salesManager, memberAUid, salesAccount.id);
+    const res = await assignMemberAs(salesManager, memberAUid, null);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.salesRep).toBeNull();
+
+    const listed = await listAs(salesManager, "?limit=100");
+    expect(rowFor(body(listed), soldPackageIds["a-active"]).soldBy).toBeNull();
+    expect(rowFor(body(listed), soldPackageIds["a-legacy-case"]).soldBy).toBeNull();
   });
 });
