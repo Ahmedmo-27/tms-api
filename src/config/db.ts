@@ -4,16 +4,14 @@ import { InternalError } from "../core/ApiError";
 
 const connectDB = async () => {
   try{
-    logger.info("Connecting DB", {
-      url: process.env.MONGO_URI,
-    })
     const url = process.env.MONGO_URI
     if(!url){
       throw new InternalError("DB_CONNECTION_ERROR", "MONGOOSE_URL is not defined in environment variables")
     }
+    // Never log the URI — it contains credentials.
+    logger.info("Connecting DB")
     await mongoose.connect(url)
     logger.info("DB Connected")
-    logger.info("DB Connected on url: ", url)
   }catch(error){
     logger.error("DB connection failed", {
       message: (error as Error).message,

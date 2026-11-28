@@ -15,7 +15,114 @@ import { PackageStatusService } from "../../services/package-status-service";
 import { runInTransaction } from "../../utils/transaction";
 import { escapeRegex } from "../../utils/escapeRegex";
 import { normalizePhoneNumber } from "../../utils/phone";
-import { activeEndDateBound, cairoDateKey, isSameCairoDay } from "../../utils/timezone";
+import {
+  activeEndDateBound,
+  cairoDateKey,
+  endOfDateCairo,
+  isSameCairoDay,
+  startOfDateCairo,
+} from "../../utils/timezone";
+
+const EXPORT_DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
+
+function queryString(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value) && typeof value[0] === "string") return value[0];
+  return undefined;
+}
+
+/** Reject non-yyyy-MM-dd values and impossible calendar days (e.g. 2025-02-30). */
+function parseExportDateKey(value: string): string {
+  const trimmed = value.trim();
+  if (!EXPORT_DATE_KEY.test(trimmed)) {
+    throw new BadRequestError("INVALID_DATE", "Dates must use the yyyy-MM-dd format");
+  }
+  // startOfDateCairo normalizes overflow days; cairoDateKey must round-trip.
+  if (cairoDateKey(startOfDateCairo(trimmed)) !== trimmed) {
+    throw new BadRequestError("INVALID_DATE", "Dates must be valid calendar days");
+  }
+  return trimmed;
+}
+
+export const exportMembers = asyncHandler(async function (
+  req: Request,
+  res: Response
+): Promise<void> {
+  const startDateRaw = queryString(req.query.startDate ?? req.query.from);
+  const endDateRaw = queryString(req.query.endDate ?? req.query.to);
+
+  if (!startDateRaw?.trim() || !endDateRaw?.trim()) {
+    throw new BadRequestError(
+      "MISSING_DATE",
+      "startDate and endDate query parameters are required"
+    );
+  }
+
+  const startDate = parseExportDateKey(startDateRaw);
+  const endDate = parseExportDateKey(endDateRaw);
+
+  let rangeStart = startOfDateCairo(startDate);
+  let rangeEnd = endOfDateCairo(endDate);
+  if (rangeStart > rangeEnd) {
+    rangeStart = startOfDateCairo(endDate);
+    rangeEnd = endOfDateCairo(startDate);
+  }
+
+  type ExportMemberRow = {
+    _id: Types.ObjectId;
+    name?: string;
+    phoneNumber?: string;
+    email?: string;
+    nationalId?: string;
+    createdAt: Date;
+  };
+
+  // Member has no createdAt; export range is User.createdAt for role=member with an active Member row.
+  // Only members that have a non-empty national ID are included.
+  const rows = await User.aggregate<ExportMemberRow>([
+    {
+      $match: {
+        role: "member",
+        createdAt: { $gte: rangeStart, $lte: rangeEnd },
+        nationalId: { $type: "string", $regex: /\S/ },
+      },
+    },
+    {
+      $lookup: {
+        from: "members",
+        localField: "_id",
+        foreignField: "uid",
+        as: "memberDoc",
+      },
+    },
+    { $unwind: "$memberDoc" },
+    { $match: { "memberDoc.isActive": { $ne: false } } },
+    {
+      $project: {
+        name: 1,
+        phoneNumber: 1,
+        email: 1,
+        nationalId: 1,
+        createdAt: 1,
+      },
+    },
+    { $sort: { createdAt: 1 } },
+  ]);
+
+  const members = rows.map((row) => ({
+    id: row._id.toString(),
+    name: row.name ?? "",
+    phone: row.phoneNumber ?? "",
+    email: row.email ?? "",
+    nationalId: row.nationalId ?? "",
+    createdAt: new Date(row.createdAt).toISOString(),
+  }));
+
+  new SuccessResponse("Members Exported!", {
+    members,
+    total: members.length,
+  }).send(res);
+});
 
 export const addMember = asyncHandler(async function (
   req: Request,
@@ -122,7 +229,10 @@ export const getMember = asyncHandler(async function (
       .populate({ path: "uid", select: "-password -tokens -resetCode -fcmTokens" })
       .populate({ path: "salesRep", select: "_id name role" })
       .populate({ path: "salesRepAssignedBy", select: "_id name" })
+      .populate({ path: "soldBy", select: "_id name role" })
+      .populate({ path: "soldByAssignedBy", select: "_id name" })
       .populate({ path: "packages.pkgId" })
+      .populate({ path: "packages.soldBy", select: "_id name role" })
       .populate({ path: "ptAttendance.pkgId" })
       .sort({ createdAt: -1 })
       .limit(limitNumber)

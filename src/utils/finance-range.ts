@@ -60,6 +60,27 @@ export function buildFinanceRange(
   };
 }
 
+/**
+ * A range from `first` (a Cairo calendar day) up to today, with no length cap.
+ * Used for "all history" views of a single class, where the first session sets the start.
+ */
+export function allTimeRange(first: Date, locationId: string | null): FinanceRange {
+  const todayKey = cairoKey(new Date());
+  let startKey = cairoKey(first);
+  if (startKey > todayKey) startKey = todayKey;
+  const start = startOfDateCairo(startKey);
+  const end = cairoDayRange(todayKey).end;
+  const days = Math.round((end.getTime() - start.getTime()) / DAY_MS);
+  return {
+    start,
+    end,
+    startKey,
+    endKey: todayKey,
+    locationId,
+    granularity: days <= DAILY_BUCKET_MAX_DAYS ? "day" : "month",
+  };
+}
+
 /** The range of equal length immediately before `range`. */
 export function previousRange(range: FinanceRange): FinanceRange {
   const length = range.end.getTime() - range.start.getTime();

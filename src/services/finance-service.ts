@@ -23,6 +23,8 @@ import {
   ONLINE_METHODS,
   SALES_SEGMENTS,
   UNLIMITED_SESSIONS_THRESHOLD,
+  allTimeRange,
+  buildFinanceRange,
   cairoKey,
   isOnlinePackageName,
   paymentSegment,
@@ -1434,10 +1436,127 @@ export class FinanceService {
       const attended = sumBy(sessionRows, (s) => s.attended);
       const capacity = sumBy(sessionRows, (s) => s.capacity);
 
+      // Day by day: what happened on each Cairo calendar day (sessions held or packages bought).
+      // Money columns use the same rules as the totals, so the days add up to the summary.
+      type DayRow = {
+        date: string;
+        sessions: number;
+        hours: number;
+        coaches: Set<string>;
+        booked: number;
+        attended: number;
+        packageUses: number;
+        attendedPackageUses: number;
+        dropIns: number;
+        attendedDropIns: number;
+        dropInRevenue: number;
+        packageValue: number;
+        packagesBought: number;
+        newPackages: number;
+        renewals: number;
+        packageRevenue: number;
+        otherPurchases: number;
+      };
+      const dayMap = new Map<string, DayRow>();
+      const dayFor = (date: Date) => {
+        const key = cairoKey(date);
+        let row = dayMap.get(key);
+        if (!row) {
+          row = {
+            date: key,
+            sessions: 0,
+            hours: 0,
+            coaches: new Set(),
+            booked: 0,
+            attended: 0,
+            packageUses: 0,
+            attendedPackageUses: 0,
+            dropIns: 0,
+            attendedDropIns: 0,
+            dropInRevenue: 0,
+            packageValue: 0,
+            packagesBought: 0,
+            newPackages: 0,
+            renewals: 0,
+            packageRevenue: 0,
+            otherPurchases: 0,
+          };
+          dayMap.set(key, row);
+        }
+        return row;
+      };
+      for (const s of sessionRows) {
+        const d = dayFor(s.date);
+        d.sessions += 1;
+        d.hours += s.hours;
+        s.coaches.forEach((c) => d.coaches.add(c));
+        d.booked += s.booked;
+        d.attended += s.attended;
+        d.packageUses += s.packageUses;
+        d.attendedPackageUses += s.attendedPackageUses;
+        d.dropIns += s.dropIns;
+        d.attendedDropIns += s.attendedDropIns;
+        d.dropInRevenue += s.dropInRevenue;
+        d.packageValue += s.packageValue;
+      }
+      for (const p of counted) {
+        const d = dayFor(p.date);
+        if (p.creditedSessionId) {
+          d.packagesBought += 1;
+          if (p.type === "RENEWAL") d.renewals += 1;
+          else d.newPackages += 1;
+          d.packageRevenue += p.amount;
+        } else {
+          d.otherPurchases += 1;
+        }
+      }
+      const days = [...dayMap.values()]
+        .map(({ coaches: c, ...d }) => ({
+          ...d,
+          hours: round2(d.hours),
+          coaches: [...c].sort(),
+          dropInRevenue: round2(d.dropInRevenue),
+          packageValue: round2(d.packageValue),
+          packageRevenue: round2(d.packageRevenue),
+          totalRevenue: round2(d.dropInRevenue + d.packageValue + d.packageRevenue),
+          attendanceRate: d.booked ? round2((d.attended / d.booked) * 100) : null,
+        }))
+        .sort((a, b) => b.date.localeCompare(a.date));
+
+      // The same numbers per period (day or month, by range length) for the chart.
+      const trendMap = new Map(
+        rangeBuckets(range).map((bucket) => [
+          bucket,
+          { bucket, sessions: 0, booked: 0, attended: 0, dropInRevenue: 0, packageValue: 0, packageRevenue: 0 },
+        ]),
+      );
+      for (const d of days) {
+        const t = trendMap.get(range.granularity === "day" ? d.date : d.date.slice(0, 7));
+        if (!t) continue;
+        t.sessions += d.sessions;
+        t.booked += d.booked;
+        t.attended += d.attended;
+        t.dropInRevenue += d.dropInRevenue;
+        t.packageValue += d.packageValue;
+        t.packageRevenue += d.packageRevenue;
+      }
+      const trend = [...trendMap.values()].map((t) => ({
+        ...t,
+        dropInRevenue: round2(t.dropInRevenue),
+        packageValue: round2(t.packageValue),
+        packageRevenue: round2(t.packageRevenue),
+        totalRevenue: round2(t.dropInRevenue + t.packageValue + t.packageRevenue),
+      }));
+
+      const dropInRevenueTotal = round2(sumBy(sessionRows, (s) => s.dropInRevenue));
+      const packageValueTotal = round2(sumBy(sessionRows, (s) => s.packageValue));
+      const packageRevenueTotal = round2(sumBy(credited, (p) => p.amount));
+
       return {
         classTitle,
         category,
         range: { startDate: range.startKey, endDate: range.endKey },
+        granularity: range.granularity,
         attributionDays: ATTRIBUTION_DAYS,
         summary: {
           sessions: sessions.length,
@@ -1463,6 +1582,7 @@ export class FinanceService {
           uncreditedPurchases: counted.length - credited.length,
           uncreditedRevenue: round2(sumBy(counted.filter((p) => !p.creditedSessionId), (p) => p.amount)),
           refundedPurchases: purchaseRows.length - counted.length,
+          totalRevenue: round2(dropInRevenueTotal + packageValueTotal + packageRevenueTotal),
         },
         coaches: [...rows.values()]
           .map(({ members: m, packageCounts, ...row }) => ({
@@ -1471,6 +1591,8 @@ export class FinanceService {
             packageValue: round2(row.packageValue),
             dropInRevenue: round2(row.dropInRevenue),
             packageRevenue: round2(row.packageRevenue),
+            // Money linked to this coach in this class: drop-ins paid, package sessions used, packages bought.
+            totalRevenue: round2(row.dropInRevenue + row.packageValue + row.packageRevenue),
             uniqueMembers: m.size,
             attendanceRate: row.booked ? round2((row.attended / row.booked) * 100) : null,
             fillRate: row.capacity ? round2((row.booked / row.capacity) * 100) : null,
@@ -1480,7 +1602,91 @@ export class FinanceService {
           }))
           .sort((a, b) => b.sessions - a.sessions || b.packagesBought - a.packagesBought),
         sessions: sessionRows,
+        days,
+        trend,
         purchases: purchaseRows.sort((a, b) => b.date.getTime() - a.date.getTime()),
+      };
+    });
+  }
+
+  /** From this class's first session (in the branch, if one is picked) up to today. */
+  static async classAllTimeRange(classTitle: string, locationId: string | null): Promise<FinanceRange> {
+    const lookups = await loadLookups();
+    const classIds = [...lookups.classes.values()].filter((c) => c.title === classTitle).map((c) => c.id);
+    if (!classIds.length) throw new NotFoundError("CLASS_NOT_FOUND", "Class not found", { classTitle });
+    const first = (await ScheduledClass.findOne(
+      withLocation({ cid: { $in: classIds.map((id) => new Types.ObjectId(id)) } }, locationId),
+    )
+      .sort({ startTime: 1 })
+      .select("startTime")
+      .lean()) as AnyDoc | null;
+    return allTimeRange(first?.startTime ? new Date(first.startTime) : new Date(), locationId);
+  }
+
+  /**
+   * One day of a class: every session with who booked, how they paid and whether they came,
+   * plus the packages bought that day and which coach each is credited to.
+   */
+  static async classDay(classTitle: string, dayKey: string, locationId: string | null) {
+    const range = buildFinanceRange({ startDate: dayKey, endDate: dayKey }, locationId);
+    return cached(`classDay|${classTitle}|${rangeKey(range)}`, async () => {
+      const [detail, lookups] = await Promise.all([FinanceService.classDetail(range, classTitle), loadLookups()]);
+      const classIds = [...lookups.classes.values()].filter((c) => c.title === classTitle).map((c) => c.id);
+      const sessions = await loadClassSessions(range, lookups, undefined, classIds);
+      const users = await loadUsers(sessions.flatMap((s) => s.bookings.map((b) => b.uid)));
+      const rowById = new Map(detail.sessions.map((s) => [s.id, s]));
+
+      return {
+        classTitle,
+        date: dayKey,
+        summary: detail.summary,
+        coaches: detail.coaches,
+        purchases: detail.purchases,
+        sessions: sessions
+          .sort((a, b) => a.start.getTime() - b.start.getTime())
+          .map((s) => {
+            const row = rowById.get(s.id);
+            const attendees = [
+              ...s.bookings.map((b) => {
+                const isDropIn = b.method === DROP_IN_METHOD;
+                const pkg = isDropIn ? null : resolvePackageByName(lookups, b.method, s.locationId);
+                const user = users.get(b.uid);
+                return {
+                  name: user?.name ?? "Unknown member",
+                  phone: user?.phone ?? "",
+                  kind: isDropIn ? ("DROP_IN" as const) : ("PACKAGE" as const),
+                  packageName: isDropIn ? "Drop-in" : b.method,
+                  attended: b.attended,
+                  paidAmount: isDropIn ? b.paidAmount : null,
+                  sessionValue: isDropIn ? null : perSessionValue(pkg),
+                };
+              }),
+              ...s.nonMember.map((n) => ({
+                name: n.name || "Non-member",
+                phone: n.phone ?? "",
+                kind: "NON_MEMBER" as const,
+                packageName: "Non-member drop-in",
+                attended: n.attended,
+                paidAmount: n.paidAmount,
+                sessionValue: null,
+              })),
+            ].sort((a, b) => Number(b.attended) - Number(a.attended) || a.name.localeCompare(b.name));
+            return {
+              id: s.id,
+              start: s.start,
+              hours: s.hours,
+              branch: branchName(lookups, s.locationId),
+              coaches: s.coachIds.length
+                ? s.coachIds.map((id) => lookups.coaches.get(id) ?? "Unknown coach")
+                : ["No coach assigned"],
+              capacity: s.capacity,
+              booked: row?.booked ?? attendees.length,
+              attended: row?.attended ?? attendees.filter((a) => a.attended).length,
+              dropInRevenue: row?.dropInRevenue ?? round2(s.dropInRevenue),
+              packageValue: row?.packageValue ?? 0,
+              attendees,
+            };
+          }),
       };
     });
   }
@@ -1773,6 +1979,41 @@ export class FinanceService {
         }))
         .sort((a, b) => b.sessions - a.sessions);
 
+      // Per class, this coach's row from the class page, so both pages show the same numbers.
+      const classTitles = [...new Set(sessions.map((s) => s.classTitle))].filter((t) => t !== "Unknown class");
+      const classDetails = await Promise.all(
+        classTitles.map((title) => FinanceService.classDetail(range, title).catch(() => null)),
+      );
+      const byClass = classDetails
+        .flatMap((d) => {
+          const row = d?.coaches.find((c) => c.coachId === coachId);
+          if (!d || !row) return [];
+          return [
+            {
+              classTitle: d.classTitle,
+              category: d.category,
+              sessions: row.sessions,
+              coTaughtSessions: row.coTaughtSessions,
+              hours: row.hours,
+              booked: row.booked,
+              attended: row.attended,
+              attendanceRate: row.attendanceRate,
+              packageUses: row.packageUses,
+              attendedPackageUses: row.attendedPackageUses,
+              packageValue: row.packageValue,
+              dropIns: row.dropIns,
+              dropInRevenue: row.dropInRevenue,
+              packagesBought: row.packagesBought,
+              newPackages: row.newPackages,
+              renewals: row.renewals,
+              packageRevenue: row.packageRevenue,
+              totalRevenue: row.totalRevenue,
+              uniqueMembers: row.uniqueMembers,
+            },
+          ];
+        })
+        .sort((a, b) => b.totalRevenue - a.totalRevenue || b.sessions - a.sessions);
+
       const attendedPackage = packageEntries.filter((e) => e.attended);
       return {
         coach: { id: coachId, name: (coach as AnyDoc).coachName },
@@ -1806,6 +2047,7 @@ export class FinanceService {
           ),
         },
         coCoaches,
+        byClass,
         byPackage: [...byPackage.values()]
           .map(({ members, ...row }) => ({ ...row, members: members.size, value: round2(row.value) }))
           .sort((a, b) => b.uses - a.uses),

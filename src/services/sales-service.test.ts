@@ -4,11 +4,7 @@ import Member from "../models/member";
 import Package from "../models/package";
 import User from "../models/user";
 import Location from "../models/location";
-import {
-  BadRequestError,
-  ForbiddenError,
-  NotFoundError,
-} from "../core/ApiError";
+import { BadRequestError, NotFoundError } from "../core/ApiError";
 
 jest.mock("../models/member");
 jest.mock("../models/package");
@@ -53,12 +49,21 @@ function mockFindById(doc: unknown) {
   (User.findById as jest.Mock).mockReturnValue(resolved(doc));
 }
 
+const memberDocId = new Types.ObjectId();
+const secondMemberPackageId = new Types.ObjectId();
+
 /** A member holding one sold package, as assignSeller reads it. */
 function memberWithPackage(
   overrides: Partial<{ status: string; locationId: Types.ObjectId | null }> = {},
+  extraPackages: Array<{
+    _id: Types.ObjectId;
+    status: string;
+    locationId?: Types.ObjectId | null;
+  }> = [],
 ) {
   // locationId: undefined keeps branchA; null means "no branch recorded".
   return {
+    _id: memberDocId,
     uid: new Types.ObjectId(),
     packages: [
       {
@@ -67,6 +72,10 @@ function memberWithPackage(
         locationId:
           overrides.locationId === undefined ? branchA : overrides.locationId,
       },
+      ...extraPackages.map((pkg) => ({
+        locationId: branchA,
+        ...pkg,
+      })),
     ],
   };
 }
@@ -130,23 +139,44 @@ describe("assignSeller", () => {
     });
 
     const [filter, update, options] = (Member.updateOne as jest.Mock).mock.calls[0];
-    expect(filter).toEqual({ uid: memberDoc.uid });
+    expect(filter).toEqual({ _id: memberDocId });
     expect(update.$set.salesRep).toEqual(salesAccountId);
-    expect(update.$set.salesRepAssignedBy).toEqual(actorId);
-    expect(update.$set.salesRepAssignedAt).toBeInstanceOf(Date);
+    expect(update.$set.soldBy).toEqual(salesAccountId);
     expect(update.$set["packages.$[pkg].soldBy"]).toEqual(salesAccountId);
     expect(update.$set["packages.$[pkg].soldByAssignedBy"]).toEqual(actorId);
     expect(update.$set["packages.$[pkg].soldByAssignedAt"]).toBeInstanceOf(Date);
-    expect(options).toEqual({
-      arrayFilters: [
-        { "pkg.status": { $not: { $regex: "^deleted$", $options: "i" } } },
-      ],
-    });
+    expect(options.arrayFilters).toEqual([
+      { "pkg.status": { $not: { $regex: "^deleted$", $options: "i" } } },
+    ]);
     expect(result.soldBy).toEqual({
       _id: salesAccountId.toString(),
       name: "Nour Sales",
       role: "sales",
     });
+    expect(result.packagesUpdated).toBe(1);
+  });
+
+  it("updates every non-deleted package and reports how many were touched", async () => {
+    mockFindById(salesAccount);
+    (Member.findOne as jest.Mock).mockReturnValue(
+      resolved(
+        memberWithPackage(
+          {},
+          [
+            { _id: secondMemberPackageId, status: "ACTIVE" },
+            { _id: new Types.ObjectId(), status: "DELETED" },
+          ],
+        ),
+      ),
+    );
+
+    const result = await SalesService.assignSeller({
+      memberPackageId: memberPackageId.toString(),
+      soldBy: salesAccountId.toString(),
+      actorId: actorId.toString(),
+    });
+
+    expect(result.packagesUpdated).toBe(2);
   });
 
   it("clears the attribution when soldBy is null", async () => {
@@ -160,6 +190,7 @@ describe("assignSeller", () => {
 
     const [, update] = (Member.updateOne as jest.Mock).mock.calls[0];
     expect(update.$set.salesRep).toBeNull();
+    expect(update.$set.soldBy).toBeNull();
     expect(update.$set["packages.$[pkg].soldBy"]).toBeNull();
     expect(result.soldBy).toBeNull();
   });
@@ -206,47 +237,50 @@ describe("assignSeller", () => {
     },
   );
 
-  it("keeps branch_admin out of another branch's sales", async () => {
-    (Member.findOne as jest.Mock).mockReturnValue(resolved(memberWithPackage()));
+  it("updates every non-deleted package and member.soldBy for branch_admin", async () => {
+    const otherBranchPkgId = new Types.ObjectId();
+    mockFindById(salesAccount);
+    (Member.findOne as jest.Mock).mockReturnValue(
+      resolved(
+        memberWithPackage({}, [
+          { _id: otherBranchPkgId, status: "ACTIVE", locationId: branchB },
+        ]),
+      ),
+    );
 
-    await expect(
-      SalesService.assignSeller({
-        memberPackageId: memberPackageId.toString(),
-        soldBy: null,
-        actorId: actorId.toString(),
-        scopedLocationId: branchB.toString(),
-      }),
-    ).rejects.toThrow(ForbiddenError);
-    expect(Member.updateOne).not.toHaveBeenCalled();
+    const result = await SalesService.assignSeller({
+      memberPackageId: memberPackageId.toString(),
+      soldBy: salesAccountId.toString(),
+      actorId: actorId.toString(),
+      scopedLocationId: branchA.toString(),
+    });
+
+    expect(result.packagesUpdated).toBe(2);
+    const [, update, options] = (Member.updateOne as jest.Mock).mock.calls[0];
+    expect(update.$set.soldBy).toEqual(salesAccountId);
+    expect(update.$set["packages.$[pkg].soldBy"]).toEqual(salesAccountId);
+    expect(options.arrayFilters).toEqual([
+      { "pkg.status": { $not: { $regex: "^deleted$", $options: "i" } } },
+    ]);
   });
 
-  it("lets branch_admin credit a sale made at its own branch", async () => {
-    (Member.findOne as jest.Mock).mockReturnValue(resolved(memberWithPackage()));
-
-    await expect(
-      SalesService.assignSeller({
-        memberPackageId: memberPackageId.toString(),
-        soldBy: null,
-        actorId: actorId.toString(),
-        scopedLocationId: branchA.toString(),
-      }),
-    ).resolves.toMatchObject({ soldBy: null });
-    expect(Member.updateOne).toHaveBeenCalledTimes(1);
-  });
-
-  it("refuses a branch-scoped write on a package with no branch recorded", async () => {
+  it("lets branch_admin assign from a named package with no branch recorded", async () => {
+    mockFindById(salesAccount);
     (Member.findOne as jest.Mock).mockReturnValue(
       resolved(memberWithPackage({ locationId: null })),
     );
 
-    await expect(
-      SalesService.assignSeller({
-        memberPackageId: memberPackageId.toString(),
-        soldBy: null,
-        actorId: actorId.toString(),
-        scopedLocationId: branchA.toString(),
-      }),
-    ).rejects.toThrow(ForbiddenError);
+    const result = await SalesService.assignSeller({
+      memberPackageId: memberPackageId.toString(),
+      soldBy: salesAccountId.toString(),
+      actorId: actorId.toString(),
+      scopedLocationId: branchA.toString(),
+    });
+
+    expect(result.packagesUpdated).toBe(1);
+    expect(Member.updateOne).toHaveBeenCalledTimes(1);
+    const [, update] = (Member.updateOne as jest.Mock).mock.calls[0];
+    expect(update.$set.soldBy).toEqual(salesAccountId);
   });
 });
 

@@ -47,6 +47,9 @@ interface SoldPackageRow {
 const idStr = (value: unknown): string =>
   value ? String((value as { _id?: unknown })?._id ?? value) : "";
 
+const isDeletedPackageStatus = (status: string) =>
+  String(status).toUpperCase() === "DELETED";
+
 /** Sold packages are addressed by the member package subdocument id. */
 function toMemberPackageId(memberPackageId: string): Types.ObjectId {
   if (!memberPackageId || !Types.ObjectId.isValid(memberPackageId)) {
@@ -395,6 +398,9 @@ export class SalesService {
           salesRep: sellerId,
           salesRepAssignedAt: now,
           salesRepAssignedBy: actorObjectId,
+          soldBy: sellerId,
+          soldByAssignedAt: now,
+          soldByAssignedBy: actorObjectId,
           "packages.$[pkg].soldBy": sellerId,
           "packages.$[pkg].soldByAssignedAt": now,
           "packages.$[pkg].soldByAssignedBy": actorObjectId,
@@ -421,11 +427,8 @@ export class SalesService {
   }
 
   /**
-   * Credits a sold package's member to a sales account (or clears the
-   * attribution) and marks all of that member's non-deleted packages as sold
-   * by that sales account.
-   * `scopedLocationId` is set for branch_admin, which may only touch sales
-   * made at its own branch.
+   * Credits a sold package to a sales account, or clears the attribution.
+   * Updates member-level salesRep/soldBy and every non-deleted package on the member.
    */
   static async assignSeller(params: {
     memberPackageId: string;
@@ -438,7 +441,7 @@ export class SalesService {
 
     const member = await Member.findOne({
       "packages._id": memberPackageId,
-    }).select("uid packages");
+    }).select("_id uid packages");
     if (!member) {
       throw new NotFoundError(
         "SOLD_PACKAGE_NOT_FOUND",
@@ -464,36 +467,34 @@ export class SalesService {
         "This package was removed from the member and cannot be credited",
       );
     }
-    if (params.scopedLocationId) {
-      const packageLocationId = soldPackage.locationId
-        ? String(soldPackage.locationId)
-        : null;
-      if (packageLocationId !== params.scopedLocationId) {
-        throw new ForbiddenError(
-          "BRANCH_SCOPE_MISMATCH",
-          "This package was not sold at your branch",
-        );
-      }
-    }
 
-    const now = new Date();
+    const assignedAt = new Date();
     const actorObjectId = new Types.ObjectId(params.actorId);
+    const packagesUpdated = member.packages.filter(
+      (pkg) => !isDeletedPackageStatus(String(pkg.status)),
+    ).length;
+
+    const packageArrayFilter: Record<string, unknown> = {
+      "pkg.status": { $not: { $regex: "^deleted$", $options: "i" } },
+    };
+
+    const $set: Record<string, unknown> = {
+      salesRep: sellerId,
+      salesRepAssignedAt: assignedAt,
+      salesRepAssignedBy: actorObjectId,
+      soldBy: sellerId,
+      soldByAssignedAt: assignedAt,
+      soldByAssignedBy: actorObjectId,
+      "packages.$[pkg].soldBy": sellerId,
+      "packages.$[pkg].soldByAssignedAt": assignedAt,
+      "packages.$[pkg].soldByAssignedBy": actorObjectId,
+    };
+
     await Member.updateOne(
-      { uid: member.uid },
+      { _id: member._id },
+      { $set },
       {
-        $set: {
-          salesRep: sellerId,
-          salesRepAssignedAt: now,
-          salesRepAssignedBy: actorObjectId,
-          "packages.$[pkg].soldBy": sellerId,
-          "packages.$[pkg].soldByAssignedAt": now,
-          "packages.$[pkg].soldByAssignedBy": actorObjectId,
-        },
-      },
-      {
-        arrayFilters: [
-          { "pkg.status": { $not: { $regex: "^deleted$", $options: "i" } } },
-        ],
+        arrayFilters: [packageArrayFilter],
       },
     );
 
@@ -507,7 +508,8 @@ export class SalesService {
       soldBy: seller
         ? { _id: idStr(seller._id), name: seller.name, role: seller.role }
         : null,
-      soldByAssignedAt: now,
+      soldByAssignedAt: assignedAt,
+      packagesUpdated,
     };
   }
 }

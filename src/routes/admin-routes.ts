@@ -78,7 +78,12 @@ import {
   deleteCoach,
 } from "../controllers/admin/coach-controller";
 import { getManagingShadowCoaches } from "../controllers/coach/shadow-coach-controller";
-import { addMember, getMember, updateMember } from "../controllers/admin/member-controller";
+import {
+  addMember,
+  exportMembers,
+  getMember,
+  updateMember,
+} from "../controllers/admin/member-controller";
 import {
   getAttendanceHistory,
   getOwedPtSessions,
@@ -171,6 +176,7 @@ import {
   commitSheetRows,
   importSheetDay,
 } from "../controllers/admin/sheet-controller";
+import { getPtAchievementReport } from "../controllers/admin/pt-achievement-controller";
 import { clearFinanceCache } from "../services/finance-service";
 import { cacheResponse, invalidateCache } from "../middlewares/cacheResponse";
 import { CacheTags } from "../cache/response-cache";
@@ -1002,6 +1008,14 @@ adminRoutes.get(
   searchMembers
 );
 adminRoutes.get(
+  "/members/export",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin", "accountant"]),
+  // Tag both: export reads User fields; /users writes only bust CacheTags.users.
+  adminRead(HOT, CacheTags.members, CacheTags.users),
+  exportMembers
+);
+adminRoutes.get(
   "/members/:memberId/recent-payments",
   authenticateUser,
   authorizeUser(["management", "branch_admin"]),
@@ -1251,6 +1265,15 @@ adminRoutes.get(
   authenticateUser,
   authorizeUser(["management", "branch_admin"]),
   getMaintenanceHistory
+);
+
+// PT Achievement / PT Reports (management staff; separate from finance PT Analytics)
+adminRoutes.get(
+  "/pt-achievement",
+  authenticateUser,
+  authorizeUser(["management"]),
+  adminRead(45_000, CacheTags.ptAchievement),
+  getPtAchievementReport
 );
 
 export default adminRoutes;
