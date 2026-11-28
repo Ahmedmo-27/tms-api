@@ -807,9 +807,11 @@ export class SubscriptionsService {
     }
     const packageId = new Types.ObjectId(pkgId);
     const endDate = getPackageEndDate(startDate, pkg).toISOString();
-    // Sales attribution is optional at the point of sale and can be set or
-    // corrected later from the sales dashboard.
-    const salesAccountId = await SalesService.resolveSalesAccountId(soldBy);
+    // Inherit the member's linked sales rep if no explicit seller was passed.
+    const explicitSalesAccountId = await SalesService.resolveSalesAccountId(soldBy);
+    const salesAccountId =
+      explicitSalesAccountId ??
+      (member.salesRep ? new Types.ObjectId(String(member.salesRep)) : null);
 
     let restrictions: IClassRestrictionRecord[];
 

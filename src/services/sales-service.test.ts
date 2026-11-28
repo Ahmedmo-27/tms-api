@@ -127,9 +127,10 @@ describe("resolveSalesAccountId", () => {
 });
 
 describe("assignSeller", () => {
-  it("credits a sold package to a sales account and records who set it", async () => {
+  it("credits the member and all non-deleted packages to a sales account and records who set it", async () => {
     mockFindById(salesAccount);
-    (Member.findOne as jest.Mock).mockReturnValue(resolved(memberWithPackage()));
+    const memberDoc = memberWithPackage();
+    (Member.findOne as jest.Mock).mockReturnValue(resolved(memberDoc));
 
     const result = await SalesService.assignSeller({
       memberPackageId: memberPackageId.toString(),
@@ -139,6 +140,7 @@ describe("assignSeller", () => {
 
     const [filter, update, options] = (Member.updateOne as jest.Mock).mock.calls[0];
     expect(filter).toEqual({ _id: memberDocId });
+    expect(update.$set.salesRep).toEqual(salesAccountId);
     expect(update.$set.soldBy).toEqual(salesAccountId);
     expect(update.$set["packages.$[pkg].soldBy"]).toEqual(salesAccountId);
     expect(update.$set["packages.$[pkg].soldByAssignedBy"]).toEqual(actorId);
@@ -187,6 +189,7 @@ describe("assignSeller", () => {
     });
 
     const [, update] = (Member.updateOne as jest.Mock).mock.calls[0];
+    expect(update.$set.salesRep).toBeNull();
     expect(update.$set.soldBy).toBeNull();
     expect(update.$set["packages.$[pkg].soldBy"]).toBeNull();
     expect(result.soldBy).toBeNull();
@@ -278,6 +281,58 @@ describe("assignSeller", () => {
     expect(Member.updateOne).toHaveBeenCalledTimes(1);
     const [, update] = (Member.updateOne as jest.Mock).mock.calls[0];
     expect(update.$set.soldBy).toEqual(salesAccountId);
+  });
+});
+
+describe("assignMemberSalesRep", () => {
+  it("links a sales rep to a member and marks all non-deleted packages as sold by them", async () => {
+    mockFindById(salesAccount);
+    const memberDoc = memberWithPackage();
+    (Member.findOne as jest.Mock).mockReturnValue(resolved(memberDoc));
+
+    const result = await SalesService.assignMemberSalesRep({
+      uid: memberDoc.uid.toString(),
+      soldBy: salesAccountId.toString(),
+      actorId: actorId.toString(),
+    });
+
+    const [filter, update, options] = (Member.updateOne as jest.Mock).mock.calls[0];
+    expect(filter).toEqual({ uid: memberDoc.uid });
+    expect(update.$set.salesRep).toEqual(salesAccountId);
+    expect(update.$set["packages.$[pkg].soldBy"]).toEqual(salesAccountId);
+    expect(options).toEqual({
+      arrayFilters: [
+        { "pkg.status": { $not: { $regex: "^deleted$", $options: "i" } } },
+      ],
+    });
+    expect(result.salesRep).toEqual({
+      _id: salesAccountId.toString(),
+      name: "Nour Sales",
+      role: "sales",
+    });
+  });
+
+  it("rejects a malformed member id", async () => {
+    await expect(
+      SalesService.assignMemberSalesRep({
+        uid: "bad-id",
+        soldBy: null,
+        actorId: actorId.toString(),
+      }),
+    ).rejects.toThrow(BadRequestError);
+    expect(Member.updateOne).not.toHaveBeenCalled();
+  });
+
+  it("throws when member does not exist", async () => {
+    (Member.findOne as jest.Mock).mockReturnValue(resolved(null));
+
+    await expect(
+      SalesService.assignMemberSalesRep({
+        uid: new Types.ObjectId().toString(),
+        soldBy: null,
+        actorId: actorId.toString(),
+      }),
+    ).rejects.toThrow(NotFoundError);
   });
 });
 

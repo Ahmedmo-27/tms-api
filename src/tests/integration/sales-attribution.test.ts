@@ -202,6 +202,9 @@ beforeEach(async () => {
     {},
     {
       $unset: {
+        salesRep: "",
+        salesRepAssignedAt: "",
+        salesRepAssignedBy: "",
         soldBy: "",
         soldByAssignedAt: "",
         soldByAssignedBy: "",
@@ -219,6 +222,12 @@ const listAs = (who: Staff, query = "") =>
 const assignAs = (who: Staff, memberPackageId: string, soldBy: string | null) =>
   api()
     .patch(`/sales/packages/${memberPackageId}/seller`)
+    .set(bearer(who.token))
+    .send({ soldBy });
+
+const assignMemberAs = (who: Staff, uid: string, soldBy: string | null) =>
+  api()
+    .patch(`/sales/members/${uid}/seller`)
     .set(bearer(who.token))
     .send({ soldBy });
 
@@ -678,5 +687,35 @@ describe("who may reach the sales endpoints at all", () => {
       salesAccount.id,
     );
     expect(res.status).toBe(403);
+  });
+});
+
+describe("PATCH /sales/members/:uid/seller", () => {
+  it("links a sales rep to the member and marks all non-deleted packages as sold by them", async () => {
+    const res = await assignMemberAs(salesManager, memberAUid, salesAccount.id);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.uid).toBe(memberAUid);
+    expect(res.body.data.salesRep._id).toBe(salesAccount.id);
+
+    const listed = await listAs(salesManager, "?limit=100");
+    expect(rowFor(body(listed), soldPackageIds["a-active"]).soldBy?._id).toBe(
+      salesAccount.id,
+    );
+    expect(rowFor(body(listed), soldPackageIds["a-legacy-case"]).soldBy?._id).toBe(
+      salesAccount.id,
+    );
+  });
+
+  it("clears the member's sales rep and package attributions when soldBy is null", async () => {
+    await assignMemberAs(salesManager, memberAUid, salesAccount.id);
+    const res = await assignMemberAs(salesManager, memberAUid, null);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.salesRep).toBeNull();
+
+    const listed = await listAs(salesManager, "?limit=100");
+    expect(rowFor(body(listed), soldPackageIds["a-active"]).soldBy).toBeNull();
+    expect(rowFor(body(listed), soldPackageIds["a-legacy-case"]).soldBy).toBeNull();
   });
 });

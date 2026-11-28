@@ -227,6 +227,8 @@ export const getMember = asyncHandler(async function (
   let [members, total] = await Promise.all([
     Member.find(memberQuery)
       .populate({ path: "uid", select: "-password -tokens -resetCode -fcmTokens" })
+      .populate({ path: "salesRep", select: "_id name role" })
+      .populate({ path: "salesRepAssignedBy", select: "_id name" })
       .populate({ path: "soldBy", select: "_id name role" })
       .populate({ path: "soldByAssignedBy", select: "_id name" })
       .populate({ path: "packages.pkgId" })

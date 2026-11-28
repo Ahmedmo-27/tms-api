@@ -26,6 +26,14 @@ jest.mock("../models/package", () => {
   };
 });
 jest.mock("../models/nonUserPackage");
+jest.mock("../models/owedPtSession", () => ({
+  __esModule: true,
+  default: {
+    find: jest.fn(() => ({
+      session: () => Promise.resolve([]),
+    })),
+  },
+}));
 jest.mock("../models/user");
 jest.mock("./payments-service");
 jest.mock("./egygap-erp-service", () => ({
@@ -175,6 +183,20 @@ describe("frontDeskSubscribeToPackage — sales attribution", () => {
     expect(runInTransaction).not.toHaveBeenCalled();
     expect(PaymentsService.savePayment).not.toHaveBeenCalled();
     expect(Member.addPackage).not.toHaveBeenCalled();
+  });
+
+  it("inherits the member's linked salesRep when no soldBy is passed", async () => {
+    (Member.findOne as jest.Mock).mockResolvedValue({
+      uid,
+      packages: [],
+      salesRep: salesAccountId,
+    });
+
+    await subscribe(undefined);
+
+    expect(Member.addPackage).toHaveBeenCalledTimes(1);
+    expect(soldByArg()).toBe(salesAccountId.toString());
+    expect(User.findById).not.toHaveBeenCalled();
   });
 
   it("still records the branch alongside the salesperson", async () => {

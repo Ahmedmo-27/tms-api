@@ -132,10 +132,18 @@ export interface IMember extends Document {
   attendance: IAttendance[];
   ptAttendance: IPtAttendance[];
   isActive: boolean;
+  /** Sales account (User with role "sales"/"sales_manager") linked to this member. */
+  salesRep?: Types.ObjectId | null;
+  /** When the sales rep was last assigned or cleared. */
+  salesRepAssignedAt?: Date | null;
+  /** Staff account that set the member's sales rep. */
+  salesRepAssignedBy?: Types.ObjectId | null;
   /** Sales account credited with this member's sales (member-wide attribution). */
   soldBy?: Types.ObjectId | null;
   soldByAssignedAt?: Date | null;
   soldByAssignedBy?: Types.ObjectId | null;
+  createdAt?: Date;
+  updatedAt?: Date;
 }
 
 interface IMemberstatics {
@@ -456,6 +464,21 @@ const MemberSchema: Schema<IMember, IMemberModel, IMemberMethods> = new Schema({
     type: Boolean,
     default: true,
   },
+  // Sales rep linked to this member — packages created for this member inherit this seller.
+  salesRep: {
+    type: Schema.Types.ObjectId,
+    ref: "User",
+    default: null,
+  },
+  salesRepAssignedAt: {
+    type: Date,
+    default: null,
+  },
+  salesRepAssignedBy: {
+    type: Schema.Types.ObjectId,
+    ref: "User",
+    default: null,
+  },
   soldBy: {
     type: Schema.Types.ObjectId,
     ref: "User",
@@ -470,11 +493,29 @@ const MemberSchema: Schema<IMember, IMemberModel, IMemberMethods> = new Schema({
     ref: "User",
     default: null,
   },
+}, {
+  timestamps: true,
 });
 
 MemberSchema.index({ uid: 1 }, { unique: true });
+MemberSchema.index({ salesRep: 1 });
 // Sales attribution addresses a single sold package by its subdocument id.
 MemberSchema.index({ "packages._id": 1 });
+MemberSchema.index({ createdAt: -1 });
+MemberSchema.index({
+  "packages.pkgId": 1,
+  "packages.status": 1,
+  "packages.pkgEndDate": 1,
+});
+MemberSchema.index({ "packages.status": 1, "packages.pkgEndDate": 1 });
+MemberSchema.index({ "packages.soldBy": 1, "packages.pkgStartDate": -1 });
+MemberSchema.index({ "bookings.scid": 1 });
+MemberSchema.index({ "bookings.paymentId": 1 }, { sparse: true });
+MemberSchema.index({
+  "ptAttendance.pkgId": 1,
+  "ptAttendance.attendanceTime": 1,
+});
+MemberSchema.index({ isActive: 1 });
 
 MemberSchema.static(
   "saveDropIn",
@@ -2087,6 +2128,17 @@ MemberSchema.static(
     const { cairoDayRange } = await import("../utils/timezone");
     const { start, end } = cairoDayRange(startDate);
 
+    let resolvedSoldBy: string | null = soldBy ?? null;
+    if (!resolvedSoldBy) {
+      const memberDoc = await this.findOne({ uid })
+        .select("salesRep")
+        .session(session || null)
+        .lean();
+      if (memberDoc?.salesRep) {
+        resolvedSoldBy = String(memberDoc.salesRep);
+      }
+    }
+
     const result = await this.findOneAndUpdate(
       {
         uid,
@@ -2110,8 +2162,8 @@ MemberSchema.static(
             remainingClasses: numberOfSessions,
             classRestrictionsRecord: classRestrictions,
             locationId: locationId ? new Types.ObjectId(locationId) : null,
-            soldBy: soldBy ? new Types.ObjectId(soldBy) : null,
-            soldByAssignedAt: soldBy ? new Date() : null,
+            soldBy: resolvedSoldBy ? new Types.ObjectId(resolvedSoldBy) : null,
+            soldByAssignedAt: resolvedSoldBy ? new Date() : null,
             freezeInfo: {
               isFrozen: false,
               allowedFreezeDays,

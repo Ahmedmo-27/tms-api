@@ -3,7 +3,11 @@ import Member from "../models/member";
 import Package from "../models/package";
 import User from "../models/user";
 import Location from "../models/location";
-import { BadRequestError, NotFoundError } from "../core/ApiError";
+import {
+  BadRequestError,
+  ForbiddenError,
+  NotFoundError,
+} from "../core/ApiError";
 import { escapeRegex } from "../utils/escapeRegex";
 
 /** Roles a sold package may be credited to. */
@@ -341,8 +345,90 @@ export class SalesService {
   }
 
   /**
+   * Links a sales account to a member (or clears the link) and marks all of
+   * that member's non-deleted packages as sold by that sales account.
+   * `scopedLocationId` is set for branch_admin, which may only touch members
+   * with at least one package at its own branch.
+   */
+  static async assignMemberSalesRep(params: {
+    uid: string;
+    soldBy: string | null;
+    actorId: string;
+    scopedLocationId?: string | null;
+  }) {
+    if (!params.uid || !Types.ObjectId.isValid(params.uid)) {
+      throw new BadRequestError(
+        "INVALID_MEMBER_ID",
+        "A valid member id is required",
+      );
+    }
+    const uidObjectId = new Types.ObjectId(params.uid);
+    const sellerId = await SalesService.resolveSalesAccountId(params.soldBy);
+
+    const member = await Member.findOne({ uid: uidObjectId }).select(
+      "uid packages salesRep",
+    );
+    if (!member) {
+      throw new NotFoundError("MEMBER_NOT_FOUND", "Member not found", {
+        uid: params.uid,
+      });
+    }
+
+    if (params.scopedLocationId) {
+      const hasBranchPackage = member.packages.some(
+        (pkg) =>
+          String(pkg.status).toUpperCase() !== "DELETED" &&
+          pkg.locationId &&
+          String(pkg.locationId) === params.scopedLocationId,
+      );
+      if (!hasBranchPackage) {
+        throw new ForbiddenError(
+          "BRANCH_SCOPE_MISMATCH",
+          "This member has no packages at your branch",
+        );
+      }
+    }
+
+    const now = new Date();
+    const actorObjectId = new Types.ObjectId(params.actorId);
+    await Member.updateOne(
+      { uid: uidObjectId },
+      {
+        $set: {
+          salesRep: sellerId,
+          salesRepAssignedAt: now,
+          salesRepAssignedBy: actorObjectId,
+          soldBy: sellerId,
+          soldByAssignedAt: now,
+          soldByAssignedBy: actorObjectId,
+          "packages.$[pkg].soldBy": sellerId,
+          "packages.$[pkg].soldByAssignedAt": now,
+          "packages.$[pkg].soldByAssignedBy": actorObjectId,
+        },
+      },
+      {
+        arrayFilters: [
+          { "pkg.status": { $not: { $regex: "^deleted$", $options: "i" } } },
+        ],
+      },
+    );
+
+    const seller = sellerId
+      ? await User.findById(sellerId).select("_id name role").lean()
+      : null;
+
+    return {
+      uid: String(member.uid),
+      salesRep: seller
+        ? { _id: idStr(seller._id), name: seller.name, role: seller.role }
+        : null,
+      salesRepAssignedAt: now,
+    };
+  }
+
+  /**
    * Credits a sold package to a sales account, or clears the attribution.
-   * Updates member-level soldBy and every non-deleted package on the member.
+   * Updates member-level salesRep/soldBy and every non-deleted package on the member.
    */
   static async assignSeller(params: {
     memberPackageId: string;
@@ -393,6 +479,9 @@ export class SalesService {
     };
 
     const $set: Record<string, unknown> = {
+      salesRep: sellerId,
+      salesRepAssignedAt: assignedAt,
+      salesRepAssignedBy: actorObjectId,
       soldBy: sellerId,
       soldByAssignedAt: assignedAt,
       soldByAssignedBy: actorObjectId,
