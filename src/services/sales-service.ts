@@ -47,6 +47,9 @@ interface SoldPackageRow {
 const idStr = (value: unknown): string =>
   value ? String((value as { _id?: unknown })?._id ?? value) : "";
 
+const isDeletedPackageStatus = (status: string) =>
+  String(status).toUpperCase() === "DELETED";
+
 /** Sold packages are addressed by the member package subdocument id. */
 function toMemberPackageId(memberPackageId: string): Types.ObjectId {
   if (!memberPackageId || !Types.ObjectId.isValid(memberPackageId)) {
@@ -357,7 +360,7 @@ export class SalesService {
 
     const member = await Member.findOne({
       "packages._id": memberPackageId,
-    }).select("uid packages");
+    }).select("_id uid packages");
     if (!member) {
       throw new NotFoundError(
         "SOLD_PACKAGE_NOT_FOUND",
@@ -395,14 +398,30 @@ export class SalesService {
       }
     }
 
+    const assignedAt = new Date();
+    const actorObjectId = new Types.ObjectId(params.actorId);
+    const packagesUpdated = member.packages.filter(
+      (pkg) => !isDeletedPackageStatus(String(pkg.status)),
+    ).length;
+
     await Member.updateOne(
-      { "packages._id": memberPackageId },
+      { _id: member._id },
       {
         $set: {
-          "packages.$.soldBy": sellerId,
-          "packages.$.soldByAssignedAt": new Date(),
-          "packages.$.soldByAssignedBy": new Types.ObjectId(params.actorId),
+          soldBy: sellerId,
+          soldByAssignedAt: assignedAt,
+          soldByAssignedBy: actorObjectId,
+          "packages.$[pkg].soldBy": sellerId,
+          "packages.$[pkg].soldByAssignedAt": assignedAt,
+          "packages.$[pkg].soldByAssignedBy": actorObjectId,
         },
+      },
+      {
+        arrayFilters: [
+          {
+            "pkg.status": { $not: { $regex: "^deleted$", $options: "i" } },
+          },
+        ],
       },
     );
 
@@ -416,7 +435,8 @@ export class SalesService {
       soldBy: seller
         ? { _id: idStr(seller._id), name: seller.name, role: seller.role }
         : null,
-      soldByAssignedAt: new Date(),
+      soldByAssignedAt: assignedAt,
+      packagesUpdated,
     };
   }
 }

@@ -132,6 +132,10 @@ export interface IMember extends Document {
   attendance: IAttendance[];
   ptAttendance: IPtAttendance[];
   isActive: boolean;
+  /** Sales account credited with this member's sales (member-wide attribution). */
+  soldBy?: Types.ObjectId | null;
+  soldByAssignedAt?: Date | null;
+  soldByAssignedBy?: Types.ObjectId | null;
 }
 
 interface IMemberstatics {
@@ -451,6 +455,20 @@ const MemberSchema: Schema<IMember, IMemberModel, IMemberMethods> = new Schema({
   isActive: {
     type: Boolean,
     default: true,
+  },
+  soldBy: {
+    type: Schema.Types.ObjectId,
+    ref: "User",
+    default: null,
+  },
+  soldByAssignedAt: {
+    type: Date,
+    default: null,
+  },
+  soldByAssignedBy: {
+    type: Schema.Types.ObjectId,
+    ref: "User",
+    default: null,
   },
 });
 
@@ -2106,6 +2124,21 @@ MemberSchema.static(
       },
       { ...(session ? { session } : {}), new: true }
     );
+    if (result && soldBy) {
+      await this.updateOne(
+        {
+          uid,
+          $or: [{ soldBy: null }, { soldBy: { $exists: false } }],
+        },
+        {
+          $set: {
+            soldBy: new Types.ObjectId(soldBy),
+            soldByAssignedAt: new Date(),
+          },
+        },
+        { ...(session ? { session } : {}) },
+      );
+    }
     return !!result;
   }
 );
