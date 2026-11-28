@@ -106,8 +106,17 @@ async function main() {
 
   await connectDB();
 
+  // Dot notation on array paths (packages.soldBy) misses documents where only
+  // some packages carry soldBy; $elemMatch matches reliably.
   const query = {
-    $or: [{ soldBy: { $ne: null } }, { "packages.soldBy": { $ne: null } }],
+    $or: [
+      { soldBy: { $exists: true, $ne: null } },
+      {
+        packages: {
+          $elemMatch: { soldBy: { $exists: true, $ne: null } },
+        },
+      },
+    ],
   };
 
   let examined = 0;
