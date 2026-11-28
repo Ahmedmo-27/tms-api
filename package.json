@@ -15,6 +15,7 @@
     "test:unit": "jest --runInBand --testPathIgnorePatterns \"/node_modules/\" \"src/tests/integration/\"",
     "test:integration": "jest --runInBand --testPathPattern \"src/tests/integration\"",
     "export:october-payments": "npx ts-node ./src/scripts/export-october-payments-national-id.ts",
+    "export:members-national-id": "npx ts-node ./src/scripts/export-members-national-id.ts",
     "create-sales-user": "npx ts-node ./src/scripts/create-sales-user.ts",
     "insert-sales-team": "npx ts-node ./src/scripts/insert-sales-team.ts",
     "insert-sales-team:apply": "npx ts-node ./src/scripts/insert-sales-team.ts --apply",

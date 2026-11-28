@@ -114,6 +114,7 @@ import {
 } from "../controllers/admin/location-controller";
 import {
   getPayments,
+  exportPaymentsWithNationalId,
   updatePayment,
   deletePayment,
   syncPaymentToCoachera,
@@ -915,6 +916,12 @@ adminRoutes.get(
   authorizeUser(["management", "branch_admin", "accountant"]),
   adminRead(LIST, CacheTags.payments),
   getPayments
+);
+adminRoutes.get(
+  "/payments/export-national-id",
+  authenticateUser,
+  authorizeUser(["management"]),
+  exportPaymentsWithNationalId
 );
 adminRoutes.patch(
   "/payments/:id",
