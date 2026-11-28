@@ -78,7 +78,12 @@ import {
   deleteCoach,
 } from "../controllers/admin/coach-controller";
 import { getManagingShadowCoaches } from "../controllers/coach/shadow-coach-controller";
-import { addMember, getMember, updateMember } from "../controllers/admin/member-controller";
+import {
+  addMember,
+  exportMembers,
+  getMember,
+  updateMember,
+} from "../controllers/admin/member-controller";
 import {
   getAttendanceHistory,
   getOwedPtSessions,
@@ -994,6 +999,14 @@ adminRoutes.get(
   authorizeUser(["management", "branch_admin"]),
   adminRead(HOT, CacheTags.members),
   searchMembers
+);
+adminRoutes.get(
+  "/members/export",
+  authenticateUser,
+  authorizeUser(["management", "branch_admin", "accountant"]),
+  // Tag both: export reads User fields; /users writes only bust CacheTags.users.
+  adminRead(HOT, CacheTags.members, CacheTags.users),
+  exportMembers
 );
 adminRoutes.get(
   "/members/:memberId/recent-payments",
