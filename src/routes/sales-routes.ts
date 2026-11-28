@@ -4,7 +4,9 @@ import {
   authorizeUser,
 } from "../middlewares/auth.middleware";
 import {
+  assignMemberSalesRep,
   assignSoldPackageSeller,
+  exportSalesmanPayments,
   listSalesAccounts,
   listSoldPackages,
 } from "../controllers/admin/sales-controller";
@@ -34,6 +36,12 @@ salesRoutes.get(
   "/packages",
   cacheResponse({ ttlMs: 30_000, scope: "user", tags: [CacheTags.sales] }),
   listSoldPackages,
+);
+salesRoutes.get("/export-payments", exportSalesmanPayments);
+salesRoutes.patch(
+  "/members/:uid/seller",
+  invalidateCache([CacheTags.sales, CacheTags.members]),
+  assignMemberSalesRep,
 );
 salesRoutes.patch(
   "/packages/:memberPackageId/seller",
