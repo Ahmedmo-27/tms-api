@@ -4,7 +4,6 @@ import {
   authorizeUser,
 } from "../middlewares/auth.middleware";
 import {
-  assignMemberSalesRep,
   assignSoldPackageSeller,
   exportSalesmanPayments,
   listSalesAccounts,
@@ -39,13 +38,8 @@ salesRoutes.get(
 );
 salesRoutes.get("/export-payments", exportSalesmanPayments);
 salesRoutes.patch(
-  "/members/:uid/seller",
-  invalidateCache([CacheTags.sales, CacheTags.members]),
-  assignMemberSalesRep,
-);
-salesRoutes.patch(
   "/packages/:memberPackageId/seller",
-  invalidateCache([CacheTags.sales, CacheTags.members]),
+  invalidateCache([CacheTags.sales]),
   assignSoldPackageSeller,
 );
 
