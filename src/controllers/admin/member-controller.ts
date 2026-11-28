@@ -78,11 +78,13 @@ export const exportMembers = asyncHandler(async function (
   };
 
   // Member has no createdAt; export range is User.createdAt for role=member with an active Member row.
+  // Only members that have a non-empty national ID are included.
   const rows = await User.aggregate<ExportMemberRow>([
     {
       $match: {
         role: "member",
         createdAt: { $gte: rangeStart, $lte: rangeEnd },
+        nationalId: { $type: "string", $regex: /\S/ },
       },
     },
     {
