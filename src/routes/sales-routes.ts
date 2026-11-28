@@ -37,7 +37,7 @@ salesRoutes.get(
 );
 salesRoutes.patch(
   "/packages/:memberPackageId/seller",
-  invalidateCache([CacheTags.sales]),
+  invalidateCache([CacheTags.sales, CacheTags.members]),
   assignSoldPackageSeller,
 );
 

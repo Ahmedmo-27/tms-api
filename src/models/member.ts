@@ -2125,6 +2125,8 @@ MemberSchema.static(
       { ...(session ? { session } : {}), new: true }
     );
     if (result && soldBy) {
+      // TODO: pass the same Mongo session into this first-touch member.soldBy
+      // write when addPackage runs inside a transaction (POS path).
       await this.updateOne(
         {
           uid,

@@ -43,6 +43,7 @@ let otherSalesAccount: Staff;
 /** Member package ids, by the name they were seeded under. */
 const soldPackageIds: Record<string, string> = {};
 let memberAUid: string;
+let memberMultiBranchUid: string;
 
 let phoneSeq = 0;
 function nextPhone(): string {
@@ -173,6 +174,22 @@ beforeAll(async () => {
     // No branch recorded — legacy rows exist like this.
     { key: "b-nobranch", name: "PT 10", pkgId: catalogPkgB, status: "COMPLETED", locationId: null },
   ]);
+  memberMultiBranchUid = await seedMember([
+    {
+      key: "multi-a",
+      name: "Studio 10",
+      pkgId: catalogPkgA,
+      status: "ACTIVE",
+      locationId: branchA,
+    },
+    {
+      key: "multi-b",
+      name: "Studio 10",
+      pkgId: catalogPkgA,
+      status: "ACTIVE",
+      locationId: branchB,
+    },
+  ]);
 });
 
 afterAll(async () => {
@@ -258,7 +275,7 @@ describe("GET /sales/packages — what counts as a sold package", () => {
     expect(listed).toContain(soldPackageIds["b-nobranch"]);
     expect(listed).not.toContain(soldPackageIds["a-deleted"]);
     expect(listed).not.toContain(soldPackageIds["a-deleted-legacy"]);
-    expect(res.body.data.total).toBe(4);
+    expect(res.body.data.total).toBe(6);
   });
 
   it("carries the member, package, branch and status of each sale", async () => {
@@ -279,9 +296,9 @@ describe("GET /sales/packages — what counts as a sold package", () => {
     const res = await listAs(management, "?limit=100");
 
     expect(res.body.data.summary).toMatchObject({
-      total: 4,
+      total: 6,
       assigned: 0,
-      unassigned: 4,
+      unassigned: 6,
       bySeller: [],
     });
   });
@@ -295,8 +312,8 @@ describe("GET /sales/packages — what counts as a sold package", () => {
     expect(first.body.data.rows[0].memberPackageId).not.toBe(
       second.body.data.rows[0].memberPackageId,
     );
-    expect(first.body.data.total).toBe(4);
-    expect(first.body.data.totalPages).toBe(4);
+    expect(first.body.data.total).toBe(6);
+    expect(first.body.data.totalPages).toBe(6);
   });
 
   it("searches by package name", async () => {
@@ -305,7 +322,7 @@ describe("GET /sales/packages — what counts as a sold package", () => {
     expect(
       body(res).data.rows.every((row) => row.packageName === "Studio 10"),
     ).toBe(true);
-    expect(res.body.data.rows).toHaveLength(2);
+    expect(res.body.data.rows).toHaveLength(4);
   });
 
   it("searches by member phone, across that member's packages", async () => {
@@ -328,7 +345,7 @@ describe("GET /sales/packages — branch scoping", () => {
     const listed = ids(res);
     expect(listed).toContain(soldPackageIds["a-active"]);
     expect(listed).not.toContain(soldPackageIds["b-active"]);
-    expect(res.body.data.total).toBe(2);
+    expect(res.body.data.total).toBe(3);
   });
 
   it("pins branch_admin to its own branch and ignores a branch it passes", async () => {
@@ -343,7 +360,7 @@ describe("GET /sales/packages — branch scoping", () => {
   it("shows the sales_manager every branch, including sales with no branch", async () => {
     const res = await listAs(salesManager, "?limit=100");
 
-    expect(res.body.data.total).toBe(4);
+    expect(res.body.data.total).toBe(6);
     expect(rowFor(body(res), soldPackageIds["b-nobranch"]).branchName).toBe("");
   });
 });
@@ -490,6 +507,31 @@ describe("PATCH /sales/packages/:id/seller", () => {
     expect(res.body.code).toBe("BRANCH_SCOPE_MISMATCH");
   });
 
+  it("updates only its branch's packages and leaves member.soldBy when the member spans branches", async () => {
+    const res = await assignAs(
+      branchAdminA,
+      soldPackageIds["multi-a"],
+      salesAccount.id,
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.packagesUpdated).toBe(1);
+
+    const memberDoc = await mongoose.connection.db!.collection("members").findOne({
+      uid: new Types.ObjectId(memberMultiBranchUid),
+    });
+    expect(memberDoc?.soldBy).toBeFalsy();
+
+    const branchAPkg = memberDoc!.packages.find(
+      (p: { _id: Types.ObjectId }) => String(p._id) === soldPackageIds["multi-a"],
+    );
+    const branchBPkg = memberDoc!.packages.find(
+      (p: { _id: Types.ObjectId }) => String(p._id) === soldPackageIds["multi-b"],
+    );
+    expect(String(branchAPkg?.soldBy)).toBe(salesAccount.id);
+    expect(branchBPkg?.soldBy).toBeFalsy();
+  });
+
   it("keeps branch_admin out of a sale with no branch recorded", async () => {
     const res = await assignAs(
       branchAdminA,
@@ -545,7 +587,7 @@ describe("filtering by salesperson", () => {
     const listed = ids(res);
     expect(listed).not.toContain(soldPackageIds["a-active"]);
     expect(listed).not.toContain(soldPackageIds["a-legacy-case"]);
-    expect(res.body.data.total).toBe(2);
+    expect(res.body.data.total).toBe(4);
   });
 
   it("'assigned' returns only credited sales", async () => {

@@ -400,28 +400,56 @@ export class SalesService {
 
     const assignedAt = new Date();
     const actorObjectId = new Types.ObjectId(params.actorId);
-    const packagesUpdated = member.packages.filter(
+    const activePackages = member.packages.filter(
       (pkg) => !isDeletedPackageStatus(String(pkg.status)),
-    ).length;
+    );
+    const scopedLocationId = params.scopedLocationId
+      ? String(params.scopedLocationId)
+      : null;
+
+    const packageMatchesBranchScope = (pkg: (typeof member.packages)[number]) => {
+      if (!scopedLocationId) return true;
+      const packageLocationId = pkg.locationId
+        ? String(pkg.locationId)
+        : null;
+      return packageLocationId === scopedLocationId;
+    };
+
+    const packagesUpdated = activePackages.filter(packageMatchesBranchScope)
+      .length;
+
+    // branch_admin may only touch packages at its branch. Member-level soldBy is
+    // shared across branches, so we set it only when every active package
+    // belongs to that branch; otherwise leave the member field unchanged.
+    const setMemberLevelSoldBy =
+      !scopedLocationId ||
+      activePackages.every(packageMatchesBranchScope);
+
+    const packageArrayFilter: Record<string, unknown> = {
+      "pkg.status": { $not: { $regex: "^deleted$", $options: "i" } },
+    };
+    if (scopedLocationId) {
+      packageArrayFilter["pkg.locationId"] = new Types.ObjectId(
+        scopedLocationId,
+      );
+    }
+
+    const $set: Record<string, unknown> = {
+      "packages.$[pkg].soldBy": sellerId,
+      "packages.$[pkg].soldByAssignedAt": assignedAt,
+      "packages.$[pkg].soldByAssignedBy": actorObjectId,
+    };
+    if (setMemberLevelSoldBy) {
+      $set.soldBy = sellerId;
+      $set.soldByAssignedAt = assignedAt;
+      $set.soldByAssignedBy = actorObjectId;
+    }
 
     await Member.updateOne(
       { _id: member._id },
+      { $set },
       {
-        $set: {
-          soldBy: sellerId,
-          soldByAssignedAt: assignedAt,
-          soldByAssignedBy: actorObjectId,
-          "packages.$[pkg].soldBy": sellerId,
-          "packages.$[pkg].soldByAssignedAt": assignedAt,
-          "packages.$[pkg].soldByAssignedBy": actorObjectId,
-        },
-      },
-      {
-        arrayFilters: [
-          {
-            "pkg.status": { $not: { $regex: "^deleted$", $options: "i" } },
-          },
-        ],
+        arrayFilters: [packageArrayFilter],
       },
     );
 

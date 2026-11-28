@@ -59,7 +59,11 @@ const secondMemberPackageId = new Types.ObjectId();
 /** A member holding one sold package, as assignSeller reads it. */
 function memberWithPackage(
   overrides: Partial<{ status: string; locationId: Types.ObjectId | null }> = {},
-  extraPackages: Array<{ _id: Types.ObjectId; status: string }> = [],
+  extraPackages: Array<{
+    _id: Types.ObjectId;
+    status: string;
+    locationId?: Types.ObjectId | null;
+  }> = [],
 ) {
   // locationId: undefined keeps branchA; null means "no branch recorded".
   return {
@@ -72,7 +76,10 @@ function memberWithPackage(
         locationId:
           overrides.locationId === undefined ? branchA : overrides.locationId,
       },
-      ...extraPackages,
+      ...extraPackages.map((pkg) => ({
+        locationId: branchA,
+        ...pkg,
+      })),
     ],
   };
 }
@@ -257,6 +264,62 @@ describe("assignSeller", () => {
       }),
     ).resolves.toMatchObject({ soldBy: null });
     expect(Member.updateOne).toHaveBeenCalledTimes(1);
+    const [, update, options] = (Member.updateOne as jest.Mock).mock.calls[0];
+    expect(update.$set.soldBy).toBeNull();
+    expect(options.arrayFilters[0]).toEqual({
+      "pkg.status": { $not: { $regex: "^deleted$", $options: "i" } },
+      "pkg.locationId": branchA,
+    });
+  });
+
+  it("does not overwrite another branch's packages or member.soldBy for branch_admin", async () => {
+    const otherBranchPkgId = new Types.ObjectId();
+    mockFindById(salesAccount);
+    (Member.findOne as jest.Mock).mockReturnValue(
+      resolved(
+        memberWithPackage({}, [
+          { _id: otherBranchPkgId, status: "ACTIVE", locationId: branchB },
+        ]),
+      ),
+    );
+
+    const result = await SalesService.assignSeller({
+      memberPackageId: memberPackageId.toString(),
+      soldBy: salesAccountId.toString(),
+      actorId: actorId.toString(),
+      scopedLocationId: branchA.toString(),
+    });
+
+    expect(result.packagesUpdated).toBe(1);
+    const [, update, options] = (Member.updateOne as jest.Mock).mock.calls[0];
+    expect(update.$set.soldBy).toBeUndefined();
+    expect(update.$set["packages.$[pkg].soldBy"]).toEqual(salesAccountId);
+    expect(options.arrayFilters[0]["pkg.locationId"]).toEqual(branchA);
+  });
+
+  it("sets member.soldBy for branch_admin when every active package is at that branch", async () => {
+    mockFindById(salesAccount);
+    (Member.findOne as jest.Mock).mockReturnValue(
+      resolved(
+        memberWithPackage({}, [
+          { _id: secondMemberPackageId, status: "ACTIVE", locationId: branchA },
+        ]),
+      ),
+    );
+
+    await SalesService.assignSeller({
+      memberPackageId: memberPackageId.toString(),
+      soldBy: salesAccountId.toString(),
+      actorId: actorId.toString(),
+      scopedLocationId: branchA.toString(),
+    });
+
+    const [, update, options] = (Member.updateOne as jest.Mock).mock.calls[0];
+    expect(update.$set.soldBy).toEqual(salesAccountId);
+    expect(options.arrayFilters[0]["pkg.locationId"]).toEqual(branchA);
+    expect(
+      (Member.updateOne as jest.Mock).mock.calls[0][2].arrayFilters,
+    ).toHaveLength(1);
   });
 
   it("refuses a branch-scoped write on a package with no branch recorded", async () => {
