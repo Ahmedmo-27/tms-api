@@ -33,10 +33,10 @@ import { describeMongoTarget, resolveScriptMongoUri } from "./script-db";
 
 const MEMBER_BATCH_CURSOR_SIZE = 50;
 
+// Select the whole packages array — projecting nested package fields alone can
+ // yield empty arrays under Mongoose lean cursors.
 const MEMBER_SELECT =
-  "_id uid soldBy soldByAssignedAt soldByAssignedBy " +
-  "packages._id packages.status packages.soldBy packages.soldByAssignedAt " +
-  "packages.soldByAssignedBy packages.pkgStartDate";
+  "_id uid soldBy soldByAssignedAt soldByAssignedBy packages";
 
 function isDryRun(): boolean {
   return process.argv.includes("--dry-run");
@@ -106,14 +106,13 @@ async function main() {
 
   await connectDB();
 
-  // Dot notation on array paths (packages.soldBy) misses documents where only
-  // some packages carry soldBy; $elemMatch matches reliably.
+  // $elemMatch + $type avoids empty-array false positives from `$ne: null`.
   const query = {
     $or: [
-      { soldBy: { $exists: true, $ne: null } },
+      { soldBy: { $type: "objectId" } },
       {
         packages: {
-          $elemMatch: { soldBy: { $exists: true, $ne: null } },
+          $elemMatch: { soldBy: { $type: "objectId" } },
         },
       },
     ],
