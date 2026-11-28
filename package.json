@@ -44,6 +44,8 @@
     "backfill-locations:apply": "npx ts-node ./src/scripts/backfill-scheduled-class-locations.ts --apply",
     "normalize-location-ids": "npx ts-node ./src/scripts/normalize-location-object-ids.ts --dry-run",
     "normalize-location-ids:apply": "npx ts-node ./src/scripts/normalize-location-object-ids.ts",
+    "backfill-member-sold-by": "NODE_OPTIONS=--max-old-space-size=450 npx ts-node --transpile-only ./src/scripts/backfill-member-level-sold-by.ts --dry-run",
+    "backfill-member-sold-by:apply": "NODE_OPTIONS=--max-old-space-size=450 npx ts-node --transpile-only ./src/scripts/backfill-member-level-sold-by.ts",
     "verify-location-fix": "npx ts-node ./src/scripts/verify-location-fix-local.ts",
     "verify-location-fix:tms-test": "npx ts-node ./src/scripts/verify-location-fix-tms-test.ts",
     "assign-pt-coaches": "npx ts-node ./src/scripts/assign-pt-packages-to-coaches.ts",
