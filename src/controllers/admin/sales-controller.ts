@@ -47,36 +47,6 @@ export const listSoldPackages = asyncHandler(
   },
 );
 
-export const assignMemberSalesRep = asyncHandler(
-  async (req: Request, res: Response): Promise<void> => {
-    const { uid } = req.params;
-    const rawSeller =
-      req.body?.soldBy !== undefined ? req.body.soldBy : req.body?.salesRep;
-    if (
-      rawSeller !== null &&
-      rawSeller !== undefined &&
-      typeof rawSeller !== "string"
-    ) {
-      throw new BadRequestError(
-        "INVALID_SALES_ACCOUNT",
-        "soldBy must be a sales account id, or null to clear it",
-      );
-    }
-
-    const actorId = String(
-      (req as unknown as { user: { _id: unknown } }).user._id,
-    );
-    const data = await SalesService.assignMemberSalesRep({
-      uid,
-      soldBy: rawSeller ?? null,
-      actorId,
-      scopedLocationId: getAssignedBranchLocationId(req),
-    });
-
-    new SuccessResponse("Sales rep assigned to member", data).send(res);
-  },
-);
-
 export const assignSoldPackageSeller = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const { memberPackageId } = req.params;
